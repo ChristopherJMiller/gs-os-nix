@@ -26,6 +26,15 @@ pub const OP_JMP: u8 = 0x20;
 pub const OP_JMP_IF_FALSE: u8 = 0x21;
 pub const OP_JMP_IF_TRUE: u8 = 0x22;
 pub const OP_ASSERT: u8 = 0x23;
+pub const OP_LIST: u8 = 0x24;
+pub const OP_CONCAT: u8 = 0x25;
+pub const OP_ATTRS: u8 = 0x26;
+pub const OP_SELECT: u8 = 0x27;
+pub const OP_TRY_SELECT: u8 = 0x28;
+pub const OP_JMP_IF_NOTFOUND: u8 = 0x29;
+pub const OP_HAS_ATTR: u8 = 0x2A;
+pub const OP_UPDATE: u8 = 0x2B;
+pub const OP_INTERPOLATE: u8 = 0x2C;
 
 pub const OP_ENV_NEW: u8 = 0x30;
 pub const OP_ENV_SET: u8 = 0x31;
@@ -37,11 +46,77 @@ pub const OP_CALL: u8 = 0x35;
 pub const OP_THUNK: u8 = 0x40;
 pub const OP_FORCE: u8 = 0x41;
 pub const OP_RETURN: u8 = 0x42;
+pub const OP_PRIM: u8 = 0x43;
 
 /// Constant kinds are heap tags (docs/HEAP.md).
 pub const K_INT: u8 = 0x01;
-#[allow(dead_code)] // slice 2
 pub const K_STRING: u8 = 0x04;
+
+/// Primops: (Nix name, id, arity). BYTECODE.md "Primops" is normative and
+/// target/vm/opcodes.inc must agree; checks.nbc-opcodes diffs all three.
+/// The Nix name is what `builtins.NAME` resolves against.
+pub const PRIMOPS: &[(&str, u8, u8)] = &[
+    ("length", 0x00, 1),
+    ("head", 0x01, 1),
+    ("tail", 0x02, 1),
+    ("elemAt", 0x03, 2),
+    ("map", 0x04, 2),
+    ("filter", 0x05, 2),
+    ("foldl'", 0x06, 3),
+    ("concatLists", 0x07, 1),
+    ("genList", 0x08, 2),
+    ("elem", 0x09, 2),
+    ("any", 0x0A, 2),
+    ("all", 0x0B, 2),
+    ("concatMap", 0x0C, 2),
+    ("attrNames", 0x0D, 1),
+    ("attrValues", 0x0E, 1),
+    ("hasAttr", 0x0F, 2),
+    ("getAttr", 0x10, 2),
+    ("stringLength", 0x11, 1),
+    ("substring", 0x12, 3),
+    ("toString", 0x13, 1),
+    ("concatStringsSep", 0x14, 2),
+    ("throw", 0x15, 1),
+    ("abort", 0x16, 1),
+    ("seq", 0x17, 2),
+    ("deepSeq", 0x18, 2),
+    ("typeOf", 0x19, 1),
+    ("isInt", 0x1A, 1),
+    ("isBool", 0x1B, 1),
+    ("isString", 0x1C, 1),
+    ("isNull", 0x1D, 1),
+    ("isList", 0x1E, 1),
+    ("isAttrs", 0x1F, 1),
+    ("isFunction", 0x20, 1),
+    ("add", 0x21, 2),
+    ("sub", 0x22, 2),
+    ("mul", 0x23, 2),
+    ("div", 0x24, 2),
+    ("lessThan", 0x25, 2),
+    ("bitAnd", 0x26, 2),
+    ("bitOr", 0x27, 2),
+    ("bitXor", 0x28, 2),
+    ("listToAttrs", 0x29, 1),
+    ("intersectAttrs", 0x2A, 2),
+    ("removeAttrs", 0x2B, 2),
+    ("partition", 0x2C, 2),
+    ("baseNameOf", 0x2D, 1),
+    ("dirOf", 0x2E, 1),
+];
+
+/// The builtins Nix also exposes unqualified.
+pub const GLOBALS: &[&str] = &[
+    "map", "toString", "throw", "abort", "isNull", "removeAttrs", "baseNameOf", "dirOf",
+];
+
+pub fn primop(name: &str) -> Option<(u8, u8)> {
+    PRIMOPS.iter().find(|(n, _, _)| *n == name).map(|(_, id, arity)| (*id, *arity))
+}
+
+pub fn primop_name(id: u8) -> Option<&'static str> {
+    PRIMOPS.iter().find(|(_, i, _)| *i == id).map(|(n, _, _)| *n)
+}
 
 /// Name and operand width in bytes, for the disassembler.
 pub fn describe(op: u8) -> Option<(&'static str, usize)> {
@@ -66,6 +141,16 @@ pub fn describe(op: u8) -> Option<(&'static str, usize)> {
         OP_JMP_IF_FALSE => ("JMP_IF_FALSE", 2),
         OP_JMP_IF_TRUE => ("JMP_IF_TRUE", 2),
         OP_ASSERT => ("ASSERT", 0),
+        OP_LIST => ("LIST", 2),
+        OP_CONCAT => ("CONCAT", 0),
+        OP_ATTRS => ("ATTRS", 2),
+        OP_SELECT => ("SELECT", 0),
+        OP_TRY_SELECT => ("TRY_SELECT", 0),
+        OP_JMP_IF_NOTFOUND => ("JMP_IF_NOTFOUND", 2),
+        OP_HAS_ATTR => ("HAS_ATTR", 0),
+        OP_UPDATE => ("UPDATE", 0),
+        OP_INTERPOLATE => ("INTERPOLATE", 2),
+        OP_PRIM => ("PRIM", 1),
         OP_ENV_NEW => ("ENV_NEW", 2),
         OP_ENV_SET => ("ENV_SET", 2),
         OP_ENV_GET => ("ENV_GET", 4),

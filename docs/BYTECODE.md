@@ -150,10 +150,100 @@ instruction even if it was a thunk before (in-place update, see below).
 | `$40` | `THUNK` | `u16 chunk` | `→ t` | allocate `THUNK { code = chunk, env = env }` |
 | `$41` | `FORCE` | | `t → v` | see below |
 | `$42` | `RETURN` | | `v →` | end of chunk: hand `v` to whoever forced this chunk, or, for the entry chunk, to the harness |
+| `$24` | `LIST` | `u16 n` | `e1 … en → l` | allocate `LIST` of the `n` values in push order. Elements are **not** forced |
+| `$25` | `CONCAT` | | `a b → a++b` | forces both; `LIST` only |
+| `$26` | `ATTRS` | `u16 n` | `k1 v1 … kn vn → s` | allocate `ATTRS`: names are `STRING` values pushed **in sorted order** by the generator (it refuses duplicates); the VM hashes each name (HEAP.md) into the key column. Values are not forced |
+| `$27` | `SELECT` | | `s k → v` | forces `s` (must be `ATTRS`); `k` is a `STRING`; missing → `E_NOATTR` |
+| `$28` | `TRY_SELECT` | | `s k → v \| ∅` | as `SELECT`, but a missing attribute **or a non-`ATTRS` `s`** pushes the not-found marker ∅ (the null pointer, never otherwise a value) instead of aborting — Nix's `or` catches both |
+| `$29` | `JMP_IF_NOTFOUND` | `i16 rel` | `x → x` | peeks; jumps if the top is ∅. The compiler emits `POP` on the taken path |
+| `$2A` | `HAS_ATTR` | | `s k → bool` | forces `s`; `false` if it is not an `ATTRS` |
+| `$2B` | `UPDATE` | | `a b → a//b` | forces both; merges by name, `b` wins |
+| `$2C` | `INTERPOLATE` | `u16 n` | `p1 … pn → str` | forces the `n` parts; each must be a `STRING` in this slice (Nix coerces paths and `__toString` sets too — later); concatenates. String context is the union — carried from day one as the context pointer, currently always null |
+| `$43` | `PRIM` | `u8 id` | `a1 … ak → v` | run primop `id` (table below) on its `k` arguments, which are on the stack unforced; the primop forces what it needs |
+
+`ADD` is polymorphic at runtime: two `INT`s add, two `STRING`s concatenate (context
+union), anything else is `E_TYPE`. `EQ` compares `STRING`s by bytes, `LIST`s
+element-wise and `ATTRS` by name and value (both **deep-forcing**, as Nix does),
+and different types compare unequal.
+
+### Primops
+
+`builtins.NAME` — when `builtins` is not shadowed — and the unqualified globals
+(`map`, `toString`, `throw`, `abort`, `isNull`, `removeAttrs`, `baseNameOf`,
+`dirOf`, …) compile to an ordinary `LAMBDA` whose body is a chunk the generator
+synthesises once per program: `ENV_GET` for each argument (outermost first), `PRIM
+id`, `RETURN`, nested one lambda per argument. So a primop **is** a function value:
+it curries, partially applies, and is passed lazily-thunked arguments like any
+other — and the VM needs no primop object type. `builtins.NAME` for a `NAME` not
+in this table is refused by the generator, by name, so the scoreboard shows which
+primop would move the most tests.
+
+| Id | Name | Arity | Semantics (this slice) |
+|---|---|---:|---|
+| `$00` | `length` | 1 | `LIST` → `INT` |
+| `$01` | `head` | 1 | first element, forced; empty → `E_INDEX` |
+| `$02` | `tail` | 1 | new `LIST` without the first; empty → `E_INDEX` |
+| `$03` | `elemAt` | 2 | `list i`; out of range → `E_INDEX` |
+| `$04` | `map` | 2 | `f list` → new `LIST` of **thunks** `f x` — lazy, as Nix's is |
+| `$05` | `filter` | 2 | `f list`; forces `f x` for each |
+| `$06` | `foldl'` | 3 | `f z list`; strict accumulator |
+| `$07` | `concatLists` | 1 | `[ [..] [..] ]` → flat `LIST` |
+| `$08` | `genList` | 2 | `f n` → `[ (f 0) … (f (n-1)) ]`, thunks |
+| `$09` | `elem` | 2 | `x list` → `BOOL`, `EQ` semantics |
+| `$0A` | `any` | 2 | `f list` |
+| `$0B` | `all` | 2 | `f list` |
+| `$0C` | `concatMap` | 2 | `f list` |
+| `$0D` | `attrNames` | 1 | `ATTRS` → `LIST` of `STRING`s, sorted (the name column as stored) |
+| `$0E` | `attrValues` | 1 | `ATTRS` → `LIST` of values in name order |
+| `$0F` | `hasAttr` | 2 | `name set` |
+| `$10` | `getAttr` | 2 | `name set`; missing → `E_NOATTR` |
+| `$11` | `stringLength` | 1 | bytes |
+| `$12` | `substring` | 3 | `start len str`; clamps like Nix; negative `start` → `E_INDEX` |
+| `$13` | `toString` | 1 | `STRING` as is; `INT` in decimal; `BOOL` → `"1"`/`""`; `NULL` → `""`; `LIST` → elements joined by spaces |
+| `$14` | `concatStringsSep` | 2 | `sep list` |
+| `$15` | `throw` | 1 | forces the message; aborts with `E_THROW`, the `STRING` pointer at `$0300` |
+| `$16` | `abort` | 1 | as `throw`, `E_ABORT` |
+| `$17` | `seq` | 2 | forces `a`, returns `b` |
+| `$18` | `deepSeq` | 2 | deep-forces `a`, returns `b` |
+| `$19` | `typeOf` | 1 | `"int"`, `"bool"`, `"null"`, `"string"`, `"list"`, `"set"`, `"lambda"` |
+| `$1A` | `isInt` | 1 | |
+| `$1B` | `isBool` | 1 | |
+| `$1C` | `isString` | 1 | |
+| `$1D` | `isNull` | 1 | |
+| `$1E` | `isList` | 1 | |
+| `$1F` | `isAttrs` | 1 | |
+| `$20` | `isFunction` | 1 | |
+| `$21` | `add` | 2 | `INT` only |
+| `$22` | `sub` | 2 | |
+| `$23` | `mul` | 2 | `ALU64` |
+| `$24` | `div` | 2 | `ALU64`; `E_DIVZERO` |
+| `$25` | `lessThan` | 2 | `INT` |
+| `$26` | `bitAnd` | 2 | |
+| `$27` | `bitOr` | 2 | |
+| `$28` | `bitXor` | 2 | |
+| `$29` | `listToAttrs` | 1 | `[ { name; value; } … ]`; first name wins, as in Nix |
+| `$2A` | `intersectAttrs` | 2 | names from `a` that are in `b`, values from `b` |
+| `$2B` | `removeAttrs` | 2 | `set [names]` |
+| `$2C` | `partition` | 2 | `f list` → `{ right; wrong; }` |
+| `$2D` | `baseNameOf` | 1 | last path component of a `STRING` |
+| `$2E` | `dirOf` | 1 | everything before it; `"."` if none |
+
+Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`
+diffs the primop table too).
+
+### Deep force and the printer
+
+Before the entry chunk's value is reported it is **deep-forced**: every `LIST`
+element and `ATTRS` value, recursively, so that the harness sees plain data. That
+is what tvix's test runner does, and why the `.exp` files contain no `<CODE>`.
+The harness (`a2min --run-nbc`) then walks the object graph in the nursery and
+prints it the way `nix-instantiate --eval --strict` would: `[ 1 2 ]`, `{ a = 1;
+b = "x"; }` (names sorted, quoted when not identifiers), strings with Nix's
+escapes (`\"`, `\\`, `\n`, `\r`, `\t`, `\${`), `<LAMBDA>` for functions.
 
 Every gap in the numbering is deliberate room for the next slice (`$06`–`$0F`
-constants and strings, `$15` string ops, `$24`–`$2F` attrs/list ops, `$36`–`$3F`
-`with` and formals, `$43`+ builtins).
+constants, `$15` string ops, `$2D`–`$2F` more attrs/list ops, `$36`–`$3F` `with`,
+formals and `TAIL_CALL`, `$44`+ `tryEval`).
 
 ### `FORCE`, blackholing, in-place update
 
@@ -207,6 +297,11 @@ generator makes the decision per syntactic position:
 | the argument in `f x` | **lazy**: a literal directly, a variable as a pointer copy, anything else a `THUNK`. `(x: 1) (1 / 0)` is `1` |
 | body of a lambda | strict, in its own chunk, ending in `RETURN`; its scope is one binding (the parameter) whose parent is the closure's environment |
 | condition of `assert` | strict; `ASSERT` forces it. The body follows inline |
+| elements of a list literal | **lazy** (same rule as arguments): `[ (1 / 0) ]` is a fine list until element 0 is forced |
+| values of an attribute set literal | **lazy**; names are `STRING` constants, sorted by bytes at compile time |
+| parts of an interpolated string | strict — the string is needed whole |
+| the set in `a.b`, `a ? b`, both sides of `//` and `++` | strict |
+| `inherit x;` in a `let` | a pointer copy from the scope **outside** the `let` (`x = x` would be a self-reference); `inherit (e) x;` is `x = e.x`, lazy |
 
 So `let x = 1 + 2; y = x; in if y > 2 then x else 0` compiles to one thunk (`x`),
 no thunk for `y` — its initialiser `x` is a bare variable and `ENV_GET` of an
@@ -252,20 +347,23 @@ a -> b   ≡   !a || b
 
 ## Result reporting (harness contract)
 
-The entry chunk's `RETURN` value is written by the VM to `$0300`:
+The entry chunk's `RETURN` value is deep-forced, and its **pointer** is written by
+the VM to `$0300`:
 
 ```
-$0300  tag        1 byte: INT $01, BOOL $02, NULL $03
-$0301  payload    INT: 8 bytes signed LE.  BOOL: 1 byte
+$0300  value      4-byte pointer to the (deep-forced) result object, HEAP.md layout
 $0320  status     $01 done; $FF error, with the error code at $0321
 ```
 
-A `LAMBDA` result is reported by tag alone; the harness prints `<LAMBDA>`, as Nix does.
+The harness reads the object graph straight out of the nursery. On `E_THROW` and
+`E_ABORT`, `$0300` holds the message `STRING` instead.
 
 Error codes: `E_BADOP $01`, `E_TYPE $02`, `E_DIVZERO $03`, `E_INFREC $04`,
 `E_NOMEM $05` (nursery, value stack or call/force depth exhausted), `E_BADNBC $06`
 (malformed image, or a slot read before it was set — a generator bug), `E_NOCARD
-$07` (`MUL`/`DIV` with no card in any slot), `E_ASSERT $08`. The harness (`a2min --run-nbc`) prints the value in
+$07` (`MUL`/`DIV` with no card in any slot), `E_ASSERT $08`, `E_THROW $09`,
+`E_ABORT $0A`, `E_NOATTR $0B` (selecting a missing attribute), `E_INDEX $0C`
+(`head []`, `elemAt` out of range, negative `substring` start). The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.
 
@@ -275,8 +373,15 @@ Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corp
    Gate: `checks.scoreboard` passes every corpus test the generator can compile,
    and the count is in `tests/corpus/expected-pass.txt` so it can only go up.
 2. **a. Lambdas, application, `assert`.** Done — `LAMBDA`, `CALL`, `ASSERT`.
-   **b.** Strings (with context pointers from day one), lists, attribute sets and
-   selection (CPU-side on young sets, `LOOKUP` on promoted ones), `builtins`.
+   **b. Strings, lists, attribute sets, selection, 47 primops.** Done —
+   `target/vm/data.s`, `equal.s`, `prims.s`. Selection on young sets is a
+   CPU-side hash scan; `LOOKUP` serves promoted sets once slice 4 promotes.
+   Two lessons the VM source records: any routine that runs bytecode (`FORCE`,
+   `CALL`, equality, deep force) clobbers every scratch variable, so binary
+   operations force both operands before reading either (`force_two`) and loops
+   that call back into Nix keep their state on the CPU stack; and the VM binary
+   is linker-capped at 12 KB because the first time it grew into the nursery the
+   `true`/`false` singletons were silently overwritten.
 3. `with`, `rec`, formals, inline caches, and **`TAIL_CALL`**: a `CALL` that is the
    last instruction before `RETURN` reuses the frame instead of nesting. Without
    it `eval-okay-tail-call-1` (100 000 calls) exhausts the call stack — and without

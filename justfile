@@ -208,7 +208,7 @@ nbc file: nbc-build
 asm-vm:
     mkdir -p target/build
     ca65 --cpu 65816 -I target/vm -o target/build/vm.o -l target/build/vm.lst target/vm/vm.s
-    ld65 -C target/tests/apple2.cfg -o target/build/vm.bin -m target/build/vm.map target/build/vm.o
+    ld65 -C target/vm/vm.cfg -o target/build/vm.bin -m target/build/vm.map target/build/vm.o
     @ls -l target/build/vm.bin
 
 # Compile one .nix file and run it on the VM under a2min.

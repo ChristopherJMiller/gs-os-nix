@@ -43,6 +43,11 @@ fn write_chunk(ch: &Chunk) -> Vec<u8> {
                 out.push(K_INT);
                 out.extend_from_slice(&v.to_le_bytes());
             }
+            Const::Str(s) => {
+                out.push(K_STRING);
+                out.extend_from_slice(&(s.len() as u16).to_le_bytes());
+                out.extend_from_slice(s.as_bytes());
+            }
         }
     }
     out.extend_from_slice(&ch.code);
@@ -93,6 +98,12 @@ pub fn read(b: &[u8]) -> Result<Image, String> {
                     consts.push(Const::Int(i64::from_le_bytes(s.try_into().unwrap())));
                     p += 9;
                 }
+                Some(&K_STRING) => {
+                    let len = u16_at(b, p + 1)? as usize;
+                    let s = b.get(p + 3..p + 3 + len).ok_or("truncated string constant")?;
+                    consts.push(Const::Str(String::from_utf8_lossy(s).into_owned()));
+                    p += 3 + len;
+                }
                 Some(k) => return Err(format!("unknown constant kind {k:#04x}")),
                 None => return Err("truncated constant".into()),
             }
@@ -111,6 +122,7 @@ pub fn disassemble(img: &Image) -> String {
         for (ki, k) in ch.consts.iter().enumerate() {
             match k {
                 Const::Int(v) => s.push_str(&format!("  k{ki} = INT {v}\n")),
+                Const::Str(v) => s.push_str(&format!("  k{ki} = STRING {v:?}\n")),
             }
         }
         let mut pc = 0;
@@ -126,6 +138,9 @@ pub fn disassemble(img: &Image) -> String {
                         }
                         (OP_ENV_GET, [d0, d1, i0, i1]) => {
                             format!("{name} depth {} index {}", u16::from_le_bytes([*d0, *d1]), u16::from_le_bytes([*i0, *i1]))
+                        }
+                        (OP_PRIM, [id]) => {
+                            format!("{name} {}", primop_name(*id).unwrap_or("?"))
                         }
                         (_, [lo, hi]) => format!("{name} {}", u16::from_le_bytes([*lo, *hi])),
                         _ => name.to_string(),
@@ -161,6 +176,13 @@ mod tests {
         let img = read(&bytes).unwrap();
         assert_eq!(img.chunks, chunks);
         assert!(disassemble(&img).contains("THUNK 1"));
+
+        let chunks = compile(&parse("{ a = \"x\\ny\"; } // builtins.length [ ]").unwrap()).unwrap();
+        let img = read(&write(&chunks)).unwrap();
+        assert_eq!(img.chunks, chunks);
+        let dis = disassemble(&img);
+        assert!(dis.contains("STRING \"x\\ny\""), "{dis}");
+        assert!(dis.contains("PRIM length"), "{dis}");
     }
 
     #[test]

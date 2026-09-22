@@ -134,7 +134,7 @@
             patchShebangs scripts
             mkdir -p target/build
             ca65 --cpu 65816 -I target/vm -o target/build/vm.o target/vm/vm.s
-            ld65 -C target/tests/apple2.cfg -o target/build/vm.bin target/build/vm.o
+            ld65 -C target/vm/vm.cfg -o target/build/vm.bin target/build/vm.o
             verilator --cc --exe --build -j $NIX_BUILD_CORES \
               -Irtl --top-module a2nix_card \
               -Wall -Wno-DECLFILENAME \

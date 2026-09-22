@@ -51,6 +51,7 @@
 #include "heapmem.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -74,8 +75,9 @@ constexpr uint16_t HALT_ADDR   = 0xFFFE;        // RTS from the entry point land
 constexpr uint16_t RESULT      = 0x0300;
 constexpr uint16_t RESULT_STAT = 0x0320;
 constexpr uint16_t SELFTEST_RESULT = 0x0400;    // the native self-test's word table
-constexpr uint16_t NBC_BASE    = 0x8000;        // where --run-nbc places the image
+constexpr uint16_t NBC_BASE    = 0x9000;        // where --run-nbc places the image (vm.s map)
 constexpr uint16_t NBC_MAX     = 0x2000;
+constexpr uint32_t VSTACK      = 0xB000;
 
 int card_slot = 4;
 
@@ -86,6 +88,12 @@ std::vector<uint8_t> ram(RAM_BYTES);// the 65816's own address space
 uint64_t card_cycles = 0;
 uint64_t cpu_cycles = 0;
 uint64_t slot_accesses = 0;
+
+// The last few instruction addresses, printed when a VM run ends in an error:
+// with target/build/vm.lst that names the routine that raised it.
+constexpr int TRACE_LEN = 24;
+uint32_t trace_pc[TRACE_LEN];
+uint64_t trace_n = 0;
 
 // See the port contract in sim/heapmem.h for why settle/commit straddle the edge.
 void tick() {
@@ -344,6 +352,7 @@ void step() {
     if (cpu.pbr == 0 && (cpu.pc == HALT_ADDR || cpu.pc == HALT_ADDR + 1)) { cpu.halted = true; return; }
 
     const uint32_t op_pc = pcaddr();
+    trace_pc[trace_n++ % TRACE_LEN] = op_pc;
     const uint8_t op = fetch8();
     int cyc = 2;
     ++cpu.instructions;
@@ -673,6 +682,90 @@ int selftest(const char *bin_path) {
     return 0;
 }
 
+// --- Nix-syntax printer over the nursery ------------------------------------------
+//
+// The VM reports a deep-forced value by pointer (BYTECODE.md "Result reporting");
+// this walks the object graph in RAM and prints it the way `nix-instantiate --eval
+// --strict` would, which is what the corpus's .exp files contain.
+uint32_t ram32(uint32_t a) {
+    return static_cast<uint32_t>(ram[a]) | (static_cast<uint32_t>(ram[a + 1]) << 8) |
+           (static_cast<uint32_t>(ram[a + 2]) << 16) | (static_cast<uint32_t>(ram[a + 3]) << 24);
+}
+
+std::string quote_nix(const std::string &s) {
+    std::string out = "\"";
+    for (size_t i = 0; i < s.size(); ++i) {
+        const char c = s[i];
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            case '$': if (i + 1 < s.size() && s[i + 1] == '{') out += "\\$"; else out += '$'; break;
+            default: out += c;
+        }
+    }
+    return out + "\"";
+}
+
+bool is_nix_identifier(const std::string &s) {
+    // What Nix's printer quotes: its keywords. `or` is not one (it is contextual).
+    static const char *keywords[] = { "if", "then", "else", "assert", "with", "let", "in", "rec", "inherit" };
+    if (s.empty() || !(std::isalpha(static_cast<unsigned char>(s[0])) || s[0] == '_')) return false;
+    for (char c : s)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '\'' || c == '-')) return false;
+    for (const char *k : keywords) if (s == k) return false;
+    return true;
+}
+
+std::string nix_string_bytes(uint32_t addr) {
+    const uint32_t len = ram32(addr) >> 8;
+    return std::string(reinterpret_cast<const char *>(&ram[addr + 4]), len);
+}
+
+std::string fmt_value(uint32_t ptr, int depth) {
+    if (depth > 64) return "<DEEP>";
+    if (ptr == 0) return "<NULLPTR>";
+    if (!(ptr & 0x80000000u)) return "<MATURE>";
+    const uint32_t a = ptr & 0xFFFF;
+    const uint8_t tag = ram[a];
+    const uint32_t aux = ram32(a) >> 8;
+    switch (tag) {
+        case TAG_INT: {
+            uint64_t u = 0;
+            for (int i = 0; i < 8; ++i) u |= static_cast<uint64_t>(ram[a + 4 + i]) << (8 * i);
+            return std::to_string(static_cast<long long>(static_cast<int64_t>(u)));
+        }
+        case TAG_BOOL: return ram[a + 4] ? "true" : "false";
+        case TAG_NULL: return "null";
+        case TAG_STRING: return quote_nix(nix_string_bytes(a));
+        case TAG_PATH: return nix_string_bytes(a);
+        case TAG_LIST: {
+            if (aux == 0) return "[ ]";
+            std::string s = "[";
+            for (uint32_t i = 0; i < aux; ++i) s += " " + fmt_value(ram32(a + 4 + 4 * i), depth + 1);
+            return s + " ]";
+        }
+        case TAG_ATTRS: {
+            if (aux == 0) return "{ }";
+            std::string s = "{";
+            for (uint32_t i = 0; i < aux; ++i) {
+                const uint32_t np = ram32(a + 4 + 8 * aux + 4 * i);
+                const std::string name = (np & 0x80000000u) ? nix_string_bytes(np & 0xFFFF) : "<MATURE>";
+                s += " " + (is_nix_identifier(name) ? name : quote_nix(name)) + " = " +
+                     fmt_value(ram32(a + 4 + 4 * aux + 4 * i), depth + 1) + ";";
+            }
+            return s + " }";
+        }
+        case TAG_THUNK: return "<CODE>";
+        case TAG_LAMBDA: return "<LAMBDA>";
+        case TAG_INDIRECT: return fmt_value(ram32(a + 4), depth + 1);
+        case TAG_BLACKHOLE: return "<CYCLE>";
+        default: { char b[16]; std::snprintf(b, sizeof b, "<?%02X>", tag); return b; }
+    }
+}
+
 // --- L4: run one .nbc fixture on the 65816 VM --------------------------------------
 //
 //   a2min --run-nbc <vm.bin> <fixture.nbc>
@@ -710,25 +803,28 @@ int run_nbc(const char *vm_path, const char *nbc_path) {
     if (status == 0xFF) {
         static const char *names[] = { "E_NONE?", "E_BADOP", "E_TYPE", "E_DIVZERO",
                                        "E_INFREC", "E_NOMEM", "E_BADNBC", "E_NOCARD",
-                                       "E_ASSERT" };
+                                       "E_ASSERT", "E_THROW", "E_ABORT", "E_NOATTR",
+                                       "E_INDEX" };
         const uint8_t code = ram[RESULT_STAT + 1];
-        std::printf("error: %s\n", code < sizeof(names) / sizeof(names[0]) ? names[code] : "E_?");
+        const char *name = code < sizeof(names) / sizeof(names[0]) ? names[code] : "E_?";
+        std::printf("  last PCs:");
+        for (uint64_t i = (trace_n > TRACE_LEN ? trace_n - TRACE_LEN : 0); i < trace_n; ++i)
+            std::printf(" %04X", trace_pc[i % TRACE_LEN]);
+        const uint32_t vsp = ram[0x86] | (ram[0x87] << 8);
+        std::printf("\n  vsp=%04X nfree=%04X env=%04X sp=%04X\n", vsp,
+                    ram[0x88] | (ram[0x89] << 8), ram[0x84] | (ram[0x85] << 8), cpu.sp);
+        for (uint32_t s = vsp; s > VSTACK && s > vsp - 12; s -= 4)
+            std::printf("  stack[%d] = %08X %s\n", static_cast<int>((vsp - s) / 4), ram32(s - 4),
+                        fmt_value(ram32(s - 4), 0).c_str());
+        if (code == 0x09 || code == 0x0A)   // the message string travels in RESULT
+            std::printf("error: %s %s\n", name, fmt_value(ram32(RESULT), 0).c_str());
+        else
+            std::printf("error: %s\n", name);
         return 1;
     }
     if (status != 0x01) { std::printf("error: status $%02X\n", status); return 1; }
 
-    switch (ram[RESULT]) {
-        case TAG_INT: {
-            uint64_t u = 0;
-            for (int i = 0; i < 8; ++i) u |= static_cast<uint64_t>(ram[RESULT + 1 + i]) << (8 * i);
-            std::printf("result: %lld\n", static_cast<long long>(static_cast<int64_t>(u)));
-            break;
-        }
-        case TAG_BOOL: std::printf("result: %s\n", ram[RESULT + 1] ? "true" : "false"); break;
-        case TAG_NULL: std::printf("result: null\n"); break;
-        case TAG_LAMBDA: std::printf("result: <LAMBDA>\n"); break;
-        default: std::printf("error: unknown result tag $%02X\n", ram[RESULT]); return 1;
-    }
+    std::printf("result: %s\n", fmt_value(ram32(RESULT), 0).c_str());
     return 0;
 }
 

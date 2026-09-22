@@ -23,8 +23,11 @@
 ;   $0300 RESULT     $0320 status   $0321 error code   (harness contract)
 ;   $0C00 CHUNK_INFO 4 bytes/chunk: code address, constant-table address
 ;   $1000 CTAB       constant pointer tables         $1800 CPU stack (grows down to $1840)
-;   $2000 this program                                $4000 NURSERY (16 KB)
-;   $8000 the .nbc image (8 KB max)                   $A000 value stack (8 KB)
+;   $2000 this program, 12 KB at most -- vm.cfg makes the linker refuse more,
+;         because the first time it grew past $4000 the nursery silently
+;         overwrote the true/false singletons and `n == 0` became a type error
+;         at recursion depth 14
+;   $5000 NURSERY (16 KB)    $9000 the .nbc image (8 KB max)    $B000 value stack (4 KB)
 ;
 ; Every failure is LOUD: an unknown opcode, a bad type, a null slot, a full
 ; nursery or stack, a missing card -- each writes $FF and an E_* code, never a
@@ -56,6 +59,11 @@
         jmp     target
 :
 .endmacro
+.macro  jmi  target
+        bpl     :+
+        jmp     target
+:
+.endmacro
 
 RESULT          = $0300
 RESULT_STAT     = $0320
@@ -66,17 +74,19 @@ CTAB            = $1000
 CTAB_END        = $1800
 CPU_STACK_MIN   = $1840         ; FORCE refuses to nest below this
 CPU_STACK       = $1FFF
-NURSERY         = $4000
-NURSERY_END     = $8000
-NBC_BASE        = $8000
+NURSERY         = $5000
+NURSERY_END     = $9000
+NBC_BASE        = $9000
 NBC_MAX         = $2000
-VSTACK          = $A000
+VSTACK          = $B000
 VSTACK_END      = $C000
 
 T_INT           = $01
 T_BOOL          = $02
 T_NULL          = $03
+T_STRING        = $04
 T_LIST          = $06
+T_ATTRS         = $07
 T_THUNK         = $08
 T_LAMBDA        = $09
 T_INDIRECT      = $0A
@@ -113,6 +123,21 @@ cnext:          .res 2          ; loader: next free CTAB slot
 nchunks:        .res 2
 slot_x:         .res 2          ; card slot * $10, or 0 if no card
 saved_sp:       .res 2
+; slice 2: strings, lists, attribute sets, primops (data.s / prims.s)
+p2:             .res 4          ; a third 32-bit value
+t4:             .res 2
+t5:             .res 2
+t6:             .res 2
+n0:             .res 2          ; element counts
+n1:             .res 2
+ix:             .res 2          ; loop indices
+jx:             .res 2
+kx:             .res 2
+h:              .res 4          ; djb2 hash
+hc:             .res 4          ; hash_t0's private scratch: it must not touch
+hn:             .res 2          ;   p2 or kx, which its callers hold values in
+slen:           .res 2          ; string length in flight
+sav:            .res 2
 
         .code
 
@@ -158,49 +183,14 @@ start:
         jsr     load
         jsr     run             ; the entry chunk; RETURN brings us back here
 
-        ; --- report the result ---
-        jsr     force_top       ; a strict body already forced it; be sure
+        ; --- report the result: deep-forced, by pointer (BYTECODE.md) ---
+        jsr     deep_force_top
         jsr     pop_p0
-        jsr     deref
-        lda     (t0)
-        and     #$00FF
-        sta     t2
-        sep     #$20
-        .a8
+        lda     p0
         sta     RESULT
-        rep     #$20
-        .a16
-        cmp     #T_INT
-        bne     @notint
-        ldy     #4
-        lda     (t0),y
-        sta     RESULT+1
-        ldy     #6
-        lda     (t0),y
-        sta     RESULT+3
-        ldy     #8
-        lda     (t0),y
-        sta     RESULT+5
-        ldy     #10
-        lda     (t0),y
-        sta     RESULT+7
-        bra     @ok
-@notint:
-        cmp     #T_BOOL
-        bne     @notbool
-        ldy     #4
-        lda     (t0),y
-        and     #$00FF
-        sta     RESULT+1
-        bra     @ok
-@notbool:
-        cmp     #T_NULL
-        beq     @ok
-        cmp     #T_LAMBDA       ; reported by tag alone; the harness prints <LAMBDA>
-        beq     @ok
-        lda     #E_TYPE
-        jmp     err_exit
-@ok:    sep     #$20
+        lda     p0+2
+        sta     RESULT+2
+        sep     #$20
         .a8
         lda     #1
         sta     RESULT_STAT
@@ -270,13 +260,36 @@ load:
         sta     CHUNK_INFO+2,x  ; this chunk's constant table
 
 @const: lda     cnt
-        beq     @code
+        jeq     @code
         dec     cnt
         lda     (q)
         and     #$00FF
         cmp     #K_INT
+        beq     @int
+        cmp     #K_STRING
         jne     badnbc
-        lda     #12
+        ; STRING: u16 length, then the bytes
+        ldy     #1
+        lda     (q),y
+        jsr     str_alloc       ; obj, p0, slen
+        lda     q
+        clc
+        adc     #3
+        tax
+        lda     obj
+        clc
+        adc     #4
+        tay
+        lda     slen
+        jsr     copy_bytes
+        lda     q
+        clc
+        adc     #3
+        clc
+        adc     slen
+        sta     q
+        bra     @store
+@int:   lda     #12
         jsr     alloc           ; obj, p0
         lda     #T_INT
         sta     (obj)
@@ -299,9 +312,13 @@ load:
         lda     (q),y
         ldy     #10
         sta     (obj),y
-        lda     cnext
+        lda     q
+        clc
+        adc     #9
+        sta     q
+@store: lda     cnext
         cmp     #CTAB_END
-        bcs     nomem
+        jcs     nomem
         lda     p0
         sta     (cnext)
         ldy     #2
@@ -311,11 +328,7 @@ load:
         clc
         adc     #4
         sta     cnext
-        lda     q
-        clc
-        adc     #9
-        sta     q
-        bra     @const
+        jmp     @const
 
 @code:  ldx     ci
         lda     q               ; code follows the constants
@@ -456,7 +469,7 @@ fetch16:
 ; returns to whoever called run (FORCE, or start for the entry chunk).
 run:
         jsr     fetch8
-        cmp     #OP_RETURN+1
+        cmp     #OP_PRIM+1
         jcs     op_bad
         asl
         tax
@@ -470,16 +483,22 @@ optable:
         .word   op_eq, op_lt, op_le, op_gt, op_ge, op_not                ; $16-$1B
         .word   op_bad, op_bad, op_bad, op_bad                           ; $1C-$1F
         .word   op_jmp, op_jmp_if_false, op_jmp_if_true, op_assert       ; $20-$23
-        .word   op_bad, op_bad, op_bad, op_bad, op_bad, op_bad           ; $24-$29
-        .word   op_bad, op_bad, op_bad, op_bad, op_bad, op_bad           ; $2A-$2F
+        .word   op_list, op_concat, op_attrs, op_select                  ; $24-$27
+        .word   op_try_select, op_jmp_if_notfound                        ; $28-$29
+        .word   op_has_attr, op_update, op_interpolate                   ; $2A-$2C
+        .word   op_bad, op_bad, op_bad                                   ; $2D-$2F
         .word   op_env_new, op_env_set, op_env_get, op_env_pop           ; $30-$33
         .word   op_lambda, op_call                                       ; $34-$35
         .word   op_bad, op_bad, op_bad, op_bad                           ; $36-$39
         .word   op_bad, op_bad, op_bad, op_bad, op_bad, op_bad           ; $3A-$3F
-        .word   op_thunk, op_force, op_return                            ; $40-$42
+        .word   op_thunk, op_force, op_return, op_prim                   ; $40-$43
 
 op_bad: lda     #E_BADOP
         jmp     err_exit
+
+; The `x` register `run` dispatches with is OP*2; `jsr fetch8` above set
+; the flags. RETURN of the entry chunk falls back to `start`. All of the
+; handlers below `jmp run`; RETURN is `rts`.
 
 ; --- constants and singletons ---------------------------------------------
 op_const:
@@ -518,16 +537,13 @@ op_null:
 ; --- integer arithmetic on the CPU ------------------------------------------
 ; Forces and pops both operands: t0 = a, t1 = b, both verified INT.
 binary_ints:
-        jsr     force_top
-        jsr     pop_p0
-        jsr     deref
+        jsr     force_two
         jsr     need_int
-        lda     t0
-        sta     t1
-        jsr     force_top
-        jsr     pop_p0
-        jsr     deref
-        jmp     need_int
+        lda     (t1)
+        and     #$00FF
+        cmp     #T_INT
+        jne     type_err
+        rts
 
 need_int:                       ; t0 must be an INT
         lda     (t0)
@@ -554,8 +570,30 @@ new_int:
 ; the next ADC/SBC depends on. The first draft used CPY and every value with a
 ; non-zero upper word came out off by 65536 -- the same trap mul64_bench.s
 ; documents, caught here by tests/fixtures/eval-okay-carry-chain.nix.
+; ADD is polymorphic: two INTs add, two STRINGs concatenate.
 op_add:
-        jsr     binary_ints
+        jsr     force_two
+        lda     (t0)
+        and     #$00FF
+        cmp     #T_STRING
+        beq     @str
+        cmp     #T_INT
+        jne     type_err
+        lda     (t1)
+        and     #$00FF
+        cmp     #T_INT
+        jne     type_err
+        jmp     add_ints
+@str:   lda     (t1)
+        and     #$00FF
+        cmp     #T_STRING
+        jne     type_err
+        jsr     str_concat      ; t0 ++ t1 -> obj/p0
+        jsr     push_p0
+        jmp     run
+
+; t0 = a, t1 = b, both INT (a was verified; b's tag was checked above).
+add_ints:
         jsr     new_int
         clc
         ldy     #4
@@ -719,25 +757,100 @@ push_bool_z:
 @t:     lda     #obj_true
         jmp     push_static
 
-op_lt:  jsr     binary_ints
-        jsr     cmp64
+; Ordering is polymorphic like Nix's: two INTs, or two STRINGs by bytes.
+; cmp_values: pops and forces both, A = 0 (a < b), 1 (equal), 2 (a > b).
+cmp_values:
+        jsr     force_two
+        lda     (t0)
+        and     #$00FF
+        sta     t2
+        lda     (t1)
+        and     #$00FF
+        cmp     t2
+        jne     type_err
+        cmp     #T_INT
+        jeq     cmp64
+        cmp     #T_STRING
+        jeq     str_cmp
+        cmp     #T_LIST
+        jeq     cmp_lists
+        jmp     type_err
+
+; cmp_lists: LISTs t0 (a) and t1 (b), lexicographic by element with the same
+; ordering recursively; a proper prefix is less. Frame: i 1,s  b 3,s  a 5,s.
+cmp_lists:
+        lda     t0
+        pha
+        lda     t1
+        pha
+        lda     #0
+        pha
+@loop:  lda     5,s
+        sta     t0
+        jsr     aux_t0
+        sta     n0              ; |a|
+        lda     3,s
+        sta     t0
+        jsr     aux_t0
+        sta     n1              ; |b|
+        lda     1,s
+        cmp     n0
+        beq     @a_end
+        lda     1,s
+        cmp     n1
+        beq     @greater        ; b is a proper prefix of a
+        lda     5,s
+        sta     t0
+        lda     1,s
+        jsr     elem_t0
+        jsr     push_p0
+        lda     3,s
+        sta     t0
+        lda     1,s
+        jsr     elem_t0
+        jsr     push_p0
+        jsr     cmp_values      ; pops both; runs bytecode
+        cmp     #1
+        bne     @decided
+        lda     1,s
+        inc     a
+        sta     1,s
+        bra     @loop
+@a_end: lda     1,s
+        cmp     n1
+        beq     @equal
+        lda     #0              ; a is a proper prefix of b
+        bra     @decided
+@greater:
+        lda     #2
+        bra     @decided
+@equal: lda     #1
+@decided:
+        sta     t2
+        pla
+        pla
+        pla
+        lda     t2
+        rts
+
+op_lt:  jsr     cmp_values
         cmp     #0
         jsr     push_bool_z
         jmp     run
-op_gt:  jsr     binary_ints
-        jsr     cmp64
+op_gt:  jsr     cmp_values
         cmp     #2
         jsr     push_bool_z
         jmp     run
-op_le:  jsr     binary_ints
-        jsr     cmp64
-        cmp     #2
-        beq     @f
-        lda     #0
-@f:     jsr     push_bool_z     ; Z set unless a > b
+op_le:  jsr     cmp_values
+        cmp     #2              ; a <= b unless a > b
+        beq     @false
+        lda     #obj_true
+        jsr     push_static
         jmp     run
-op_ge:  jsr     binary_ints
-        jsr     cmp64
+@false: lda     #obj_false
+        jsr     push_static
+        jmp     run
+op_ge:  jsr     cmp_values
         cmp     #0
         beq     @f
         lda     #0
@@ -748,51 +861,35 @@ op_ge:  jsr     binary_ints
         jmp     run
 
 ; --- equality ------------------------------------------------------------------
+; a b -> bool. The comparison itself is values_equal (data.s), which deep-forces
+; lists and sets element-wise as Nix does.
+; Two functions compared at the TOP level are never equal, even the same
+; object -- C++ Nix's rule, which the corpus pins (eval-okay-cppnix-value-
+; pointer-equality-encapsulation). Inside a list or set the pointer shortcut in
+; values_equal applies, so `[ f ] == [ f ]` is true.
 op_eq:
-        jsr     force_top
-        jsr     pop_p0
-        jsr     deref
-        lda     t0
-        sta     t1
-        jsr     force_top
-        jsr     pop_p0
-        jsr     deref
+        jsr     force_two       ; t0 = a, t1 = b, both values
         lda     (t0)
         and     #$00FF
-        sta     t2
+        cmp     #T_LAMBDA
+        bne     @go
         lda     (t1)
         and     #$00FF
-        cmp     t2
-        bne     @false          ; different types are unequal
-        cmp     #T_INT
-        beq     @int
-        cmp     #T_BOOL
-        beq     @bool
-        cmp     #T_NULL
-        beq     @true
-        jmp     type_err
-@int:   ldy     #4
-@w:     lda     (t0),y
-        cmp     (t1),y
-        bne     @false
-        iny
-        iny
-        cpy     #12
-        bne     @w
-        bra     @true
-@bool:  ldy     #4
-        lda     (t0),y
-        and     #$00FF
-        sta     t2
-        lda     (t1),y
-        and     #$00FF
-        cmp     t2
-        bne     @false
-@true:  lda     #obj_true
+        cmp     #T_LAMBDA
+        bne     @go
+        lda     #obj_false
         jsr     push_static
         jmp     run
-@false: lda     #obj_false
-        jsr     push_static
+@go:    lda     t0
+        sta     p0
+        lda     #$8000
+        sta     p0+2
+        lda     t1
+        sta     p1
+        lda     #$8000
+        sta     p1+2
+        jsr     values_equal    ; p0 == p1 -> Z set if equal
+        jsr     push_bool_z
         jmp     run
 
 op_not:
@@ -1025,12 +1122,24 @@ op_return:
 ; CALL: f a -> v. The callee's environment is a two-element LIST: [0] = the
 ; closure's captured environment, [1] = the argument, unforced.
 op_call:
+        jsr     do_call
+        jmp     run
+
+; do_call: the function and its argument are the top two values of the stack
+; (argument on top). On return both are replaced by the call's value. Primops
+; use this to apply Nix functions from native code (prims.s, call_with). The
+; function is forced IN PLACE first: forcing runs bytecode, which may clobber
+; any zero-page scratch, so the argument stays on the stack until then.
+do_call:
+        lda     #2
+        jsr     slot_addr
+        sta     t6
+        jsr     force_slot      ; f, forced in place
         jsr     pop_p0          ; the argument, kept in p1 across alloc
         lda     p0
         sta     p1
         lda     p0+2
         sta     p1+2
-        jsr     force_top
         jsr     pop_p0
         jsr     deref           ; t0 = the lambda
         lda     (t0)
@@ -1082,7 +1191,7 @@ op_call:
         sta     ctab
         pla
         sta     pc
-        jmp     run
+        rts
 
 ; Force the value on top of the stack, in place. On return the top is a value.
 force_top:
@@ -1151,12 +1260,16 @@ force_top:
         bpl     @deep2          ; a mature result is not something slice 1 makes
         lda     p0
         sta     t1
-        ; in-place update: a value of 12 bytes or fewer overwrites the thunk
+        ; in-place update: a value of 12 bytes or fewer overwrites the thunk.
+        ; A THUNK result (a primop returning an unforced argument) is copied
+        ; too, and the loop below then forces it.
         lda     (t1)
         and     #$00FF
         cmp     #T_INT
         beq     @copy12
         cmp     #T_LAMBDA
+        beq     @copy12
+        cmp     #T_THUNK
         beq     @copy12
         cmp     #T_BOOL
         beq     @copy8
@@ -1200,6 +1313,11 @@ force_top:
         jmp     err_exit
 @deep2: lda     #E_TYPE
         jmp     err_exit
+
+; ===========================================================================
+        .include "data.s"       ; strings, lists, attribute sets
+        .include "equal.s"      ; structural equality, deep force
+        .include "prims.s"      ; the primop table
 
 ; ===========================================================================
 ; The shared singletons. Immutable: FORCE never touches a value, and nothing

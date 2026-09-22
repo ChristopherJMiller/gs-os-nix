@@ -88,9 +88,73 @@ def selftest():
     return 0
 
 
+def prims_from_doc(path):
+    """Rows of the table under '### Primops': | `$00` | `length` | 1 | ..."""
+    prims = {}
+    row = re.compile(r"^\|\s*`\$([0-9A-Fa-f]{2})`\s*\|\s*`([A-Za-z0-9_']+)`\s*\|\s*(\d+)\s*\|")
+    in_section = False
+    with open(path) as f:
+        for line in f:
+            if line.startswith("#"):
+                in_section = line.strip() == "### Primops"
+                continue
+            if not in_section:
+                continue
+            m = row.match(line)
+            if m:
+                prims[m.group(2)] = (int(m.group(1), 16), int(m.group(3)))
+    return prims
+
+
+def prims_from_rs(path):
+    prims = {}
+    row = re.compile(r'^\s*\("([A-Za-z0-9_\']+)", 0x([0-9A-Fa-f]{2}), (\d+)\),')
+    with open(path) as f:
+        for line in f:
+            m = row.match(line)
+            if m:
+                prims[m.group(1)] = (int(m.group(2), 16), int(m.group(3)))
+    return prims
+
+
+def prims_from_inc(path, names):
+    """PRIM_LENGTH = $00 ; 1 -- matched back to the Nix name by upper-casing it
+    and dropping the prime."""
+    by_symbol = {n.replace("'", "").upper(): n for n in names}
+    prims = {}
+    decl = re.compile(r"^PRIM_([A-Z0-9_]+)\s*=\s*\$([0-9A-Fa-f]{2})\s*;\s*(\d+)\s*$")
+    with open(path) as f:
+        for line in f:
+            m = decl.match(line)
+            if m and m.group(1) in by_symbol:
+                prims[by_symbol[m.group(1)]] = (int(m.group(2), 16), int(m.group(3)))
+            elif m:
+                prims["PRIM_" + m.group(1)] = (int(m.group(2), 16), int(m.group(3)))
+    return prims
+
+
+def diff(label, ref, tables):
+    bad = 0
+    for name, t in tables.items():
+        for key in sorted(set(ref) | set(t)):
+            a, b = ref.get(key), t.get(key)
+            if a != b:
+                bad += 1
+                print(f"  {label} {key:<18} {DOC}: {a!s:14} {name}: {b!s}")
+    return bad
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
         return selftest()
+
+    prim_doc = prims_from_doc(DOC)
+    prim_tables = {RS: prims_from_rs(RS), INC: prims_from_inc(INC, prim_doc.keys())}
+    if not prim_doc or any(not t for t in prim_tables.values()):
+        print("primop table: parsed nothing from one source -- a pattern is stale", file=sys.stderr)
+        return 1
+    prim_bad = diff("primop", prim_doc, prim_tables)
+
     tables = {DOC: from_doc(DOC), RS: from_rs(RS), INC: from_inc(INC)}
     for name, t in tables.items():
         if not t:
@@ -113,10 +177,10 @@ def main():
                 fa = f"${a:02X}" if a is not None else "missing"
                 fb = f"${b:02X}" if b is not None else "missing"
                 print(f"  {op:<14} {DOC}: {fa:8} {name}: {fb}")
-    if bad:
-        print(f"NBC OPCODES FAIL: {bad} disagreement(s)", file=sys.stderr)
+    if bad or prim_bad:
+        print(f"NBC OPCODES FAIL: {bad + prim_bad} disagreement(s)", file=sys.stderr)
         return 1
-    print(f"NBC OPCODES OK: {len(ref)} opcodes agree across {DOC}, {RS}, {INC}")
+    print(f"NBC OPCODES OK: {len(ref)} opcodes and {len(prim_doc)} primops agree across {DOC}, {RS}, {INC}")
     return 0
 
 

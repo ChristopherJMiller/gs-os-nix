@@ -99,6 +99,27 @@ A key hash collision is possible, so a CAM match is a *candidate*: the caller mu
 still compare the name. `LOOKUP` returns the match index; the 65816 confirms it with
 `MEMCMP`. Getting this wrong would silently return the wrong attribute.
 
+**The key hash is djb2**, computed by the CPU: `h = 5381; for each byte c: h = h*33
++ c`, 32-bit wrapping. The card never computes it — `LOOKUP` takes the search hash
+as a parameter — so the choice is the 65816's: `h*33` is a shift and an add, ~30
+cycles per byte, where FNV-1a's multiply would cost ~200. It is not a cryptographic
+hash and is not meant to be; the name compare after the match is what makes the
+lookup correct.
+
+**Young attribute sets are searched by the CPU** (a linear scan of the hash column,
+then the name compare), because the card cannot read CPU RAM. `LOOKUP` serves sets
+that have been promoted. Both paths exist and both are measured; D6 says the
+long-lived sets — the ones looked up most — are the promoted ones.
+
+`STRING` bytes are **zero-padded** to the word boundary, so two strings of equal
+length compare equal by whole words.
+
+**Bit 7 of `aux2` (bit 23 of `aux`) is a transient visit mark.** The VM's deep
+force sets it on a `LIST` or `ATTRS` while descending into it and clears it on the
+way out, so a cyclic structure (`let as = { y = as; }`) terminates as Nix's
+`deepSeq` does. No real count reaches bit 23, nothing on the card runs while the
+CPU deep-forces, and no object is ever handed to the card with the mark set.
+
 ## Alignment and minimum size
 
 Headers are 4-byte aligned. `ALLOC` rounds every request up to a multiple of 4, so

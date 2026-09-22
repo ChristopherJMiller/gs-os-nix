@@ -1,15 +1,19 @@
 //! AST -> chunks, following the thunk-placement rules in docs/BYTECODE.md.
 //!
-//! Scopes mirror the VM's environment chain exactly: each `let` pushes one scope,
-//! and a variable resolves to (depth, index) where depth counts enclosing lets and
-//! index is 1-based within the let (element 0 of an environment is its parent).
+//! Scopes mirror the VM's environment chain exactly: each `let` (and each lambda
+//! parameter) pushes one scope, and a variable resolves to (depth, index) where
+//! depth counts enclosing scopes and index is 1-based within the scope (element 0
+//! of an environment is its parent).
 
-use crate::ast::{unsupported, BinOp, Expr, Pos, Unsupported};
+use std::collections::HashMap;
+
+use crate::ast::{unsupported, BinOp, Expr, Pos, StrPart, Unsupported};
 use crate::opcodes::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Const {
     Int(i64),
+    Str(String),
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -21,6 +25,8 @@ pub struct Chunk {
 pub struct Compiler {
     pub chunks: Vec<Chunk>,
     scopes: Vec<Vec<String>>,
+    /// Synthesised primop lambdas, one per program: Nix name -> chunk index.
+    builtins: HashMap<String, usize>,
 }
 
 /// What a name resolved to.
@@ -29,13 +35,19 @@ enum Binding {
     Env(u16, u16),
     /// The global `true`, `false`, `null`.
     Literal(u8),
+    /// An unqualified global primop such as `map` or `toString`.
+    Global(&'static str),
 }
 
 pub fn compile(program: &Expr) -> Result<Vec<Chunk>, Unsupported> {
-    let mut c = Compiler { chunks: vec![Chunk::default()], scopes: Vec::new() };
+    let mut c = Compiler { chunks: vec![Chunk::default()], scopes: Vec::new(), builtins: HashMap::new() };
     c.strict(program, 0)?;
     c.emit(0, OP_RETURN);
     Ok(c.chunks)
+}
+
+fn nowhere() -> Pos {
+    Pos { line: 0, col: 0 }
 }
 
 impl Compiler {
@@ -57,10 +69,8 @@ impl Compiler {
     fn patch_jump(&mut self, chunk: usize, at: usize) -> Result<(), Unsupported> {
         let target = self.chunks[chunk].code.len();
         let rel = target as i64 - (at as i64 + 2);
-        let rel16 = i16::try_from(rel).map_err(|_| Unsupported {
-            pos: Pos { line: 0, col: 0 },
-            what: "jump offset out of range".into(),
-        })?;
+        let rel16 = i16::try_from(rel)
+            .map_err(|_| Unsupported { pos: nowhere(), what: "jump offset out of range".into() })?;
         self.chunks[chunk].code[at..at + 2].copy_from_slice(&rel16.to_le_bytes());
         Ok(())
     }
@@ -73,14 +83,22 @@ impl Compiler {
                 consts.len() - 1
             }
         };
-        u16::try_from(idx).map_err(|_| Unsupported {
-            pos: Pos { line: 0, col: 0 },
-            what: "more than 65535 constants in one chunk".into(),
-        })
+        u16::try_from(idx)
+            .map_err(|_| Unsupported { pos: nowhere(), what: "more than 65535 constants in one chunk".into() })
+    }
+    fn emit_const(&mut self, chunk: usize, k: Const) -> Result<(), Unsupported> {
+        let idx = self.constant(chunk, k)?;
+        self.emit(chunk, OP_CONST);
+        self.emit_u16(chunk, idx);
+        Ok(())
+    }
+    fn count(n: usize, what: &str) -> Result<u16, Unsupported> {
+        u16::try_from(n).map_err(|_| Unsupported { pos: nowhere(), what: format!("more than 65535 {what}") })
     }
 
-    fn resolve(&self, name: &str, pos: Pos) -> Result<Binding, Unsupported> {
-        for (depth, scope) in self.scopes.iter().rev().enumerate() {
+    /// Resolves `name`, ignoring the innermost `skip` scopes.
+    fn resolve_from(&self, name: &str, skip: usize, pos: Pos) -> Result<Binding, Unsupported> {
+        for (depth, scope) in self.scopes.iter().rev().enumerate().skip(skip) {
             if let Some(i) = scope.iter().position(|n| n == name) {
                 return Ok(Binding::Env(depth as u16, (i + 1) as u16));
             }
@@ -89,20 +107,75 @@ impl Compiler {
             "true" => Ok(Binding::Literal(OP_TRUE)),
             "false" => Ok(Binding::Literal(OP_FALSE)),
             "null" => Ok(Binding::Literal(OP_NULL)),
-            _ => unsupported(pos, format!("unbound variable `{name}`")),
+            _ => match GLOBALS.iter().find(|g| **g == name) {
+                Some(g) => Ok(Binding::Global(g)),
+                None => unsupported(pos, format!("unbound variable `{name}`")),
+            },
         }
+    }
+    fn resolve(&self, name: &str, pos: Pos) -> Result<Binding, Unsupported> {
+        self.resolve_from(name, 0, pos)
+    }
+    fn is_shadowed(&self, name: &str) -> bool {
+        self.scopes.iter().any(|s| s.iter().any(|n| n == name))
+    }
+
+    /// `builtins.NAME` with `builtins` unshadowed, or a global: the primop's
+    /// synthesised lambda. Refused by name if the VM lacks the primop, so the
+    /// scoreboard can say which one would move the most tests.
+    fn emit_builtin(&mut self, name: &str, pos: Pos, chunk: usize) -> Result<(), Unsupported> {
+        let Some((id, arity)) = primop(name) else {
+            return unsupported(pos, format!("builtins.{name}"));
+        };
+        let entry = match self.builtins.get(name) {
+            Some(&c) => c,
+            None => {
+                // One lambda per argument, nested; the innermost pushes every
+                // argument outermost-first and runs the primop.
+                let mut inner = self.chunks.len();
+                self.chunks.push(Chunk::default());
+                for d in (0..arity).rev() {
+                    self.emit(inner, OP_ENV_GET);
+                    self.emit_u16(inner, d as u16);
+                    self.emit_u16(inner, 1);
+                }
+                self.emit(inner, OP_PRIM);
+                self.emit(inner, id);
+                self.emit(inner, OP_RETURN);
+                for _ in 1..arity {
+                    let outer = self.chunks.len();
+                    self.chunks.push(Chunk::default());
+                    self.emit(outer, OP_LAMBDA);
+                    self.emit_u16(outer, inner as u16);
+                    self.emit(outer, OP_RETURN);
+                    inner = outer;
+                }
+                self.builtins.insert(name.to_string(), inner);
+                inner
+            }
+        };
+        self.emit(chunk, OP_LAMBDA);
+        self.emit_u16(chunk, entry as u16);
+        Ok(())
     }
 
     /// Compiles `e` so that its VALUE is on top of the stack afterwards.
     fn strict(&mut self, e: &Expr, chunk: usize) -> Result<(), Unsupported> {
         match e {
-            Expr::Int(v) => {
-                let idx = self.constant(chunk, Const::Int(*v))?;
-                self.emit(chunk, OP_CONST);
-                self.emit_u16(chunk, idx);
-            }
+            Expr::Int(v) => self.emit_const(chunk, Const::Int(*v))?,
             Expr::Var(name, pos) => match self.resolve(name, *pos)? {
                 Binding::Literal(op) => self.emit(chunk, op),
+                Binding::Global(g) => self.emit_builtin(g, *pos, chunk)?,
+                Binding::Env(d, i) => {
+                    self.emit(chunk, OP_ENV_GET);
+                    self.emit_u16(chunk, d);
+                    self.emit_u16(chunk, i);
+                    self.emit(chunk, OP_FORCE);
+                }
+            },
+            Expr::Inherit(name, pos) => match self.resolve_from(name, 1, *pos)? {
+                Binding::Literal(op) => self.emit(chunk, op),
+                Binding::Global(g) => self.emit_builtin(g, *pos, chunk)?,
                 Binding::Env(d, i) => {
                     self.emit(chunk, OP_ENV_GET);
                     self.emit_u16(chunk, d);
@@ -172,10 +245,7 @@ impl Compiler {
                 self.patch_jump(chunk, to_end)?;
             }
             Expr::Let(binds, body) => {
-                let n = u16::try_from(binds.len()).map_err(|_| Unsupported {
-                    pos: Pos { line: 0, col: 0 },
-                    what: "more than 65535 bindings in one let".into(),
-                })?;
+                let n = Self::count(binds.len(), "bindings in one let")?;
                 self.scopes.push(binds.iter().map(|(n, _, _)| n.clone()).collect());
                 self.emit(chunk, OP_ENV_NEW);
                 self.emit_u16(chunk, n);
@@ -213,21 +283,124 @@ impl Compiler {
                 self.emit(chunk, OP_ASSERT);
                 self.strict(body, chunk)?;
             }
+            Expr::Str(parts) => match parts.as_slice() {
+                [] => self.emit_const(chunk, Const::Str(String::new()))?,
+                [StrPart::Lit(s)] => self.emit_const(chunk, Const::Str(s.clone()))?,
+                _ => {
+                    for p in parts {
+                        match p {
+                            StrPart::Lit(s) => self.emit_const(chunk, Const::Str(s.clone()))?,
+                            StrPart::Interp(e) => self.strict(e, chunk)?,
+                        }
+                    }
+                    let n = Self::count(parts.len(), "string parts")?;
+                    self.emit(chunk, OP_INTERPOLATE);
+                    self.emit_u16(chunk, n);
+                }
+            },
+            Expr::List(items) => {
+                for it in items {
+                    self.lazy(it, chunk)?;
+                }
+                let n = Self::count(items.len(), "list elements")?;
+                self.emit(chunk, OP_LIST);
+                self.emit_u16(chunk, n);
+            }
+            Expr::AttrSet(binds) => {
+                // Nix keeps attributes sorted by name bytes; the VM relies on it.
+                let mut sorted: Vec<&(String, Pos, Expr)> = binds.iter().collect();
+                sorted.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+                for (name, _, value) in sorted {
+                    self.emit_const(chunk, Const::Str(name.clone()))?;
+                    self.lazy(value, chunk)?;
+                }
+                let n = Self::count(binds.len(), "attributes")?;
+                self.emit(chunk, OP_ATTRS);
+                self.emit_u16(chunk, n);
+            }
+            Expr::Select(base, path, default) => {
+                // builtins.NAME is a primop reference unless `builtins` is shadowed.
+                if let (Expr::Var(b, pos), [name], None) = (&**base, path.as_slice(), default) {
+                    if b == "builtins" && !self.is_shadowed("builtins") {
+                        return self.emit_builtin(name, *pos, chunk);
+                    }
+                }
+                self.strict(base, chunk)?;
+                match default {
+                    None => {
+                        for name in path {
+                            self.emit_const(chunk, Const::Str(name.clone()))?;
+                            self.emit(chunk, OP_SELECT);
+                        }
+                    }
+                    Some(d) => {
+                        // Any missing step (or a non-set) takes the default.
+                        let mut misses = Vec::new();
+                        for name in path {
+                            self.emit_const(chunk, Const::Str(name.clone()))?;
+                            self.emit(chunk, OP_TRY_SELECT);
+                            misses.push(self.emit_jump(chunk, OP_JMP_IF_NOTFOUND));
+                        }
+                        let to_end = self.emit_jump(chunk, OP_JMP);
+                        for m in misses {
+                            self.patch_jump(chunk, m)?;
+                        }
+                        self.emit(chunk, OP_POP);
+                        self.strict(d, chunk)?;
+                        self.patch_jump(chunk, to_end)?;
+                    }
+                }
+            }
+            Expr::HasAttr(base, path) => {
+                self.strict(base, chunk)?;
+                let (last, init) = path.split_last().expect("non-empty attrpath");
+                let mut misses = Vec::new();
+                for name in init {
+                    self.emit_const(chunk, Const::Str(name.clone()))?;
+                    self.emit(chunk, OP_TRY_SELECT);
+                    misses.push(self.emit_jump(chunk, OP_JMP_IF_NOTFOUND));
+                }
+                self.emit_const(chunk, Const::Str(last.clone()))?;
+                self.emit(chunk, OP_HAS_ATTR);
+                if !misses.is_empty() {
+                    let to_end = self.emit_jump(chunk, OP_JMP);
+                    for m in misses {
+                        self.patch_jump(chunk, m)?;
+                    }
+                    self.emit(chunk, OP_POP);
+                    self.emit(chunk, OP_FALSE);
+                    self.patch_jump(chunk, to_end)?;
+                }
+            }
+            Expr::Update(a, b) => {
+                self.strict(a, chunk)?;
+                self.strict(b, chunk)?;
+                self.emit(chunk, OP_UPDATE);
+            }
+            Expr::Concat(a, b) => {
+                self.strict(a, chunk)?;
+                self.strict(b, chunk)?;
+                self.emit(chunk, OP_CONCAT);
+            }
         }
         Ok(())
     }
 
     /// Compiles `e` in a lazy position: a literal directly, a variable as a
-    /// pointer copy (its slot is set by the time this runs), anything else as a
-    /// thunk in its own chunk.
+    /// pointer copy (its slot is set by the time this runs), a lambda or primop
+    /// as the value it already is, anything else as a thunk in its own chunk.
     fn lazy(&mut self, e: &Expr, chunk: usize) -> Result<(), Unsupported> {
         match e {
-            Expr::Int(_) => return self.strict(e, chunk),
+            Expr::Int(_) | Expr::Lambda(..) => return self.strict(e, chunk),
+            Expr::Str(parts) if matches!(parts.as_slice(), [] | [StrPart::Lit(_)]) => {
+                return self.strict(e, chunk)
+            }
             Expr::Var(name, pos) => match self.resolve(name, *pos)? {
                 Binding::Literal(op) => {
                     self.emit(chunk, op);
                     return Ok(());
                 }
+                Binding::Global(g) => return self.emit_builtin(g, *pos, chunk),
                 Binding::Env(d, i) => {
                     self.emit(chunk, OP_ENV_GET);
                     self.emit_u16(chunk, d);
@@ -235,6 +408,13 @@ impl Compiler {
                     return Ok(());
                 }
             },
+            Expr::Select(base, path, None) => {
+                if let (Expr::Var(b, pos), [name]) = (&**base, path.as_slice()) {
+                    if b == "builtins" && !self.is_shadowed("builtins") {
+                        return self.emit_builtin(name, *pos, chunk);
+                    }
+                }
+            }
             _ => {}
         }
         self.chunks.push(Chunk::default());
@@ -246,33 +426,39 @@ impl Compiler {
         Ok(())
     }
 
-    /// Compiles a `let` binding's initialiser: a literal directly, an already-bound
-    /// variable as a pointer copy, anything else as a thunk. `idx` is the binding's
-    /// 0-based position, so a bare reference to a LATER binding in the same let (or
-    /// to itself) still goes through a thunk -- its slot is null at this point.
+    /// Compiles a `let` binding's initialiser: like `lazy`, except that a bare
+    /// reference to a LATER binding in the same let (or to itself) still goes
+    /// through a thunk -- its slot is null at this point -- and `inherit x` reads
+    /// the scope outside the let.
     fn binding(&mut self, init: &Expr, idx: usize, chunk: usize) -> Result<(), Unsupported> {
         match init {
-            Expr::Int(_) => return self.strict(init, chunk),
             Expr::Var(name, pos) => match self.resolve(name, *pos)? {
+                Binding::Env(d, i) if d == 0 && (i as usize) > idx => {
+                    return self.lazy_thunk(init, chunk);
+                }
+                _ => return self.lazy(init, chunk),
+            },
+            Expr::Inherit(name, pos) => match self.resolve_from(name, 1, *pos)? {
                 Binding::Literal(op) => {
                     self.emit(chunk, op);
                     return Ok(());
                 }
-                Binding::Env(d, i) if d > 0 || (i as usize) <= idx => {
+                Binding::Global(g) => return self.emit_builtin(g, *pos, chunk),
+                Binding::Env(d, i) => {
                     self.emit(chunk, OP_ENV_GET);
                     self.emit_u16(chunk, d);
                     self.emit_u16(chunk, i);
                     return Ok(());
                 }
-                Binding::Env(..) => {}
             },
-            _ => {}
+            _ => self.lazy(init, chunk),
         }
-        // A thunk: its own chunk, compiled in the current scope (it captures the
-        // let's environment), ending in RETURN.
+    }
+
+    fn lazy_thunk(&mut self, e: &Expr, chunk: usize) -> Result<(), Unsupported> {
         self.chunks.push(Chunk::default());
         let body = self.chunks.len() - 1;
-        self.strict(init, body)?;
+        self.strict(e, body)?;
         self.emit(body, OP_RETURN);
         self.emit(chunk, OP_THUNK);
         self.emit_u16(chunk, body as u16);
@@ -385,5 +571,54 @@ mod tests {
         // assert
         let ch = c("assert true; 1");
         assert_eq!(ch[0].code, vec![OP_TRUE, OP_ASSERT, OP_CONST, 0, 0, OP_RETURN]);
+    }
+
+    #[test]
+    fn strings_lists_and_sets() {
+        let ch = c("\"a${\"b\"}c\"");
+        assert_eq!(
+            ch[0].code,
+            vec![OP_CONST, 0, 0, OP_CONST, 1, 0, OP_CONST, 2, 0, OP_INTERPOLATE, 3, 0, OP_RETURN]
+        );
+        // list elements are lazy: the literal stays inline, the sum is a thunk
+        let ch = c("[ 1 (1 + 1) ]");
+        assert_eq!(ch[0].code, vec![OP_CONST, 0, 0, OP_THUNK, 1, 0, OP_LIST, 2, 0, OP_RETURN]);
+        // attributes are emitted sorted by name bytes, names as string constants
+        let ch = c("{ b = 1; a = 2; \"B\" = 3; }");
+        assert_eq!(ch[0].consts, vec![Const::Str("B".into()), Const::Int(3), Const::Str("a".into()), Const::Int(2), Const::Str("b".into()), Const::Int(1)]);
+        assert_eq!(ch[0].code[ch[0].code.len() - 4..], [OP_ATTRS, 3, 0, OP_RETURN]);
+        // a.b.c or d: two try-selects, both misses jump to the default
+        let ch = c("let a = { }; in a.b.c or 7");
+        let code = &ch[0].code;
+        assert_eq!(code.iter().filter(|&&b| b == OP_TRY_SELECT).count(), 2);
+        assert_eq!(code.iter().filter(|&&b| b == OP_JMP_IF_NOTFOUND).count(), 2);
+        assert!(code.windows(3).any(|w| w[0] == OP_POP && w[1] == OP_CONST));
+        // a ? b is a single HAS_ATTR
+        let ch = c("let a = { }; in a ? b");
+        assert!(ch[0].code.windows(4).any(|w| w[0] == OP_CONST && w[3] == OP_HAS_ATTR));
+        assert!(!ch[0].code.contains(&OP_TRY_SELECT));
+        // inherit in a let reads the OUTER scope: depth 1, not itself
+        let ch = c("let x = 1; in let inherit x; in x");
+        assert!(ch[0].code.windows(8).any(|w| w == [OP_ENV_GET, 1, 0, 1, 0, OP_ENV_SET, 1, 0]));
+    }
+
+    #[test]
+    fn builtins_are_synthesised_lambdas() {
+        // builtins.length xs: one lambda whose body is ENV_GET 0,1; PRIM length; RETURN
+        let ch = c("builtins.length [ ]");
+        let (id, _) = primop("length").unwrap();
+        assert_eq!(ch[1].code, vec![OP_ENV_GET, 0, 0, 1, 0, OP_PRIM, id, OP_RETURN]);
+        assert!(ch[0].code.windows(3).any(|w| w == [OP_LAMBDA, 1, 0]));
+        // a two-argument primop is two nested lambdas; the inner one pushes
+        // outermost-first. Unqualified `map` resolves to the same chunk.
+        let ch = c("[ (builtins.map (x: x) [ ]) (map (x: x) [ ]) ]");
+        let (id, _) = primop("map").unwrap();
+        let inner = ch.iter().position(|k| k.code == [OP_ENV_GET, 1, 0, 1, 0, OP_ENV_GET, 0, 0, 1, 0, OP_PRIM, id, OP_RETURN]).unwrap();
+        let outer = ch.iter().position(|k| k.code == [OP_LAMBDA, inner as u8, 0, OP_RETURN]).unwrap();
+        assert_eq!(ch.iter().filter(|k| k.code == [OP_LAMBDA, inner as u8, 0, OP_RETURN]).count(), 1, "synthesised once");
+        let _ = outer;
+        // shadowed builtins is an ordinary variable; unknown primops are refused by name
+        assert!(c("let builtins = { length = 1; }; in builtins.length").iter().all(|k| !k.code.contains(&OP_PRIM)));
+        assert_eq!(compile(&parse("builtins.nope").unwrap()).unwrap_err().what, "builtins.nope");
     }
 }

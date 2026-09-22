@@ -1,0 +1,1 @@
+let s = { b = 2; a = 1; }; in [ (builtins.attrNames s) (builtins.attrValues s) (builtins.hasAttr "a" s) (builtins.getAttr "b" s) (builtins.intersectAttrs { a = 0; c = 0; } s) (builtins.removeAttrs s [ "a" ]) (builtins.listToAttrs [ { name = "k"; value = 1; } { name = "j"; value = 2; } { name = "k"; value = 3; } ]) (builtins.partition (x: x > 1) [ 1 2 3 ]) ]

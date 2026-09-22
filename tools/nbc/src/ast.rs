@@ -73,4 +73,27 @@ pub enum Expr {
     Apply(Box<Expr>, Box<Expr>),
     /// `assert cond; body`.
     Assert(Box<Expr>, Box<Expr>),
+    /// A string: literal parts and `${…}` interpolations, escapes and indentation
+    /// already resolved by rnix. A plain literal is a single `Lit` part.
+    Str(Vec<StrPart>),
+    List(Vec<Expr>),
+    /// Static keys only, unsorted here; the compiler sorts by bytes.
+    AttrSet(Vec<(String, Pos, Expr)>),
+    /// `e.a.b`, optionally `or default` — the default applies if any step is
+    /// missing or not a set.
+    Select(Box<Expr>, Vec<String>, Option<Box<Expr>>),
+    /// `e ? a.b`.
+    HasAttr(Box<Expr>, Vec<String>),
+    /// `a // b`.
+    Update(Box<Expr>, Box<Expr>),
+    /// `a ++ b`.
+    Concat(Box<Expr>, Box<Expr>),
+    /// `inherit x;` as a let binding: `x` from the scope OUTSIDE the let.
+    Inherit(String, Pos),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StrPart {
+    Lit(String),
+    Interp(Expr),
 }

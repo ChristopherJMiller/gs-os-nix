@@ -11,7 +11,7 @@
 //! wrong-but-plausible answer, which is the failure mode this project guards
 //! against hardest.
 
-use crate::ast::{unsupported, BinOp, Expr, Pos, Unsupported};
+use crate::ast::{unsupported, BinOp, Expr, Pos, StrPart, Unsupported};
 use rnix::ast::{self, AstNode, BinOpKind, HasEntry, LiteralKind, UnaryOpKind};
 
 pub fn parse(src: &str) -> Result<Expr, Unsupported> {
@@ -41,6 +41,83 @@ impl<'a> Lower<'a> {
 
     fn refuse<T>(&self, node: &impl AstNode, what: &str) -> Result<T, Unsupported> {
         unsupported(self.pos(node), what)
+    }
+
+    /// A static attribute name: an identifier, or a quoted string without
+    /// interpolation. `${…}` keys are dynamic and not in this slice.
+    fn static_attr(&self, attr: &ast::Attr) -> Result<String, Unsupported> {
+        match attr {
+            ast::Attr::Ident(id) => match id.ident_token() {
+                Some(tok) => Ok(tok.text().to_string()),
+                None => self.refuse(id, "identifier `or` as attribute name"),
+            },
+            ast::Attr::Str(s) => {
+                let mut name = String::new();
+                for part in s.normalized_parts() {
+                    match part {
+                        ast::InterpolPart::Literal(t) => name.push_str(&t),
+                        ast::InterpolPart::Interpolation(_) => {
+                            return self.refuse(s, "dynamic attribute name")
+                        }
+                    }
+                }
+                Ok(name)
+            }
+            ast::Attr::Dynamic(d) => self.refuse(d, "dynamic attribute name"),
+        }
+    }
+
+    fn static_path(&self, path: &ast::Attrpath) -> Result<Vec<String>, Unsupported> {
+        path.attrs().map(|a| self.static_attr(&a)).collect()
+    }
+
+    /// The bindings of a `let` or an attribute set: `name = value;`, `inherit
+    /// a b;` and `inherit (e) a b;`. Nested paths (`a.b = 1;`) are not in this
+    /// slice. In a `let`, `inherit a;` refers to the scope OUTSIDE the let.
+    fn bindings(
+        &self,
+        node: &impl HasEntry,
+        what: &str,
+        is_let: bool,
+    ) -> Result<Vec<(String, Pos, Expr)>, Unsupported> {
+        let mut binds: Vec<(String, Pos, Expr)> = Vec::new();
+        let mut push = |name: String, pos: Pos, e: Expr| -> Result<(), Unsupported> {
+            if binds.iter().any(|(n, _, _)| *n == name) {
+                return unsupported(pos, format!("`{name}` bound twice in one {what}"));
+            }
+            binds.push((name, pos, e));
+            Ok(())
+        };
+        for entry in node.attrpath_values() {
+            let Some(path) = entry.attrpath() else { return self.refuse(&entry, "binding without a name") };
+            let attrs: Vec<ast::Attr> = path.attrs().collect();
+            let name = match attrs.as_slice() {
+                [one] => self.static_attr(one)?,
+                _ => return unsupported(self.pos(&path), format!("attribute path in {what}")),
+            };
+            let Some(value) = entry.value() else { return self.refuse(&entry, "binding without a value") };
+            push(name, self.pos(&path), self.expr(&value)?)?;
+        }
+        for inh in node.inherits() {
+            let from = match inh.from() {
+                Some(f) => match f.expr() {
+                    Some(e) => Some(self.expr(&e)?),
+                    None => return self.refuse(&f, "empty inherit source"),
+                },
+                None => None,
+            };
+            for attr in inh.attrs() {
+                let name = self.static_attr(&attr)?;
+                let pos = self.pos(&attr);
+                let e = match &from {
+                    Some(src) => Expr::Select(Box::new(src.clone()), vec![name.clone()], None),
+                    None if is_let => Expr::Inherit(name.clone(), pos),
+                    None => Expr::Var(name.clone(), pos),
+                };
+                push(name, pos, e)?;
+            }
+        }
+        Ok(binds)
     }
 
     fn expr(&self, e: &ast::Expr) -> Result<Expr, Unsupported> {
@@ -103,8 +180,12 @@ impl<'a> Lower<'a> {
                     Some(BinOpKind::Implication) => {
                         return Ok(Expr::Implies(Box::new(self.expr(&l)?), Box::new(self.expr(&r)?)))
                     }
-                    Some(BinOpKind::Concat) => return self.refuse(b, "operator `++`"),
-                    Some(BinOpKind::Update) => return self.refuse(b, "operator `//`"),
+                    Some(BinOpKind::Concat) => {
+                        return Ok(Expr::Concat(Box::new(self.expr(&l)?), Box::new(self.expr(&r)?)))
+                    }
+                    Some(BinOpKind::Update) => {
+                        return Ok(Expr::Update(Box::new(self.expr(&l)?), Box::new(self.expr(&r)?)))
+                    }
                     Some(BinOpKind::PipeRight) | Some(BinOpKind::PipeLeft) => {
                         return self.refuse(b, "pipe operator")
                     }
@@ -123,31 +204,53 @@ impl<'a> Lower<'a> {
                 ))
             }
             ast::Expr::LetIn(l) => {
-                if let Some(inh) = l.inherits().next() {
-                    return self.refuse(&inh, "inherit in let");
-                }
-                let mut binds: Vec<(String, Pos, Expr)> = Vec::new();
-                for entry in l.attrpath_values() {
-                    let Some(path) = entry.attrpath() else { return self.refuse(&entry, "binding without a name") };
-                    let attrs: Vec<ast::Attr> = path.attrs().collect();
-                    let name = match attrs.as_slice() {
-                        [ast::Attr::Ident(id)] => match id.ident_token() {
-                            Some(tok) => tok.text().to_string(),
-                            None => return self.refuse(id, "identifier `or`"),
-                        },
-                        [ast::Attr::Str(_)] => return self.refuse(&path, "quoted attribute name in let"),
-                        [ast::Attr::Dynamic(_)] => return self.refuse(&path, "dynamic attribute in let"),
-                        _ => return self.refuse(&path, "attribute path in let"),
-                    };
-                    let pos = self.pos(&path);
-                    if binds.iter().any(|(n, _, _)| *n == name) {
-                        return unsupported(pos, format!("`{name}` bound twice in one let"));
-                    }
-                    let Some(value) = entry.value() else { return self.refuse(&entry, "binding without a value") };
-                    binds.push((name, pos, self.expr(&value)?));
-                }
+                let binds = self.bindings(l, "let", true)?;
                 let Some(body) = l.body() else { return self.refuse(l, "let without a body") };
                 Ok(Expr::Let(binds, Box::new(self.expr(&body)?)))
+            }
+            ast::Expr::AttrSet(s) => {
+                if s.rec_token().is_some() {
+                    return self.refuse(s, "rec attribute set");
+                }
+                Ok(Expr::AttrSet(self.bindings(s, "attribute set", false)?))
+            }
+            ast::Expr::List(l) => {
+                let mut items = Vec::new();
+                for it in l.items() {
+                    items.push(self.expr(&it)?);
+                }
+                Ok(Expr::List(items))
+            }
+            ast::Expr::Str(s) => {
+                let mut parts = Vec::new();
+                for part in s.normalized_parts() {
+                    match part {
+                        ast::InterpolPart::Literal(text) => parts.push(StrPart::Lit(text)),
+                        ast::InterpolPart::Interpolation(i) => match i.expr() {
+                            Some(e) => parts.push(StrPart::Interp(self.expr(&e)?)),
+                            None => return self.refuse(&i, "empty interpolation"),
+                        },
+                    }
+                }
+                Ok(Expr::Str(parts))
+            }
+            ast::Expr::Select(sel) => {
+                let (Some(e), Some(path)) = (sel.expr(), sel.attrpath()) else {
+                    return self.refuse(sel, "incomplete selection");
+                };
+                let names = self.static_path(&path)?;
+                let default = match sel.default_expr() {
+                    Some(d) => Some(Box::new(self.expr(&d)?)),
+                    None => None,
+                };
+                Ok(Expr::Select(Box::new(self.expr(&e)?), names, default))
+            }
+            ast::Expr::HasAttr(h) => {
+                let (Some(e), Some(path)) = (h.expr(), h.attrpath()) else {
+                    return self.refuse(h, "incomplete `?`");
+                };
+                let names = self.static_path(&path)?;
+                Ok(Expr::HasAttr(Box::new(self.expr(&e)?), names))
             }
             ast::Expr::Lambda(lam) => {
                 let Some(body) = lam.body() else { return self.refuse(lam, "lambda without a body") };
@@ -177,11 +280,6 @@ impl<'a> Lower<'a> {
             }
             // Everything below is real Nix the VM cannot run yet. Named, so the
             // scoreboard can say which feature would move the most tests.
-            ast::Expr::AttrSet(n) => self.refuse(n, "attribute set"),
-            ast::Expr::List(n) => self.refuse(n, "list"),
-            ast::Expr::Str(n) => self.refuse(n, "string"),
-            ast::Expr::Select(n) => self.refuse(n, "attribute selection"),
-            ast::Expr::HasAttr(n) => self.refuse(n, "operator `?`"),
             ast::Expr::With(n) => self.refuse(n, "with"),
             ast::Expr::LegacyLet(n) => self.refuse(n, "legacy let"),
             ast::Expr::PathAbs(n) => self.refuse(n, "path literal"),
@@ -228,6 +326,26 @@ mod tests {
             Expr::Lambda(n, _, b) => Expr::Lambda(n, Pos { line: 1, col: 0 }, Box::new(strip(*b))),
             Expr::Apply(f, a) => Expr::Apply(Box::new(strip(*f)), Box::new(strip(*a))),
             Expr::Assert(c, b) => Expr::Assert(Box::new(strip(*c)), Box::new(strip(*b))),
+            Expr::Str(parts) => Expr::Str(
+                parts
+                    .into_iter()
+                    .map(|p| match p {
+                        StrPart::Interp(e) => StrPart::Interp(strip(e)),
+                        lit => lit,
+                    })
+                    .collect(),
+            ),
+            Expr::List(items) => Expr::List(items.into_iter().map(strip).collect()),
+            Expr::AttrSet(bs) => Expr::AttrSet(
+                bs.into_iter().map(|(n, _, e)| (n, Pos { line: 1, col: 0 }, strip(e))).collect(),
+            ),
+            Expr::Select(e, path, d) => {
+                Expr::Select(Box::new(strip(*e)), path, d.map(|d| Box::new(strip(*d))))
+            }
+            Expr::HasAttr(e, path) => Expr::HasAttr(Box::new(strip(*e)), path),
+            Expr::Update(a, b) => Expr::Update(Box::new(strip(*a)), Box::new(strip(*b))),
+            Expr::Concat(a, b) => Expr::Concat(Box::new(strip(*a)), Box::new(strip(*b))),
+            Expr::Inherit(n, _) => Expr::Inherit(n, Pos { line: 1, col: 0 }),
             e => e,
         }
     }
@@ -273,19 +391,16 @@ mod tests {
     fn refuses_by_feature_name() {
         let cases = [
             ("{ a, b }: a", "formals pattern"),
-            ("{ a = 1; }", "attribute set"),
-            ("[ 1 ]", "list"),
-            ("\"s\"", "string"),
-            ("a.b", "attribute selection"),
-            ("a ? b", "operator `?`"),
+            ("rec { a = 1; }", "rec attribute set"),
+            ("{ ${a} = 1; }", "dynamic attribute name"),
+            ("{ \"${a}\" = 1; }", "dynamic attribute name"),
             ("with a; b", "with"),
             ("./p", "path literal"),
             ("1.5", "float literal"),
-            ("a ++ b", "operator `++`"),
-            ("a // b", "operator `//`"),
-            ("let inherit x; in x", "inherit in let"),
             ("let a.b = 1; in a", "attribute path in let"),
+            ("{ a.b = 1; }", "attribute path in attribute set"),
             ("let x = 1; x = 2; in x", "`x` bound twice in one let"),
+            ("{ a = 1; inherit a; }", "`a` bound twice in one attribute set"),
         ];
         for (src, want) in cases {
             let err = parse(src).unwrap_err();
@@ -297,8 +412,35 @@ mod tests {
 
     #[test]
     fn positions_are_line_and_column() {
-        let err = parse("let\n  x = 1;\n  in [ x ]").unwrap_err();
+        let err = parse("let\n  x = 1;\n  in with x; x").unwrap_err();
         assert_eq!(err.pos, Pos { line: 3, col: 6 });
+    }
+
+    #[test]
+    fn strings_lists_sets_and_paths() {
+        assert_eq!(
+            p("\"a${b}c\\n\""),
+            Expr::Str(vec![StrPart::Lit("a".into()), StrPart::Interp(*var("b")), StrPart::Lit("c\n".into())])
+        );
+        // indented strings are dedented by rnix
+        assert_eq!(p("''\n  x\n  y\n''"), Expr::Str(vec![StrPart::Lit("x\ny\n".into())]));
+        assert_eq!(p("[ 1 x ]"), Expr::List(vec![Expr::Int(1), *var("x")]));
+        assert_eq!(
+            p("{ b = 1; \"a b\" = 2; inherit c; inherit (d) e; }"),
+            Expr::AttrSet(vec![
+                ("b".into(), Pos { line: 1, col: 0 }, Expr::Int(1)),
+                ("a b".into(), Pos { line: 1, col: 0 }, Expr::Int(2)),
+                ("c".into(), Pos { line: 1, col: 0 }, *var("c")),
+                ("e".into(), Pos { line: 1, col: 0 }, Expr::Select(var("d"), vec!["e".into()], None)),
+            ])
+        );
+        assert_eq!(
+            p("let inherit x; in x"),
+            Expr::Let(vec![("x".into(), Pos { line: 1, col: 0 }, Expr::Inherit("x".into(), Pos { line: 1, col: 0 }))], var("x"))
+        );
+        assert_eq!(p("a.b.c or 1"), Expr::Select(var("a"), vec!["b".into(), "c".into()], Some(int(1))));
+        assert_eq!(p("a ? b.\"c\""), Expr::HasAttr(var("a"), vec!["b".into(), "c".into()]));
+        assert_eq!(p("a // b ++ c"), Expr::Update(var("a"), Box::new(Expr::Concat(var("b"), var("c")))));
     }
 
     #[test]
