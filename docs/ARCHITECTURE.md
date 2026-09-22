@@ -119,9 +119,10 @@ current as modules land, since a budget that drifts from reality is worse than n
 | `storepath` (fold + nixbase32) | 505 | 0 | measured — purely combinational |
 | `keycam` (32-wide CAM) | 1400 | 0 | measured — combinational |
 | `alu64` (sequential mul/div) | 1462 | 336 | measured — the ~1.5k estimate held |
-| **`a2nix_card`** (whole card, incl. above) | **10413** | **5671** | measured, after L3 + CAM + 32-bit port + ALU64 |
+| Cheney collector (inside the card's engine) | ~830 | ~380 | measured by difference |
+| **`a2nix_card`** (whole card, incl. above) | **11247** | **6052** | measured, L3 card side complete |
 
-The whole card is **10413 LUT4 of a 25F's ~24k (43%)**. The CAM is the expensive
+The whole card is **11247 LUT4 of a 25F's ~24k (47%)**. The CAM is the expensive
 addition: 1400 LUT4 of comparators plus **1024 flops** for the 32×32-bit lane array,
 which is most of the FF growth. That array cannot be block RAM — comparing all lanes
 in one cycle is the entire point — so it is the honest price of O(1) lookup.

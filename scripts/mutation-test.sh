@@ -168,6 +168,26 @@ mutate "ALU64 CMP overflows on opposite signs" rtl/alu64.v \
 mutate "ALU64 op decoded from the wrong nibble" rtl/a2nix_card.v \
        's/        .op     (pslot\[2\]\[251:248\]),/        .op     (pslot[2][255:252]),/'
 
+# GC: never leave a forwarding pointer -- the header write lands the last copied
+# word instead of the FORWARDED tag -- so a shared object is copied once per
+# reference and a cycle never terminates. (The replacement must still BUILD: a
+# mutation that fails to compile is counted "caught" for the wrong reason.)
+mutate "GC no forwarding pointer" rtl/a2nix_card.v \
+       's/                        mem_wdata <= {24.d0, TAG_FORWARDED};/                        mem_wdata <= mem_wdata;/'
+
+# GC: trace the ATTRS hash column as if it held pointers.
+mutate "GC traces ATTRS hashes as pointers" rtl/a2nix_card.v \
+       's/                TAG_ATTRS:              is_ptr_field = (k >= aux) \&\& (k < aux + (aux << 1));/                TAG_ATTRS:              is_ptr_field = (k < aux + (aux << 1));/'
+
+# GC: skip the Cheney scan entirely, so nested pointers keep pointing at from-space.
+mutate "GC skips the scan" rtl/a2nix_card.v \
+       's/                        gc_scan <= gc_scan + sc_size;/                        gc_scan <= gc_free;/'
+
+# GC: never write the root's new address back. Range-addressed to the ROOT_WB state,
+# since "mem_we <= 1'b1" appears in many states.
+mutate "GC roots not written back" rtl/a2nix_card.v \
+       '/M_GC_ROOT_WB: begin/,/mstate    <= M_GC_ROOT;/ s/                    mem_we    <= 1.b1;/                    mem_we    <= 1'"'"'b0;/'
+
 echo
 echo "$pass mutations caught, $fail not caught"
 [ "$fail" -eq 0 ] || exit 1

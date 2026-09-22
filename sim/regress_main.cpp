@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -600,6 +601,171 @@ void l3_alu64() {
     bus->wr(R_CTRL, CTRL_RESET);
 }
 
+// ---------------------------------------------------------------------------
+// L3 MARK/COMPACT: the Cheney semispace collector.
+//
+// Objects are laid down directly in from-space with heap.poke, a root list is placed
+// in a scratch area, and the collector is asked to copy. What is checked is what a
+// copying collector gets SILENTLY wrong:
+//   - garbage copied along with live data (wasted space, but "works");
+//   - a shared object copied twice (aliasing broken, but both copies look fine);
+//   - a cycle never terminating;
+//   - ATTRS hash values traced as pointers (random memory "evacuated").
+// The to-space watermark -- where the next ALLOC lands after COMPACT -- is the
+// instrument: it says exactly how many bytes survived.
+
+// Write a header + payload words at `at`, returning `at`.
+std::uint32_t lay(std::uint32_t at, std::uint8_t tag, std::uint32_t aux,
+                  std::initializer_list<std::uint32_t> words) {
+    heap.poke32(at, static_cast<std::uint32_t>(tag) | (aux << 8));
+    std::uint32_t off = 4;
+    for (std::uint32_t w : words) { heap.poke32(at + off, w); off += 4; }
+    return at;
+}
+
+// Root list lives high in from-space, well clear of the test objects.
+constexpr std::uint32_t ROOTS = SPACE_A + 0x70000;
+
+std::uint8_t mark(std::initializer_list<std::uint32_t> roots) {
+    std::uint32_t i = 0;
+    for (std::uint32_t r : roots) { heap.poke32(ROOTS + 4 * i, r); ++i; }
+    bus->set_areg(0, ROOTS);
+    bus->set_len(i);
+    bus->wr(R_CMD, V_MARK);
+    return bus->wait_verb();
+}
+
+std::uint32_t root(int i) { return heap.peek32(ROOTS + 4 * static_cast<std::uint32_t>(i)); }
+
+// Where the next allocation would land: the survivors' watermark after COMPACT.
+std::uint32_t watermark() {
+    const std::uint8_t hdr[4] = { TAG_NULL, 0, 0, 0 };
+    bus->write_pslot(0, hdr, 4);
+    bus->set_len(0);
+    bus->wr(R_CMD, V_ALLOC);
+    bus->wait_verb();
+    return bus->get_areg(1);
+}
+
+void l3_gc() {
+    std::printf("L3 MARK/COMPACT semispace collector\n");
+    // Fresh card state for the collector: allocation is in space A, to-space is B.
+    bus->wr(R_CTRL, CTRL_RESET);
+
+    // --- (a) live copied, garbage not; roots rewritten in place ---
+    const std::uint32_t A = lay(0x1000, TAG_INT, 0, { 0x11111111, 0x22222222 });
+    /* dead: */          lay(0x1010, TAG_INT, 0, { 0xDEADDEAD, 0xDEADDEAD });
+    std::uint8_t st = mark({ A });
+    check((st & ST_ERR) == 0, "MARK completes", "the collector erroring on a live INT");
+    const std::uint32_t A2 = root(0);
+    check(A2 >= SPACE_B && A2 < SPACE_B + SPACE_SIZE,
+          "the root is rewritten to a to-space address",
+          "roots not written back, leaving every caller pointer dangling after the flip");
+    check(heap.peek32(A2 + 4) == 0x11111111 && heap.peek32(A2 + 8) == 0x22222222,
+          "the copied INT carries its payload",
+          "copying the header only, or copying from the wrong offset");
+    check(heap.peek(A) == TAG_FORWARDED && heap.peek32(A + 4) == A2,
+          "the original is left as a forwarding pointer",
+          "a shared object being copied once per reference");
+    bus->wr(R_CMD, V_COMPACT);
+    bus->wait_verb();
+    check(watermark() == SPACE_B + 12,
+          "after COMPACT exactly one 12-byte INT survived; the dead one was never touched",
+          "garbage being copied along with live data -- it still 'works', it just fills "
+          "to-space with corpses");
+    // Now allocating in B; A is the empty to-space.
+
+    // --- (b) a DAG: two references to one object -> copied once, both updated ---
+    const std::uint32_t X = lay(SPACE_B + 0x2000, TAG_INT, 0, { 0xAAAAAAAA, 0 });
+    const std::uint32_t L = lay(SPACE_B + 0x2010, TAG_LIST, 2, { X, X });
+    const std::uint64_t c0 = bus->cycles(), a0 = bus->accesses();
+    st = mark({ L });
+    // The D5 view of a collection: the bus sees only the verb and its polls; the
+    // work is O(survivors) in card cycles, and the bus never carries an object.
+    std::printf("        MARK of 24 live bytes: %llu bus accesses, %llu card cycles\n",
+                static_cast<unsigned long long>(bus->accesses() - a0),
+                static_cast<unsigned long long>(bus->cycles() - c0));
+    check((st & ST_ERR) == 0, "MARK of a DAG completes", "n/a");
+    const std::uint32_t L2 = root(0);
+    const std::uint32_t e0 = heap.peek32(L2 + 4), e1 = heap.peek32(L2 + 8);
+    if (e0 != e1)
+        std::printf("        X=%08x L=%08x -> L2=%08x e0=%08x e1=%08x  X.hdr=%02x X+4=%08x\n",
+                    X, L, L2, e0, e1, heap.peek(X), heap.peek32(X + 4));
+    check(e0 == e1 && e0 >= SPACE_A && e0 < SPACE_A + SPACE_SIZE,
+          "both list elements point at the SAME to-space copy",
+          "the scan not tracing list elements (they would still point at from-space), "
+          "or the shared object copied twice (they would differ)");
+    check(heap.peek32(e0 + 4) == 0xAAAAAAAA, "the shared INT's payload survived", "n/a");
+    bus->wr(R_CMD, V_COMPACT);
+    bus->wait_verb();
+    check(watermark() == SPACE_A + 12 + 12,
+          "a 2-element list sharing one INT costs 12 + 12, not 12 + 24",
+          "a shared object copied once per reference -- aliasing silently broken");
+    // Allocating in A again.
+
+    // --- (c) a cycle must terminate ---
+    const std::uint32_t T1 = SPACE_A + 0x3000, T2 = SPACE_A + 0x3010;
+    lay(T1, TAG_THUNK, 0, { T2, 0 });
+    lay(T2, TAG_THUNK, 0, { T1, 0 });
+    st = mark({ T1 });
+    check((st & (ST_DONE | ST_ERR)) == ST_DONE,
+          "MARK terminates on a cyclic graph",
+          "the collector chasing a cycle forever; without forwarding it never stops");
+    const std::uint32_t T1n = root(0);
+    const std::uint32_t T2n = heap.peek32(T1n + 4);
+    check(heap.peek32(T2n + 4) == T1n,
+          "the cycle is intact in to-space, pointing at the copies",
+          "one arm of the cycle still pointing back into from-space");
+    bus->wr(R_CMD, V_COMPACT);
+    bus->wait_verb();
+    check(watermark() == SPACE_B + 24, "a 2-thunk cycle costs exactly 2 x 12 bytes",
+          "an object in a cycle being copied more than once");
+    // Allocating in B.
+
+    // --- (d) ATTRS: the hash column must NOT be traced ---
+    // A canary object that is unreachable except via values that merely LOOK like
+    // pointers to it. If the collector traces the hash column, it will copy the
+    // canary and the watermark will show it.
+    const std::uint32_t canary = lay(SPACE_B + 0x4000, TAG_INT, 0, { 0xCA11A57, 0 });
+    const std::uint32_t S = lay(SPACE_B + 0x4010, TAG_ATTRS, 2,
+                                { canary, canary,      // "hashes" == the canary's address
+                                  0, 0,                // values: null
+                                  0, 0 });             // names: null
+    st = mark({ S });
+    check((st & ST_ERR) == 0, "MARK of an ATTRS completes", "n/a");
+    const std::uint32_t S2 = root(0);
+    check(heap.peek32(S2 + 4) == canary && heap.peek32(S2 + 8) == canary,
+          "the hash column is copied verbatim, not rewritten as pointers",
+          "hashes that happen to equal an address being 'forwarded'");
+    check(heap.peek(canary) != TAG_FORWARDED,
+          "the canary reachable only through the hash column was NOT evacuated",
+          "the ATTRS hash column traced as pointers -- random memory copied, and "
+          "hash values corrupted into addresses");
+    bus->wr(R_CMD, V_COMPACT);
+    bus->wait_verb();
+    check(watermark() == SPACE_A + 4 + 24, "only the 28-byte ATTRS survived",
+          "the canary being copied");
+    // Allocating in A.
+
+    // --- (e) null passes through; a second MARK appends and leaves evacuated roots alone ---
+    const std::uint32_t P = lay(SPACE_A + 0x5000, TAG_INT, 0, { 1, 0 });
+    const std::uint32_t Q = lay(SPACE_A + 0x5010, TAG_INT, 0, { 2, 0 });
+    st = mark({ P, 0 });
+    check((st & ST_ERR) == 0 && root(1) == 0, "a null root stays null",
+          "null being 'evacuated' to some address");
+    const std::uint32_t Pn = root(0);
+    st = mark({ Q, Pn });                     // Pn is already in to-space
+    check((st & ST_ERR) == 0 && root(1) == Pn,
+          "a root already in to-space passes through unchanged on a later MARK",
+          "re-evacuating an evacuated object, duplicating it");
+    check(root(0) >= SPACE_B && root(0) != Pn, "the second MARK appended a new survivor",
+          "n/a");
+    bus->wr(R_CMD, V_COMPACT);
+    bus->wait_verb();
+    check(watermark() == SPACE_B + 24, "two MARKs before one COMPACT: 2 x 12 survived",
+          "the second MARK restarting to-space and orphaning the first's survivors");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -621,6 +787,7 @@ int main(int argc, char **argv) {
     r6_errors_surface();
     l3_lookup();
     l3_alu64();
+    l3_gc();
 
     card->final();
     delete card;

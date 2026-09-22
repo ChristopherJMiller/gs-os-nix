@@ -66,6 +66,7 @@ null pointer, so address 0 is never allocated.
 | `$09` | `LAMBDA` | — | 4-byte code pointer, 4-byte env pointer |
 | `$0A` | `INDIRECT` | — | 4-byte pointer. What `FOLLOW` chases |
 | `$0B` | `BLACKHOLE` | — | —. Under evaluation; re-entry is an infinite recursion |
+| `$0C` | `FORWARDED` | — | 4-byte pointer to the object's copy in to-space. **Only ever in from-space, only during a collection** |
 
 `STRING` carries a context pointer because Nix tracks which store paths a string value
 depends on, and that must propagate at runtime (see ARCHITECTURE.md).
@@ -98,8 +99,41 @@ A key hash collision is possible, so a CAM match is a *candidate*: the caller mu
 still compare the name. `LOOKUP` returns the match index; the 65816 confirms it with
 `MEMCMP`. Getting this wrong would silently return the wrong attribute.
 
-## Alignment
+## Alignment and minimum size
 
 Headers are 4-byte aligned. `ALLOC` rounds every request up to a multiple of 4, so
-pointer columns are always aligned and a future wider memory port can read them in one
+pointer columns are always aligned and the 32-bit memory port reads them in one
 access.
+
+**Every object is at least 8 bytes** — header plus one word — even `NULL` and
+`BLACKHOLE`, whose payload is empty. That word is where the collector writes the
+forwarding pointer when it copies the object; a 4-byte object would have its
+forwarding pointer land on the next object's header.
+
+`STRING`'s context pointer sits at offset `4 + round4(len)`, i.e. the first aligned
+word after the bytes, so it is always a whole word the scanner can read directly.
+
+## What the collector traces
+
+The card's collector (`MARK`/`COMPACT`, see [CARD-ISA.md](CARD-ISA.md)) is a
+**Cheney semispace copier**: the heap is two halves, live objects are copied from one
+to the other, and nothing dead is ever touched. That is what makes it O(survivors)
+(Reduceron memo 28's property, [DECISIONS.md](DECISIONS.md) D15).
+
+To copy an object it needs two facts per tag — its size, and which words are
+pointers:
+
+| Tag | Size | Pointer words |
+|---|---|---|
+| `INT` | 12 | none |
+| `BOOL` | 8 | none |
+| `NULL`, `BLACKHOLE` | 8 | none |
+| `STRING` | `4 + round4(len) + 4` | the last word (context) |
+| `PATH` | `4 + round4(len)` (min 8) | none |
+| `LIST` | `4 + 4·count` | all `count` words |
+| `ATTRS` | `4 + 12·count` | words `count`…`3count−1` — the value and name columns. **The hash column is not pointers** and must be skipped |
+| `THUNK`, `LAMBDA` | 12 | both words |
+| `INDIRECT` | 8 | the one word |
+
+`ATTRS` is the one that could go silently wrong: its first column is 32-bit hashes
+that *look* like plausible addresses. Tracing them would "evacuate" random memory.

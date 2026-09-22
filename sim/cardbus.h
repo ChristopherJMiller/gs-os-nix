@@ -52,8 +52,13 @@ enum : std::uint8_t {
     TAG_FREE = 0x00, TAG_INT = 0x01, TAG_BOOL = 0x02, TAG_NULL = 0x03,
     TAG_STRING = 0x04, TAG_PATH = 0x05, TAG_LIST = 0x06, TAG_ATTRS = 0x07,
     TAG_THUNK = 0x08, TAG_LAMBDA = 0x09, TAG_INDIRECT = 0x0A,
-    TAG_BLACKHOLE = 0x0B,
+    TAG_BLACKHOLE = 0x0B, TAG_FORWARDED = 0x0C,
 };
+
+// Semispace geometry (docs/DECISIONS.md D15); must match rtl/a2nix_card.v.
+constexpr std::uint32_t SPACE_SIZE = 0x00080000;
+constexpr std::uint32_t SPACE_A    = 0x00000010;
+constexpr std::uint32_t SPACE_B    = 0x00080010;
 
 constexpr int FIFO_DEPTH = 32;
 constexpr int FIFO_BURST = 16;

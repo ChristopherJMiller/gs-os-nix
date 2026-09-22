@@ -9,6 +9,14 @@ VL_ATTR_COLD void Va2nix_card___024root___eval_static(Va2nix_card___024root* vlS
     Va2nix_card__Syms* const __restrict vlSymsp VL_ATTR_UNUSED = vlSelf->vlSymsp;
     auto& vlSelfRef = std::ref(*vlSelf).get();
     // Body
+    {
+        // Inlined CFunc: _eval_static__TOP
+        const uint64_t __VscopeHash = VL_MURMUR64_HASH(vlSelf->vlNamep);
+        vlSelfRef.a2nix_card__DOT__obj_size__Vstatic__aux = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 8953538961292197608ull);
+        vlSelfRef.a2nix_card__DOT__obj_size__Vstatic__s = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 14374017202974497500ull);
+        vlSelfRef.a2nix_card__DOT__alloc_total__Vstatic__t = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 10532544088462187526ull);
+        vlSelfRef.a2nix_card__DOT__is_ptr_field__Vstatic__aux = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 2870746265706346895ull);
+    }
     vlSelfRef.__Vtrigprevexpr___TOP__clk__0 = vlSelfRef.clk;
     vlSelfRef.__Vtrigprevexpr___TOP__rst_n__0 = vlSelfRef.rst_n;
     vlSelfRef.__Vtrigprevexpr___TOP__c0n_addr__0 = vlSelfRef.c0n_addr;
@@ -216,6 +224,13 @@ VL_ATTR_COLD void Va2nix_card___024root___stl_sequent__TOP__0(Va2nix_card___024r
     IData/*31:0*/ __VExpandSel_Lsb_16;
     IData/*31:0*/ __VExpandSel_Lsb_17;
     // Body
+    vlSelfRef.a2nix_card__DOT__from_base = ((IData)(vlSelfRef.a2nix_card__DOT__space_sel)
+                                             ? 0x00080010U
+                                             : 0x00000010U);
+    vlSelfRef.a2nix_card__DOT__from_top = ((IData)(0x0007fff0U) 
+                                           + ((IData)(vlSelfRef.a2nix_card__DOT__space_sel)
+                                               ? 0x00080010U
+                                               : 0x00000010U));
     vlSelfRef.irq = ((IData)(vlSelfRef.a2nix_card__DOT__irq_pend) 
                      & (IData)(vlSelfRef.a2nix_card__DOT__irq_en));
     vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__t2 
@@ -1481,6 +1496,22 @@ VL_ATTR_COLD void Va2nix_card___024root___ctor_var_reset(Va2nix_card___024root* 
     vlSelf->a2nix_card__DOT__mcount = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 15279627756342156948ull);
     vlSelf->a2nix_card__DOT__hops = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 6643956462292493133ull);
     vlSelf->a2nix_card__DOT__alloc_ptr = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 4236271661694546670ull);
+    vlSelf->a2nix_card__DOT__space_sel = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 6716395335599274348ull);
+    vlSelf->a2nix_card__DOT__gc_free = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 14179313797444000413ull);
+    vlSelf->a2nix_card__DOT__gc_scan = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 12067972072217114445ull);
+    vlSelf->a2nix_card__DOT__gc_root_at = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 3078705382753248271ull);
+    vlSelf->a2nix_card__DOT__gc_root_n = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 10284894545172860463ull);
+    vlSelf->a2nix_card__DOT__gc_root_i = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 4210755445651069528ull);
+    vlSelf->a2nix_card__DOT__gc_obj = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 7893710691435110010ull);
+    vlSelf->a2nix_card__DOT__gc_new = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 16976651568765426241ull);
+    vlSelf->a2nix_card__DOT__gc_size = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 5603291750678736549ull);
+    vlSelf->a2nix_card__DOT__gc_off = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 17473670252182967157ull);
+    vlSelf->a2nix_card__DOT__gc_field = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 941174406622611664ull);
+    vlSelf->a2nix_card__DOT__gc_ret = VL_SCOPED_RAND_RESET_I(5, __VscopeHash, 2189250043817439679ull);
+    vlSelf->a2nix_card__DOT__sc_hdr = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 8622431534943787927ull);
+    vlSelf->a2nix_card__DOT__sc_size = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 258969023469610878ull);
+    vlSelf->a2nix_card__DOT__from_base = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 1516777133870407128ull);
+    vlSelf->a2nix_card__DOT__from_top = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 12926389896068688837ull);
     vlSelf->a2nix_card__DOT__dw_pend = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 14778925377945967390ull);
     vlSelf->a2nix_card__DOT__dw_addr = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 5971258641019123219ull);
     vlSelf->a2nix_card__DOT__dw_data = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 11264155566543341475ull);

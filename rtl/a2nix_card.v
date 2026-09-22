@@ -78,6 +78,8 @@ module a2nix_card (
                      V_ALLOC       = 8'h20,
                      V_FOLLOW      = 8'h21,
                      V_LOOKUP      = 8'h30,
+                     V_MARK        = 8'h40,
+                     V_COMPACT     = 8'h41,
                      V_ALU64       = 8'h50;
 
     // ---------------------------------------------------------------- errors -------
@@ -99,13 +101,77 @@ module a2nix_card (
     localparam [7:0] CARD_ID = 8'hA2;
 
     // --- Heap geometry ---
-    // Address 0 is never allocated, so a zero pointer is unambiguously null
-    // (docs/HEAP.md). HEAP_TOP bounds allocation; a real board sizes it to its SDRAM.
-    localparam [31:0] HEAP_BASE = 32'h0000_0010;
-    localparam [31:0] HEAP_TOP  = 32'h0010_0000;   // 1 MB in the harnesses
+    // 1 MB in the harnesses; a real board sizes it to its SDRAM. The heap is two
+    // semispaces for the Cheney collector (docs/DECISIONS.md D15). Each starts 16
+    // bytes in so that neither can hand out address 0, the null pointer. Which half
+    // is being allocated from is `space_sel`.
+    localparam [31:0] SPACE_SIZE = 32'h0008_0000;              // 512 KB a side
+    localparam [31:0] SPACE_A    = 32'h0000_0010;
+    localparam [31:0] SPACE_B    = 32'h0008_0010;
 
-    localparam [7:0] TAG_INDIRECT = 8'h0A;
+    // Tags the collector needs to size or trace. BOOL, NULL and BLACKHOLE take the
+    // 8-byte default and carry no pointers, so they need no case of their own.
+    localparam [7:0] TAG_INT       = 8'h01,
+                     TAG_STRING    = 8'h04,
+                     TAG_PATH      = 8'h05,
+                     TAG_LIST      = 8'h06,
+                     TAG_ATTRS     = 8'h07,
+                     TAG_THUNK     = 8'h08,
+                     TAG_LAMBDA    = 8'h09,
+                     TAG_INDIRECT  = 8'h0A,
+                     TAG_FORWARDED = 8'h0C;
     localparam integer MAX_FOLLOW = 64;  // chain-length guard; see FOLLOW below
+
+    function [31:0] round4(input [31:0] v);
+        round4 = (v + 32'd3) & ~32'd3;
+    endfunction
+
+    // Object size in bytes from its header word (docs/HEAP.md, "What the collector
+    // traces"). Never less than 8: the forwarding pointer needs a word to live in.
+    function [31:0] obj_size(input [31:0] hdr);
+        reg [31:0] aux;
+        reg [31:0] s;
+        begin
+            aux = {8'd0, hdr[31:8]};
+            case (hdr[7:0])
+                TAG_INT:                s = 32'd12;
+                TAG_STRING:             s = 32'd4 + round4(aux) + 32'd4;
+                TAG_PATH:               s = 32'd4 + round4(aux);
+                TAG_LIST:               s = 32'd4 + (aux << 2);
+                TAG_ATTRS:              s = 32'd4 + (aux << 3) + (aux << 2);   // 12*aux
+                TAG_THUNK, TAG_LAMBDA:  s = 32'd12;
+                default:                s = 32'd8;    // BOOL, NULL, BLACKHOLE, INDIRECT...
+            endcase
+            obj_size = (s < 32'd8) ? 32'd8 : s;
+        end
+    endfunction
+
+    // Bytes an ALLOC of `payload` bytes actually consumes: header + rounded payload,
+    // never less than 8.
+    function [31:0] alloc_total(input [31:0] payload);
+        reg [31:0] t;
+        begin
+            t = 32'd4 + round4(payload);
+            alloc_total = (t < 32'd8) ? 32'd8 : t;
+        end
+    endfunction
+
+    // Is payload word k of this object a pointer the collector must trace?
+    // ATTRS is the trap: its first `aux` words are hashes that look like addresses.
+    function is_ptr_field(input [31:0] hdr, input [31:0] k);
+        reg [31:0] aux;
+        begin
+            aux = {8'd0, hdr[31:8]};
+            case (hdr[7:0])
+                TAG_STRING:             is_ptr_field = (k == (round4(aux) >> 2));
+                TAG_LIST:               is_ptr_field = (k < aux);
+                TAG_ATTRS:              is_ptr_field = (k >= aux) && (k < aux + (aux << 1));
+                TAG_THUNK, TAG_LAMBDA:  is_ptr_field = (k < 32'd2);
+                TAG_INDIRECT:           is_ptr_field = (k == 32'd0);
+                default:                is_ptr_field = 1'b0;
+            endcase
+        end
+    endfunction
 
     reg [31:0] areg [0:3];
     reg [1:0]  asel;
@@ -215,7 +281,22 @@ module a2nix_card (
                      M_LK_LOAD    = 5'd13,  // fill the CAM from the key-hash column
                      M_LK_HB      = 5'd14,
                      M_LK_CAM     = 5'd15,  // present the key; hit or next batch
-                     M_LK_VAL     = 5'd16;  // read the matched value pointer
+                     M_LK_VAL     = 5'd16,  // read the matched value pointer
+                     // --- Cheney collector (docs/DECISIONS.md D15) ---
+                     M_GC_ROOT     = 5'd17, // next root from the root list
+                     M_GC_ROOT_RD  = 5'd18,
+                     M_GC_ROOT_WB  = 5'd19, // write the root's new address back
+                     M_GC_EVAC     = 5'd20, // evacuate gc_obj -> gc_new
+                     M_GC_EVAC_HDR = 5'd21,
+                     M_GC_EVAC_FWD = 5'd22, // already copied: take the forwarding ptr
+                     M_GC_COPY     = 5'd23, // copy one word per 3 cycles
+                     M_GC_COPY_WR  = 5'd24,
+                     M_GC_COPY_FWD = 5'd25, // leave a forwarding pointer behind
+                     M_GC_SCAN     = 5'd26, // Cheney scan of to-space
+                     M_GC_SCAN_HDR = 5'd27,
+                     M_GC_SCAN_F   = 5'd28, // next payload word; trace if a pointer
+                     M_GC_SCAN_FRD = 5'd29,
+                     M_GC_SCAN_WB  = 5'd30;
 
     reg [4:0]  mstate;
     reg [4:0]  mret;          // state to resume after a generic read latches
@@ -225,6 +306,32 @@ module a2nix_card (
     reg [31:0] mcount;        // bytes left to stream
     reg [7:0]  hops;          // FOLLOW chain length so far
     reg [31:0] alloc_ptr;     // bump allocator
+
+    // --- Collector state ---
+    reg        space_sel;    // 0: allocate in A, B is to-space.  1: the reverse
+    reg [31:0] gc_free;      // to-space bump pointer
+    reg [31:0] gc_scan;      // Cheney scan pointer; everything below it is traced
+    reg [31:0] gc_root_at;   // root list base
+    reg [31:0] gc_root_n;    // root count
+    reg [31:0] gc_root_i;    // root index
+    reg [31:0] gc_obj;       // from-space object being evacuated
+    reg [31:0] gc_new;       // its to-space address (the EVAC result)
+    reg [31:0] gc_size;      // its size in bytes
+    reg [31:0] gc_off;       // copy offset
+    reg [31:0] gc_field;     // payload word index while scanning
+    reg [4:0]  gc_ret;       // where EVAC returns to: the root path or the scan path
+    // The object under SCAN has its own header/size. EVAC is nested inside the scan
+    // loop and loads gc_hdr/gc_size for the object it copies; if the scan shared
+    // those, returning from evacuating a list's first element would leave the loop
+    // believing the LIST was an INT and skip every remaining element. It did.
+    reg [31:0] sc_hdr;
+    reg [31:0] sc_size;
+
+    // to-space is simply the other half; COMPACT expresses the flip as "the old
+    // from-space becomes the new to-space", so only from_base is needed here.
+    wire [31:0] from_base = space_sel ? SPACE_B : SPACE_A;
+    wire [31:0] from_top  = from_base + SPACE_SIZE - 32'd16;
+    wire        obj_in_from = (gc_obj >= from_base) && (gc_obj < from_top);
 
     // DATA port: a pending write, and a prefetched byte so reads answer immediately.
     reg        dw_pend;
@@ -363,7 +470,12 @@ module a2nix_card (
             mstate <= M_IDLE; mret <= M_IDLE;
             mcur <= 32'd0; mword <= 32'd0; mbyte <= 8'h00;
             mcount <= 32'd0; hops <= 8'd0;
-            alloc_ptr <= HEAP_BASE;
+            alloc_ptr <= SPACE_A;
+            space_sel <= 1'b0; gc_free <= SPACE_B; gc_scan <= SPACE_B;
+            gc_root_at <= 32'd0; gc_root_n <= 32'd0; gc_root_i <= 32'd0;
+            gc_obj <= 32'd0; gc_new <= 32'd0; gc_size <= 32'd0;
+            gc_off <= 32'd0; gc_field <= 32'd0; gc_ret <= M_IDLE;
+            sc_hdr <= 32'd0; sc_size <= 32'd0;
             cam_entries <= {32*CAM_WIDTH{1'b0}}; cam_lane_valid <= {CAM_WIDTH{1'b0}};
             lk_base <= 32'd0; lk_count <= 24'd0; lk_done <= 24'd0; lk_lane <= 6'd0;
             dw_pend <= 1'b0; dw_addr <= 32'd0; dw_data <= 8'h00;
@@ -574,6 +686,155 @@ module a2nix_card (
                     pf_req  <= 1'b1;
                 end
 
+                // ================= Cheney semispace collector =================
+                // MARK: evacuate each root, writing its new address back in place.
+                M_GC_ROOT: begin
+                    if (gc_root_i >= gc_root_n) begin
+                        mstate <= M_GC_SCAN;
+                    end else begin
+                        mem_addr <= gc_root_at + (gc_root_i << 2);
+                        mret     <= M_GC_ROOT_RD;
+                        mstate   <= M_RD_LATCH;
+                    end
+                end
+
+                M_GC_ROOT_RD: begin
+                    gc_obj <= mword;
+                    gc_ret <= M_GC_ROOT_WB;
+                    mstate <= M_GC_EVAC;
+                end
+
+                M_GC_ROOT_WB: begin
+                    mem_addr  <= gc_root_at + (gc_root_i << 2);
+                    mem_wdata <= gc_new;
+                    mem_wstrb <= 4'b1111;
+                    mem_we    <= 1'b1;
+                    gc_root_i <= gc_root_i + 32'd1;
+                    mstate    <= M_GC_ROOT;
+                end
+
+                // EVAC: gc_obj -> gc_new. Null and anything outside from-space (e.g.
+                // already in to-space from an earlier MARK) pass through unchanged.
+                M_GC_EVAC: begin
+                    if (gc_obj == 32'd0 || !obj_in_from) begin
+                        gc_new <= gc_obj;
+                        mstate <= gc_ret;
+                    end else begin
+                        mem_addr <= gc_obj;
+                        mret     <= M_GC_EVAC_HDR;
+                        mstate   <= M_RD_LATCH;
+                    end
+                end
+
+                M_GC_EVAC_HDR: begin
+                    if (mword[7:0] == TAG_FORWARDED) begin
+                        // Copied already (a shared object, or a cycle). Its word 1
+                        // holds where it went. This is what keeps a DAG a DAG and
+                        // a cycle finite.
+                        mem_addr <= gc_obj + 32'd4;
+                        mret     <= M_GC_EVAC_FWD;
+                        mstate   <= M_RD_LATCH;
+                    end else begin
+                        gc_new  <= gc_free;
+                        gc_size <= obj_size(mword);
+                        gc_off  <= 32'd0;
+                        mstate  <= M_GC_COPY;
+                    end
+                end
+
+                M_GC_EVAC_FWD: begin
+                    gc_new <= mword;
+                    mstate <= gc_ret;
+                end
+
+                // Copy one word per 3 cycles: issue read, latch, write.
+                M_GC_COPY: begin
+                    if (gc_off >= gc_size) begin
+                        // Whole object copied. Replace the original's header with a
+                        // FORWARDED tag...
+                        mem_addr  <= gc_obj;
+                        mem_wdata <= {24'd0, TAG_FORWARDED};
+                        mem_wstrb <= 4'b1111;
+                        mem_we    <= 1'b1;
+                        mstate    <= M_GC_COPY_FWD;
+                    end else begin
+                        mem_addr <= gc_obj + gc_off;
+                        mret     <= M_GC_COPY_WR;
+                        mstate   <= M_RD_LATCH;
+                    end
+                end
+
+                M_GC_COPY_WR: begin
+                    mem_addr  <= gc_new + gc_off;
+                    mem_wdata <= mword;
+                    mem_wstrb <= 4'b1111;
+                    mem_we    <= 1'b1;
+                    gc_off    <= gc_off + 32'd4;
+                    mstate    <= M_GC_COPY;
+                end
+
+                M_GC_COPY_FWD: begin
+                    // ...and its first payload word with the forwarding address.
+                    // Every object is >= 8 bytes so this word exists (docs/HEAP.md).
+                    mem_addr  <= gc_obj + 32'd4;
+                    mem_wdata <= gc_new;
+                    mem_wstrb <= 4'b1111;
+                    mem_we    <= 1'b1;
+                    gc_free   <= gc_free + gc_size;
+                    mstate    <= gc_ret;
+                end
+
+                // SCAN: walk to-space from gc_scan to gc_free, tracing pointer words
+                // in place. Objects copied by the scan land beyond gc_free and are
+                // themselves scanned later -- the Cheney queue.
+                M_GC_SCAN: begin
+                    if (gc_scan >= gc_free) begin
+                        busy   <= 1'b0;
+                        done   <= 1'b1;
+                        mstate <= M_IDLE;
+                        pf_req <= 1'b1;
+                    end else begin
+                        mem_addr <= gc_scan;
+                        mret     <= M_GC_SCAN_HDR;
+                        mstate   <= M_RD_LATCH;
+                    end
+                end
+
+                M_GC_SCAN_HDR: begin
+                    sc_hdr   <= mword;
+                    sc_size  <= obj_size(mword);
+                    gc_field <= 32'd0;
+                    mstate   <= M_GC_SCAN_F;
+                end
+
+                M_GC_SCAN_F: begin
+                    if (32'd4 + (gc_field << 2) >= sc_size) begin
+                        gc_scan <= gc_scan + sc_size;
+                        mstate  <= M_GC_SCAN;
+                    end else if (is_ptr_field(sc_hdr, gc_field)) begin
+                        mem_addr <= gc_scan + 32'd4 + (gc_field << 2);
+                        mret     <= M_GC_SCAN_FRD;
+                        mstate   <= M_RD_LATCH;
+                    end else begin
+                        gc_field <= gc_field + 32'd1;   // a hash, a byte, an int
+                    end
+                end
+
+                M_GC_SCAN_FRD: begin
+                    gc_obj <= mword;
+                    gc_ret <= M_GC_SCAN_WB;
+                    mstate <= M_GC_EVAC;
+                end
+
+                M_GC_SCAN_WB: begin
+                    mem_addr  <= gc_scan + 32'd4 + (gc_field << 2);
+                    mem_wdata <= gc_new;
+                    mem_wstrb <= 4'b1111;
+                    mem_we    <= 1'b1;
+                    gc_field  <= gc_field + 32'd1;
+                    mstate    <= M_GC_SCAN_F;
+                end
+
                 default: mstate <= M_IDLE;
             endcase
 
@@ -669,17 +930,17 @@ module a2nix_card (
                                 // (docs/HEAP.md), so the caller writes tag+aux once
                                 // and ALLOC reserves LEN payload bytes after it.
                                 V_ALLOC: begin
-                                    // Round the payload up to 4 so pointer columns
-                                    // stay aligned.
-                                    if ((alloc_ptr + 32'd4 + ((len + 32'd3) & ~32'd3))
-                                        > HEAP_TOP) begin
+                                    // Payload rounded to 4 so pointer columns stay
+                                    // aligned; total never below 8 so a forwarding
+                                    // pointer fits (docs/HEAP.md). Bounded by the
+                                    // current semispace, not the whole heap.
+                                    if ((alloc_ptr + alloc_total(len)) > from_top) begin
                                         err     <= 1'b1;
                                         errcode <= E_OOM;
                                     end else begin
                                         areg[1]   <= alloc_ptr;
                                         mcur      <= alloc_ptr;
-                                        alloc_ptr <= alloc_ptr + 32'd4
-                                                     + ((len + 32'd3) & ~32'd3);
+                                        alloc_ptr <= alloc_ptr + alloc_total(len);
                                         busy      <= 1'b1;
                                         mstate    <= M_ALLOC_HDR;
                                     end
@@ -702,6 +963,25 @@ module a2nix_card (
                                     alu_start <= 1'b1;
                                     alu_verb  <= 1'b1;
                                     busy      <= 1'b1;
+                                end
+
+                                V_MARK: begin
+                                    gc_root_at <= areg[0];
+                                    gc_root_n  <= len;
+                                    gc_root_i  <= 32'd0;
+                                    busy       <= 1'b1;
+                                    mstate     <= M_GC_ROOT;
+                                end
+
+                                // Flip: survivors are now the from-space, allocation
+                                // resumes right after them, and the old from-space
+                                // is the empty to-space for next time.
+                                V_COMPACT: begin
+                                    alloc_ptr <= gc_free;
+                                    space_sel <= ~space_sel;
+                                    gc_free   <= from_base;     // == the new to_base
+                                    gc_scan   <= from_base;
+                                    done      <= 1'b1;
                                 end
                                 V_HASH_FINAL: begin
                                     // Do NOT assert finish yet: queued bytes still

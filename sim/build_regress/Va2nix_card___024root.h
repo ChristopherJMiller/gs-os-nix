@@ -28,6 +28,7 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         VL_OUT8(mem_we,0,0);
         VL_OUT8(mem_wstrb,3,0);
         VL_OUT8(irq,0,0);
+        CData/*0:0*/ a2nix_card__DOT____VlemCall_0__is_ptr_field;
         CData/*1:0*/ a2nix_card__DOT__asel;
         CData/*1:0*/ a2nix_card__DOT__aidx;
         CData/*2:0*/ a2nix_card__DOT__psel;
@@ -55,6 +56,8 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         CData/*4:0*/ a2nix_card__DOT__mret;
         CData/*7:0*/ a2nix_card__DOT__mbyte;
         CData/*7:0*/ a2nix_card__DOT__hops;
+        CData/*0:0*/ a2nix_card__DOT__space_sel;
+        CData/*4:0*/ a2nix_card__DOT__gc_ret;
         CData/*0:0*/ a2nix_card__DOT__dw_pend;
         CData/*7:0*/ a2nix_card__DOT__dw_data;
         CData/*0:0*/ a2nix_card__DOT__pf_req;
@@ -77,11 +80,11 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         CData/*6:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__round;
         CData/*3:0*/ a2nix_card__DOT__u_alu__DOT__cur_op;
         CData/*6:0*/ a2nix_card__DOT__u_alu__DOT__cnt;
+    };
+    struct {
         CData/*0:0*/ a2nix_card__DOT__u_alu__DOT__neg_q;
         CData/*0:0*/ a2nix_card__DOT__u_alu__DOT__neg_r;
         CData/*0:0*/ a2nix_card__DOT__u_alu__DOT__rem_ge;
-    };
-    struct {
         CData/*0:0*/ __VdfgRegularize_h6e95ff9d_0_5;
         CData/*0:0*/ __VdfgRegularize_h6e95ff9d_0_6;
         CData/*0:0*/ __VdfgRegularize_h6e95ff9d_0_7;
@@ -128,6 +131,12 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         VL_OUT(mem_addr,31,0);
         VL_OUT(mem_wdata,31,0);
         VL_IN(mem_rdata,31,0);
+        IData/*31:0*/ a2nix_card__DOT____VlemCall_2__alloc_total;
+        IData/*31:0*/ a2nix_card__DOT____VlemCall_1__alloc_total;
+        IData/*31:0*/ a2nix_card__DOT__obj_size__Vstatic__aux;
+        IData/*31:0*/ a2nix_card__DOT__obj_size__Vstatic__s;
+        IData/*31:0*/ a2nix_card__DOT__alloc_total__Vstatic__t;
+        IData/*31:0*/ a2nix_card__DOT__is_ptr_field__Vstatic__aux;
         IData/*31:0*/ a2nix_card__DOT__len;
         VlWide<8>/*255:0*/ a2nix_card__DOT__h_digest;
         VlWide<8>/*255:0*/ a2nix_card__DOT__sp_path;
@@ -135,6 +144,22 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         IData/*31:0*/ a2nix_card__DOT__mword;
         IData/*31:0*/ a2nix_card__DOT__mcount;
         IData/*31:0*/ a2nix_card__DOT__alloc_ptr;
+        IData/*31:0*/ a2nix_card__DOT__gc_free;
+        IData/*31:0*/ a2nix_card__DOT__gc_scan;
+    };
+    struct {
+        IData/*31:0*/ a2nix_card__DOT__gc_root_at;
+        IData/*31:0*/ a2nix_card__DOT__gc_root_n;
+        IData/*31:0*/ a2nix_card__DOT__gc_root_i;
+        IData/*31:0*/ a2nix_card__DOT__gc_obj;
+        IData/*31:0*/ a2nix_card__DOT__gc_new;
+        IData/*31:0*/ a2nix_card__DOT__gc_size;
+        IData/*31:0*/ a2nix_card__DOT__gc_off;
+        IData/*31:0*/ a2nix_card__DOT__gc_field;
+        IData/*31:0*/ a2nix_card__DOT__sc_hdr;
+        IData/*31:0*/ a2nix_card__DOT__sc_size;
+        IData/*31:0*/ a2nix_card__DOT__from_base;
+        IData/*31:0*/ a2nix_card__DOT__from_top;
         IData/*31:0*/ a2nix_card__DOT__dw_addr;
         VlWide<32>/*1023:0*/ a2nix_card__DOT__cam_entries;
         IData/*31:0*/ a2nix_card__DOT__cam_lane_valid;
@@ -146,8 +171,6 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__h0;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__h1;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__h2;
-    };
-    struct {
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__h3;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__h4;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__h5;

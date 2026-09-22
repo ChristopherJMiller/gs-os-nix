@@ -238,3 +238,37 @@ Two consequences worth keeping:
    decorative-test problem.
 2. **A non-matching mutation pattern is a failure, not a skip.** An inert mutation would
    report "caught" forever while testing nothing.
+
+---
+
+## D15 — The card's collector is a Cheney semispace copier
+
+The plan called for "memo 28's O(survivors) mark-compact". Taken literally, sliding
+mark-compact is **O(heap)**: to slide live objects down it must walk every dead one.
+What memo 28 actually buys is a collector whose cost scales with what survives, and
+the canonical way to get that is **copying**: trace from the roots, copy each live
+object into an empty space, never look at garbage at all.
+
+So the heap is two halves. `MARK` evacuates the given roots into to-space and runs
+the Cheney scan; `COMPACT` flips the halves and resumes allocation after the survivors.
+Splitting them lets the 65816 hand over several root sets — its stack, its nursery's
+references — before committing the flip.
+
+Costs accepted, and why:
+
+- **Half the heap is reserved.** On SDRAM that is cheap; on the 1 MB harness heap it
+  is 512 KB a side, ample for tests.
+- **Every object is at least 8 bytes** so a forwarding pointer always fits. Empty
+  objects (`NULL`, `BLACKHOLE`) pay 4 bytes each.
+- **The caller must pass every live pointer as a root.** Anything it holds that was
+  not in a root list is dangling after `COMPACT`. This is the same contract as any
+  moving collector, and the nursery layer (D6) is what makes it tractable: the 65816
+  does not hold raw mature-space pointers casually.
+
+Rejected: sliding compaction (O(heap), and no better locality than copying here), and
+a non-moving mark-sweep (O(heap) sweep, plus fragmentation that a bump allocator cannot
+tolerate).
+
+The one place a copying collector can go silently wrong is tracing a non-pointer as a
+pointer. `ATTRS` stores 32-bit hashes that look exactly like addresses, so the scanner
+skips that column by construction, and there is a mutation to prove the test notices.

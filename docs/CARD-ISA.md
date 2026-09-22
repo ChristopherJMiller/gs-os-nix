@@ -185,6 +185,33 @@ end** of the byte string.
 `FOLLOW` and `MEMCMP` exist because chains and searches amortize the bus crossing.
 A *single* dereference must stay on the CPU.
 
+**`MARK` and `COMPACT`** are the two halves of a Cheney semispace collection
+([DECISIONS.md](DECISIONS.md) D15, layout in [HEAP.md](HEAP.md)):
+
+- `MARK`: `A0` points at a root list of `LEN` 32-bit pointers. Each root is evacuated
+  into to-space and **overwritten in place with its new address**; then everything
+  reachable is copied by the scan. May be issued repeatedly — later calls append to
+  the same to-space — so the CPU can hand over its stack, then its nursery's
+  references, then flip.
+- `COMPACT`: flips the halves. Allocation resumes immediately after the survivors,
+  and the old from-space becomes the empty to-space for next time. Single cycle.
+
+Every pointer the CPU holds into mature space must have been in some root list before
+`COMPACT`, or it dangles. Pointers into to-space (already evacuated by an earlier
+`MARK`) and null are passed through unchanged.
+
+> ### Measured: a collection costs the bus almost nothing
+>
+> `MARK` of a 2-element list sharing one `INT` (24 live bytes, three objects traced):
+> **13 bus accesses, 624 card cycles.** The 13 are the root pointer, `LEN`, the verb
+> and a few `DONE` polls; no object ever crosses the bus. The 624 are the O(survivors)
+> work — about 26 card cycles per live byte at one word per three cycles, plus header
+> reads — and they scale with what survives, never with the size of the heap.
+>
+> That is the whole point of D6: the CPU's nursery decides what is worth promoting,
+> and the card's collector then costs the CPU only the handful of accesses it takes
+> to say "these are my roots".
+
 `INSTANTIATE` is the one surviving idea from Reduceron: a template becomes a single
 wide card-side structured write rather than word-at-a-time construction.
 
