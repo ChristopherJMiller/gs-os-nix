@@ -158,6 +158,39 @@ explicit tag bits, where masking is free.
 
 ---
 
+## D13 — M2 is gated by a minimal 65C02 harness, not by MAME
+
+**MAME cannot be the gating check**, because `apple2gs` refuses to start without all
+four of its ROMs — and one of them, `344s0047.bin`, is only the **character-generator
+font** (`region="gfx1"`, confirmed via `mame -listxml`). A headless run that reads its
+answer out of memory never draws a glyph, so that ROM is required bureaucratically
+rather than functionally. Those ROMs are copyrighted and not redistributable, so a
+MAME-only M2 could never run in CI or on a fresh clone.
+
+Note also that archived MAME romsets stop at 0.278, which still carries the superseded
+`megaii.chr` (CRC `ef0bfc11`) rather than the later real dump `344s0047.bin`
+(CRC `2d541944`), so even a complete 0.278 set does not satisfy 0.289.
+
+**So `sim/a2min.cpp` supplies the smallest thing that can execute the real binary:**
+64K of RAM, a slot decoder, and a 65C02-subset interpreter. It runs the *same* `.bin`
+and the *same* RTL, with no ROM and no copyrighted material.
+
+What it is and is not:
+
+- It **is** a test harness: real machine code, real bus cycles, real RTL, modelling
+  the 50 MHz card clock against the 2.8 MHz CPU and the 1.024 MHz `$Cxxx` stretch.
+- It is **not** an Apple IIgs and does not pretend to be — no video, no ROM, no soft
+  switches, emulation mode only.
+- Unknown opcodes **abort**. A silently-skipped instruction would produce a
+  wrong-but-plausible digest, which is the failure mode this project guards hardest
+  against. Decimal-mode ADC/SBC and a native-mode `XCE` abort for the same reason.
+
+MAME stays as the **higher-fidelity confirmation** (`just m2-mame`) for anyone with a
+complete romset: real slot timing, real GS/OS, the genuine FPI clock stretch. The work
+on `mame/a2nix.cpp` is not wasted — it is simply no longer load-bearing for the gate.
+
+---
+
 ## D12 — Tree-PLRU, not true LRU
 
 True LRU requires maintaining full ordering across ways: real gates for negligible

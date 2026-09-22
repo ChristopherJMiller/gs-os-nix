@@ -122,9 +122,20 @@ disk: asm
 
 # --- M2 ----------------------------------------------------------------------
 
-# Milestone M2: run the demo on an emulated IIgs and compare against the golden
-# vector. Needs an apple2gs ROM: ROMPATH=~/mame/roms just m2
+# Milestone M2, the ROM-free way: run the real binary on a minimal 65C02 machine
+# wired to the real RTL, and compare against the golden vector. No ROMs needed,
+# so this is the gating check.
 m2: asm-headless
+    verilator --cc --exe --build -j 0 \
+        -Irtl --top-module a2nix_card \
+        -Wall -Wno-DECLFILENAME \
+        --Mdir sim/build_a2min -o a2min \
+        rtl/a2nix_card.v sim/a2min.cpp
+    ./sim/build_a2min/a2min target/build/storepath_demo_headless.bin {{VECTORS}} 4
+
+# M2 again, but on real MAME for higher fidelity (real slot timing, real IIgs).
+# Needs a complete apple2gs romset: ROMPATH=~/mame/roms just m2-mame
+m2-mame: asm-headless
     ./scripts/run-m2.sh
 
 # Verify the demo's hardcoded fingerprint still matches the golden vectors.

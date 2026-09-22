@@ -6,7 +6,7 @@
 |---|---|---|
 | **L0** | Toolchain: flake devShell + justfile + CI gate | **done** (AppleCommander/cadius deferred to L2, only needed for disk images) |
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
-| **L2** | Card in MAME: register map, verilate, a2bus device, patched mame | **in progress** — `a2nix_card.v` + register/verb tests pass; MAME glue next |
+| **L2** | Card in a machine: register map, verilate, a2bus device, patched mame | **done — M2 achieved** (gated by the ROM-free harness; MAME glue written, needs a romset) |
 | **L3** | Memory model: `heap.v`, `cache.v`, `keycam.v`, `alu64.v`, CPU nursery | not started |
 | **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | not started |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
@@ -20,7 +20,12 @@
   length field into a second block) and 6/6 store-path vectors, in 4326 cycles.
   Verified by `nix flake check`; e.g. the RTL computes
   `/nix/store/fsl59pk3f4c65048v3w7vgazqwg4d75w-nix-on-an-apple-iigs`.
-- **M2** — A 65816 program under GS/OS in MAME computes a store path matching host `nix`.
+- **M2** ✅ **achieved** — real 65816 machine code, executing real bus cycles, drove
+  the real RTL to a store path identical to upstream nix: 965 instructions, 161 slot
+  accesses, `fsl59pk3f4c65048v3w7vgazqwg4d75w`. Gated by `checks.m2-storepath`.
+  Runs on `sim/a2min.cpp` rather than MAME — see DECISIONS.md **D13** for why
+  (MAME needs a font ROM it cannot legally ship). `just m2-mame` is the optional
+  higher-fidelity run for anyone with a complete romset.
 - **M3** — A Nix expression typed at the IIgs evaluates with **zero** host involvement.
 - **M4** — The IIgs produces a `.drv` whose hash matches the host's exactly.
 

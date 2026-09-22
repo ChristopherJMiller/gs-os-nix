@@ -122,6 +122,33 @@
             grep -q "L2 CARD PASS" "$out"
           '';
 
+        # M2: real 65816 machine code, executing real bus cycles, drives the real RTL
+        # to a store path identical to upstream nix.
+        #
+        # Runs on sim/a2min.cpp rather than MAME because apple2gs cannot start without
+        # all four of its ROMs -- one of which is only the character-generator font
+        # (region "gfx1"), irrelevant to a headless run but still mandatory, and not
+        # redistributable. This keeps M2 verifiable on any machine.
+        m2-storepath = pkgs.runCommandCC "check-m2-storepath"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 pkgs.cc65 ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/target .
+            chmod -R +w .
+            mkdir -p target/build
+            ca65 --cpu 65816 -D NO_PRINT \
+              -o target/build/demo.o target/tests/storepath_demo.s
+            ld65 -C target/tests/apple2.cfg \
+              -o target/build/storepath_demo_headless.bin target/build/demo.o
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            ./build/a2min target/build/storepath_demo_headless.bin \
+              tests/vectors/l1.txt 4 | tee "$out"
+            grep -q "M2 PASS" "$out"
+          '';
+
         # The 65816 side must actually assemble, and its hardcoded fingerprint must
         # still agree with the golden vectors -- otherwise the demo would print a
         # plausible-looking store path while asserting the wrong expected value.

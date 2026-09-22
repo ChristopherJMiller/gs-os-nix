@@ -8,3 +8,4 @@ build/
 __pycache__/
 .direnv/
 target/build/
+sim/build_a2min/

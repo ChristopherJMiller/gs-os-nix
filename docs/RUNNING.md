@@ -1,6 +1,32 @@
-# Getting code onto the emulated Apple IIgs
+# Running 65816 code against the card
 
-Two routes, for two different jobs. Both need `nix develop`.
+Three routes, for three different jobs. All need `nix develop`.
+
+| Route | Command | ROMs? | Job |
+|---|---|---|---|
+| **0. Minimal harness** | `just m2` | **no** | The gating M2 check. Real binary, real RTL, no OS |
+| 1. MAME debugger | `just m2-mame` | yes | Higher-fidelity confirmation |
+| 2. ProDOS disk | `just disk` | yes | Interactive, and the route for L4+ |
+
+## Route 0 — minimal 65C02 harness (the gating check)
+
+```sh
+just m2
+```
+
+`sim/a2min.cpp` is 64K of RAM, a slot decoder, and a 65C02-subset interpreter wired
+directly to the Verilated card. It executes the **same binary** against the **same
+RTL** as the other routes, with no ROM and no copyrighted material — so it runs in
+`nix flake check` on any machine.
+
+It exists because `apple2gs` will not start without all four of its ROMs, one of which
+is only the character-generator font (`region="gfx1"`) that a headless run never
+touches. See [DECISIONS.md](DECISIONS.md) D13.
+
+It models the clocks that matter: 50 MHz card against a 2.8 MHz CPU, with `$Cxxx`
+accesses stretched to 1.024 MHz. It is **not** an Apple IIgs — no video, no ROM, no
+soft switches, emulation mode only — and unknown opcodes abort rather than being
+skipped, because a skipped instruction would yield a wrong-but-plausible digest.
 
 ## What we are *not* doing
 
@@ -10,19 +36,20 @@ card would have to work in order to load the program that tests whether the card
 works. Storage comes from MAME's own disk emulation, and the card stays a
 compute/memory device.
 
-## Route 1 — debugger load (automated, for M2 and CI)
+## Route 1 — MAME debugger load (higher fidelity)
 
 ```sh
-ROMPATH=~/mame/roms just m2
+ROMPATH=~/mame/roms just m2-mame
 ```
 
-The fastest and most deterministic path: MAME loads the raw binary straight into
-memory at `$2000` under debugger control, runs it, and dumps the result. No OS, no
-disk image, no boot sequence.
+MAME loads the raw binary straight into memory at `$2000` under debugger control, runs
+it, and dumps the result. No OS, no disk image, no boot sequence — **M2 is a claim
+about the card**, so involving ProDOS would add a dependency that can fail for reasons
+unrelated to the thing under test.
 
-That is a deliberate choice rather than a shortcut. **M2 is a claim about the card**,
-so involving ProDOS would add a dependency that can fail for reasons unrelated to the
-thing under test.
+This route buys fidelity that Route 0 cannot: a real 65816, the real FPI clock stretch,
+real slot arbitration. It is worth running whenever you have a romset, but it is not
+the gate, because it cannot run without one.
 
 How the result gets out: the demo writes its 32 ASCII characters to `$0300` and a
 status byte to `$0320`, *buffer first, status last*, so a reader that sees `$01` is
@@ -71,7 +98,28 @@ Point MAME at yours with `ROMPATH`. `scripts/run-m2.sh` exits **77 (skipped)** r
 than failing when the ROMs are missing, so CI stays honest about the difference
 between "broken" and "cannot be tested here".
 
-GS/OS 6.0.x disk images are freely available if you want route 2 bootable.
+MAME 0.289 wants four files in `<rompath>/apple2gs.zip`:
+
+| File | Size | CRC32 | Region |
+|---|---:|---|---|
+| `341-0728` | 131072 | `8d410067` | maincpu |
+| `341-0748` | 131072 | `18190283` | maincpu |
+| `341s0632-2.bin` | 4096 | `e1c11fb0` | adbmicro |
+| `344s0047.bin` | 16384 | `2d541944` | **gfx1** (font) |
+
+⚠️ **Archived romsets currently stop at MAME 0.278**, which still carries the
+superseded `megaii.chr` (CRC `ef0bfc11`) in the `gfx1` slot rather than the later real
+dump `344s0047.bin`. So a complete 0.278 set does **not** satisfy 0.289 — verify with
+`mame -rompath <dir> -verifyroms apple2gs`.
+
+Two ways round it if you want Route 1 without hunting for a newer dump: pin MAME to a
+version matching your romset (the a2bus API differs — 0.281 and earlier use
+`bus_reset()` rather than `reset_from_bus()`, and a non-const `take_c800()`), or patch
+the `gfx1` `ROM_LOAD` to `ROM_LOAD_OPTIONAL` in our MAME override, since a headless run
+never renders a glyph. Neither is needed for the gate.
+
+GS/OS 6.0.x disk images are freely available and unrestricted, if you want Route 2
+bootable — a System 6.0.1 *Install* disk is the useful one.
 
 ## A trap worth knowing
 
