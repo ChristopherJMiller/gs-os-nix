@@ -149,17 +149,40 @@ impl<'a> Lower<'a> {
                 let Some(body) = l.body() else { return self.refuse(l, "let without a body") };
                 Ok(Expr::Let(binds, Box::new(self.expr(&body)?)))
             }
+            ast::Expr::Lambda(lam) => {
+                let Some(body) = lam.body() else { return self.refuse(lam, "lambda without a body") };
+                match lam.param() {
+                    Some(ast::Param::IdentParam(p)) => {
+                        let name = match p.ident().and_then(|i| i.ident_token()) {
+                            Some(tok) => tok.text().to_string(),
+                            None => return self.refuse(&p, "identifier `or` as parameter"),
+                        };
+                        Ok(Expr::Lambda(name, self.pos(&p), Box::new(self.expr(&body)?)))
+                    }
+                    Some(ast::Param::Pattern(p)) => self.refuse(&p, "formals pattern"),
+                    None => self.refuse(lam, "lambda without a parameter"),
+                }
+            }
+            ast::Expr::Apply(app) => {
+                let (Some(f), Some(a)) = (app.lambda(), app.argument()) else {
+                    return self.refuse(app, "incomplete application");
+                };
+                Ok(Expr::Apply(Box::new(self.expr(&f)?), Box::new(self.expr(&a)?)))
+            }
+            ast::Expr::Assert(a) => {
+                let (Some(c), Some(b)) = (a.condition(), a.body()) else {
+                    return self.refuse(a, "incomplete assert");
+                };
+                Ok(Expr::Assert(Box::new(self.expr(&c)?), Box::new(self.expr(&b)?)))
+            }
             // Everything below is real Nix the VM cannot run yet. Named, so the
             // scoreboard can say which feature would move the most tests.
-            ast::Expr::Apply(n) => self.refuse(n, "function application"),
-            ast::Expr::Lambda(n) => self.refuse(n, "lambda"),
             ast::Expr::AttrSet(n) => self.refuse(n, "attribute set"),
             ast::Expr::List(n) => self.refuse(n, "list"),
             ast::Expr::Str(n) => self.refuse(n, "string"),
             ast::Expr::Select(n) => self.refuse(n, "attribute selection"),
             ast::Expr::HasAttr(n) => self.refuse(n, "operator `?`"),
             ast::Expr::With(n) => self.refuse(n, "with"),
-            ast::Expr::Assert(n) => self.refuse(n, "assert"),
             ast::Expr::LegacyLet(n) => self.refuse(n, "legacy let"),
             ast::Expr::PathAbs(n) => self.refuse(n, "path literal"),
             ast::Expr::PathRel(n) => self.refuse(n, "path literal"),
@@ -202,6 +225,9 @@ mod tests {
                 bs.into_iter().map(|(n, _, e)| (n, Pos { line: 1, col: 0 }, strip(e))).collect(),
                 Box::new(strip(*body)),
             ),
+            Expr::Lambda(n, _, b) => Expr::Lambda(n, Pos { line: 1, col: 0 }, Box::new(strip(*b))),
+            Expr::Apply(f, a) => Expr::Apply(Box::new(strip(*f)), Box::new(strip(*a))),
+            Expr::Assert(c, b) => Expr::Assert(Box::new(strip(*c)), Box::new(strip(*b))),
             e => e,
         }
     }
@@ -246,15 +272,13 @@ mod tests {
     #[test]
     fn refuses_by_feature_name() {
         let cases = [
-            ("f x", "function application"),
-            ("x: x", "lambda"),
+            ("{ a, b }: a", "formals pattern"),
             ("{ a = 1; }", "attribute set"),
             ("[ 1 ]", "list"),
             ("\"s\"", "string"),
             ("a.b", "attribute selection"),
             ("a ? b", "operator `?`"),
             ("with a; b", "with"),
-            ("assert true; 1", "assert"),
             ("./p", "path literal"),
             ("1.5", "float literal"),
             ("a ++ b", "operator `++`"),
@@ -273,7 +297,34 @@ mod tests {
 
     #[test]
     fn positions_are_line_and_column() {
-        let err = parse("let\n  x = 1;\n  in f x").unwrap_err();
+        let err = parse("let\n  x = 1;\n  in [ x ]").unwrap_err();
         assert_eq!(err.pos, Pos { line: 3, col: 6 });
+    }
+
+    #[test]
+    fn lambdas_application_assert() {
+        // application binds tighter than any operator and is left-associative
+        assert_eq!(
+            p("f a b + 1"),
+            Expr::Bin(
+                BinOp::Add,
+                Box::new(Expr::Apply(Box::new(Expr::Apply(var("f"), var("a"))), var("b"))),
+                int(1)
+            )
+        );
+        // a lambda body extends as far right as possible
+        assert_eq!(
+            p("x: y: x + y"),
+            Expr::Lambda(
+                "x".into(),
+                Pos { line: 1, col: 0 },
+                Box::new(Expr::Lambda(
+                    "y".into(),
+                    Pos { line: 1, col: 0 },
+                    Box::new(Expr::Bin(BinOp::Add, var("x"), var("y")))
+                ))
+            )
+        );
+        assert_eq!(p("assert true; 1"), Expr::Assert(var("true"), int(1)));
     }
 }

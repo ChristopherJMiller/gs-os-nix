@@ -709,7 +709,8 @@ int run_nbc(const char *vm_path, const char *nbc_path) {
     const uint8_t status = ram[RESULT_STAT];
     if (status == 0xFF) {
         static const char *names[] = { "E_NONE?", "E_BADOP", "E_TYPE", "E_DIVZERO",
-                                       "E_INFREC", "E_NOMEM", "E_BADNBC", "E_NOCARD" };
+                                       "E_INFREC", "E_NOMEM", "E_BADNBC", "E_NOCARD",
+                                       "E_ASSERT" };
         const uint8_t code = ram[RESULT_STAT + 1];
         std::printf("error: %s\n", code < sizeof(names) / sizeof(names[0]) ? names[code] : "E_?");
         return 1;
@@ -725,6 +726,7 @@ int run_nbc(const char *vm_path, const char *nbc_path) {
         }
         case TAG_BOOL: std::printf("result: %s\n", ram[RESULT + 1] ? "true" : "false"); break;
         case TAG_NULL: std::printf("result: null\n"); break;
+        case TAG_LAMBDA: std::printf("result: <LAMBDA>\n"); break;
         default: std::printf("error: unknown result tag $%02X\n", ram[RESULT]); return 1;
     }
     return 0;

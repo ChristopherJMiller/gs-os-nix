@@ -140,17 +140,20 @@ instruction even if it was a thunk before (in-place update, see below).
 | `$20` | `JMP` | `i16 rel` | | `pc += rel`, measured from the end of this instruction |
 | `$21` | `JMP_IF_FALSE` | `i16 rel` | `b → b` | forces the top; jumps if it is `BOOL 0`. **Does not pop** — the compiler emits `POP` on each path, as tvix does, so `&&`/`||` can keep the value |
 | `$22` | `JMP_IF_TRUE` | `i16 rel` | `b → b` | as above, for `BOOL 1` |
+| `$23` | `ASSERT` | | `b →` | forces; `BOOL 1` continues, anything else aborts with `E_ASSERT` (or `E_TYPE`) |
 | `$30` | `ENV_NEW` | `u16 n` | | `env ← LIST(n+1)` with `[0] = old env`, `[1..n] = null` |
 | `$31` | `ENV_SET` | `u16 i` | `v →` | `env[i] ← v` (`i ≥ 1`) |
 | `$32` | `ENV_GET` | `u16 depth`, `u16 i` | `→ v` | walk `depth` parents, push element `i`. **Does not force** |
 | `$33` | `ENV_POP` | | | `env ← env[0]` |
+| `$34` | `LAMBDA` | `u16 chunk` | `→ f` | allocate `LAMBDA { code = chunk, env = env }` — a closure is a thunk with a parameter |
+| `$35` | `CALL` | | `f a → v` | forces `f` (must be `LAMBDA`); `env' ← LIST(2)` with `[0] = f.env`, `[1] = a`; runs `f.code` with `env'` until `RETURN`; its value replaces both operands. The argument is **not** forced — it is whatever the caller pushed, usually a thunk |
 | `$40` | `THUNK` | `u16 chunk` | `→ t` | allocate `THUNK { code = chunk, env = env }` |
 | `$41` | `FORCE` | | `t → v` | see below |
 | `$42` | `RETURN` | | `v →` | end of chunk: hand `v` to whoever forced this chunk, or, for the entry chunk, to the harness |
 
 Every gap in the numbering is deliberate room for the next slice (`$06`–`$0F`
-constants and strings, `$15` string ops, `$23`–`$2F` attrs/list ops, `$34`–`$3F`
-lambda application, `$43`+ builtins).
+constants and strings, `$15` string ops, `$24`–`$2F` attrs/list ops, `$36`–`$3F`
+`with` and formals, `$43`+ builtins).
 
 ### `FORCE`, blackholing, in-place update
 
@@ -200,6 +203,10 @@ generator makes the decision per syntactic position:
 | branches of `if` | strict, inline — only one runs, so neither needs deferring |
 | operands of `&&`, `||`, `->` | left strict; right compiled inline behind a conditional jump, which is the same laziness Nix specifies (short-circuit) without a thunk |
 | a variable reference | `ENV_GET`, then `FORCE` **only if** the position is strict |
+| the function in `f x` | strict — `CALL` needs a `LAMBDA` now |
+| the argument in `f x` | **lazy**: a literal directly, a variable as a pointer copy, anything else a `THUNK`. `(x: 1) (1 / 0)` is `1` |
+| body of a lambda | strict, in its own chunk, ending in `RETURN`; its scope is one binding (the parameter) whose parent is the closure's environment |
+| condition of `assert` | strict; `ASSERT` forces it. The body follows inline |
 
 So `let x = 1 + 2; y = x; in if y > 2 then x else 0` compiles to one thunk (`x`),
 no thunk for `y` — its initialiser `x` is a bare variable and `ENV_GET` of an
@@ -253,18 +260,26 @@ $0301  payload    INT: 8 bytes signed LE.  BOOL: 1 byte
 $0320  status     $01 done; $FF error, with the error code at $0321
 ```
 
+A `LAMBDA` result is reported by tag alone; the harness prints `<LAMBDA>`, as Nix does.
+
 Error codes: `E_BADOP $01`, `E_TYPE $02`, `E_DIVZERO $03`, `E_INFREC $04`,
-`E_NOMEM $05` (nursery, value stack or force depth exhausted), `E_BADNBC $06`
+`E_NOMEM $05` (nursery, value stack or call/force depth exhausted), `E_BADNBC $06`
 (malformed image, or a slot read before it was set — a generator bug), `E_NOCARD
-$07` (`MUL`/`DIV` with no card in any slot). The harness (`a2min --run-nbc`) prints the value in
+$07` (`MUL`/`DIV` with no card in any slot), `E_ASSERT $08`. The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.
 
 ## Slice plan
 
-1. **Integers, booleans, null; `let`; `if`; thunks with in-place update.** This
-   document. Gate: `checks.scoreboard` passes every corpus test the generator can
-   compile, and the count is in `tests/corpus/expected-pass.txt` so it can only go up.
-2. Strings (with context pointers from day one), lists, attribute sets via `LOOKUP`.
-3. Lambdas, application, `with`, `rec`, inline caches.
-4. Builtins, `import`, paths; the nursery collector runs during evaluation.
+1. **Integers, booleans, null; `let`; `if`; thunks with in-place update.** Done.
+   Gate: `checks.scoreboard` passes every corpus test the generator can compile,
+   and the count is in `tests/corpus/expected-pass.txt` so it can only go up.
+2. **a. Lambdas, application, `assert`.** Done — `LAMBDA`, `CALL`, `ASSERT`.
+   **b.** Strings (with context pointers from day one), lists, attribute sets and
+   selection (CPU-side on young sets, `LOOKUP` on promoted ones), `builtins`.
+3. `with`, `rec`, formals, inline caches, and **`TAIL_CALL`**: a `CALL` that is the
+   last instruction before `RETURN` reuses the frame instead of nesting. Without
+   it `eval-okay-tail-call-1` (100 000 calls) exhausts the call stack — and without
+   slice 4 it exhausts the nursery, so it needs both.
+4. Builtins that touch the store, `import`, paths; the nursery collector runs
+   during evaluation.

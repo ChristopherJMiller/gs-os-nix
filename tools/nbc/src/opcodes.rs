@@ -25,11 +25,14 @@ pub const OP_NOT: u8 = 0x1B;
 pub const OP_JMP: u8 = 0x20;
 pub const OP_JMP_IF_FALSE: u8 = 0x21;
 pub const OP_JMP_IF_TRUE: u8 = 0x22;
+pub const OP_ASSERT: u8 = 0x23;
 
 pub const OP_ENV_NEW: u8 = 0x30;
 pub const OP_ENV_SET: u8 = 0x31;
 pub const OP_ENV_GET: u8 = 0x32;
 pub const OP_ENV_POP: u8 = 0x33;
+pub const OP_LAMBDA: u8 = 0x34;
+pub const OP_CALL: u8 = 0x35;
 
 pub const OP_THUNK: u8 = 0x40;
 pub const OP_FORCE: u8 = 0x41;
@@ -62,10 +65,13 @@ pub fn describe(op: u8) -> Option<(&'static str, usize)> {
         OP_JMP => ("JMP", 2),
         OP_JMP_IF_FALSE => ("JMP_IF_FALSE", 2),
         OP_JMP_IF_TRUE => ("JMP_IF_TRUE", 2),
+        OP_ASSERT => ("ASSERT", 0),
         OP_ENV_NEW => ("ENV_NEW", 2),
         OP_ENV_SET => ("ENV_SET", 2),
         OP_ENV_GET => ("ENV_GET", 4),
         OP_ENV_POP => ("ENV_POP", 0),
+        OP_LAMBDA => ("LAMBDA", 2),
+        OP_CALL => ("CALL", 0),
         OP_THUNK => ("THUNK", 2),
         OP_FORCE => ("FORCE", 0),
         OP_RETURN => ("RETURN", 0),

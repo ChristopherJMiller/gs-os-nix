@@ -25,11 +25,14 @@ OP_NOT          = $1B
 OP_JMP          = $20
 OP_JMP_IF_FALSE = $21
 OP_JMP_IF_TRUE  = $22
+OP_ASSERT       = $23
 
 OP_ENV_NEW      = $30
 OP_ENV_SET      = $31
 OP_ENV_GET      = $32
 OP_ENV_POP      = $33
+OP_LAMBDA       = $34
+OP_CALL         = $35
 
 OP_THUNK        = $40
 OP_FORCE        = $41
@@ -47,3 +50,4 @@ E_INFREC        = $04
 E_NOMEM         = $05
 E_BADNBC        = $06
 E_NOCARD        = $07
+E_ASSERT        = $08

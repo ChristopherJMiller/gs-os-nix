@@ -67,4 +67,10 @@ pub enum Expr {
     Implies(Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Let(Vec<(String, Pos, Expr)>, Box<Expr>),
+    /// `param: body`. Formals (`{ a, b }:`) are not in this slice.
+    Lambda(String, Pos, Box<Expr>),
+    /// `f arg`.
+    Apply(Box<Expr>, Box<Expr>),
+    /// `assert cond; body`.
+    Assert(Box<Expr>, Box<Expr>),
 }

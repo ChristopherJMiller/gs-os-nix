@@ -78,6 +78,7 @@ T_BOOL          = $02
 T_NULL          = $03
 T_LIST          = $06
 T_THUNK         = $08
+T_LAMBDA        = $09
 T_INDIRECT      = $0A
 T_BLACKHOLE     = $0B
 
@@ -194,6 +195,8 @@ start:
         bra     @ok
 @notbool:
         cmp     #T_NULL
+        beq     @ok
+        cmp     #T_LAMBDA       ; reported by tag alone; the harness prints <LAMBDA>
         beq     @ok
         lda     #E_TYPE
         jmp     err_exit
@@ -466,11 +469,12 @@ optable:
         .word   op_add, op_sub, op_mul, op_div, op_neg, op_bad           ; $10-$15
         .word   op_eq, op_lt, op_le, op_gt, op_ge, op_not                ; $16-$1B
         .word   op_bad, op_bad, op_bad, op_bad                           ; $1C-$1F
-        .word   op_jmp, op_jmp_if_false, op_jmp_if_true                  ; $20-$22
-        .word   op_bad, op_bad, op_bad, op_bad, op_bad, op_bad, op_bad   ; $23-$29
+        .word   op_jmp, op_jmp_if_false, op_jmp_if_true, op_assert       ; $20-$23
+        .word   op_bad, op_bad, op_bad, op_bad, op_bad, op_bad           ; $24-$29
         .word   op_bad, op_bad, op_bad, op_bad, op_bad, op_bad           ; $2A-$2F
         .word   op_env_new, op_env_set, op_env_get, op_env_pop           ; $30-$33
-        .word   op_bad, op_bad, op_bad, op_bad, op_bad, op_bad           ; $34-$39
+        .word   op_lambda, op_call                                       ; $34-$35
+        .word   op_bad, op_bad, op_bad, op_bad                           ; $36-$39
         .word   op_bad, op_bad, op_bad, op_bad, op_bad, op_bad           ; $3A-$3F
         .word   op_thunk, op_force, op_return                            ; $40-$42
 
@@ -958,17 +962,39 @@ op_env_pop:
         sta     env
         jmp     run
 
-; --- thunks -----------------------------------------------------------------------
-; THUNK c: 12 bytes -- header, code address + constant table (the "code
-; pointer"), and the current environment (the "env pointer").
+; --- assert ---------------------------------------------------------------------------
+op_assert:
+        jsr     force_top
+        jsr     pop_p0
+        jsr     deref
+        jsr     need_bool
+        ldy     #4
+        lda     (t0),y
+        and     #$00FF
+        beq     @fail
+        jmp     run
+@fail:  lda     #E_ASSERT
+        jmp     err_exit
+
+; --- closures: thunks and lambdas -----------------------------------------------------
+; Both are 12 bytes -- header, code address + constant table (the "code
+; pointer"), and the current environment (the "env pointer"). A lambda is a
+; thunk that takes a parameter: CALL gives it an environment with the argument
+; in slot 1 where FORCE would give a thunk its captured environment directly.
+op_lambda:
+        lda     #T_LAMBDA
+        bra     closure
 op_thunk:
+        lda     #T_THUNK
+closure:
+        sta     t2
         jsr     fetch16
         asl
         asl
         tax                     ; CHUNK_INFO offset; alloc preserves X
         lda     #12
         jsr     alloc
-        lda     #T_THUNK
+        lda     t2
         sta     (obj)
         lda     #0
         ldy     #2
@@ -995,6 +1021,68 @@ op_force:
 
 op_return:
         rts
+
+; CALL: f a -> v. The callee's environment is a two-element LIST: [0] = the
+; closure's captured environment, [1] = the argument, unforced.
+op_call:
+        jsr     pop_p0          ; the argument, kept in p1 across alloc
+        lda     p0
+        sta     p1
+        lda     p0+2
+        sta     p1+2
+        jsr     force_top
+        jsr     pop_p0
+        jsr     deref           ; t0 = the lambda
+        lda     (t0)
+        and     #$00FF
+        cmp     #T_LAMBDA
+        jne     type_err
+        tsc
+        cmp     #CPU_STACK_MIN
+        jcc     nomem
+        lda     #12
+        jsr     alloc           ; obj = the new environment
+        lda     #(T_LIST | (2 << 8))
+        sta     (obj)
+        lda     #0
+        ldy     #2
+        sta     (obj),y
+        ldy     #8              ; [0] = f.env, copied as the 32-bit pointer it is
+        lda     (t0),y
+        ldy     #4
+        sta     (obj),y
+        ldy     #10
+        lda     (t0),y
+        ldy     #6
+        sta     (obj),y
+        lda     p1              ; [1] = the argument
+        ldy     #8
+        sta     (obj),y
+        lda     p1+2
+        ldy     #10
+        sta     (obj),y
+        lda     pc              ; frame
+        pha
+        lda     ctab
+        pha
+        lda     env
+        pha
+        ldy     #4
+        lda     (t0),y
+        sta     pc
+        ldy     #6
+        lda     (t0),y
+        sta     ctab
+        lda     obj
+        sta     env
+        jsr     run             ; leaves the value where f was
+        pla
+        sta     env
+        pla
+        sta     ctab
+        pla
+        sta     pc
+        jmp     run
 
 ; Force the value on top of the stack, in place. On return the top is a value.
 force_top:
@@ -1067,6 +1155,8 @@ force_top:
         lda     (t1)
         and     #$00FF
         cmp     #T_INT
+        beq     @copy12
+        cmp     #T_LAMBDA
         beq     @copy12
         cmp     #T_BOOL
         beq     @copy8

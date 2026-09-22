@@ -188,7 +188,61 @@ impl Compiler {
                 self.emit(chunk, OP_ENV_POP);
                 self.scopes.pop();
             }
+            Expr::Lambda(param, _, body) => {
+                // The body runs in a fresh environment whose element 1 is the
+                // argument and whose parent is the closure's environment -- the
+                // same shape as a one-binding let, so the scope chain is the same.
+                self.chunks.push(Chunk::default());
+                let body_chunk = self.chunks.len() - 1;
+                self.scopes.push(vec![param.clone()]);
+                self.strict(body, body_chunk)?;
+                self.emit(body_chunk, OP_RETURN);
+                self.scopes.pop();
+                self.emit(chunk, OP_LAMBDA);
+                self.emit_u16(chunk, body_chunk as u16);
+            }
+            Expr::Apply(f, arg) => {
+                self.strict(f, chunk)?;
+                // Arguments are lazy: a literal or a variable is passed by pointer,
+                // anything else becomes a thunk (tvix's rule).
+                self.lazy(arg, chunk)?;
+                self.emit(chunk, OP_CALL);
+            }
+            Expr::Assert(cond, body) => {
+                self.strict(cond, chunk)?;
+                self.emit(chunk, OP_ASSERT);
+                self.strict(body, chunk)?;
+            }
         }
+        Ok(())
+    }
+
+    /// Compiles `e` in a lazy position: a literal directly, a variable as a
+    /// pointer copy (its slot is set by the time this runs), anything else as a
+    /// thunk in its own chunk.
+    fn lazy(&mut self, e: &Expr, chunk: usize) -> Result<(), Unsupported> {
+        match e {
+            Expr::Int(_) => return self.strict(e, chunk),
+            Expr::Var(name, pos) => match self.resolve(name, *pos)? {
+                Binding::Literal(op) => {
+                    self.emit(chunk, op);
+                    return Ok(());
+                }
+                Binding::Env(d, i) => {
+                    self.emit(chunk, OP_ENV_GET);
+                    self.emit_u16(chunk, d);
+                    self.emit_u16(chunk, i);
+                    return Ok(());
+                }
+            },
+            _ => {}
+        }
+        self.chunks.push(Chunk::default());
+        let body = self.chunks.len() - 1;
+        self.strict(e, body)?;
+        self.emit(body, OP_RETURN);
+        self.emit(chunk, OP_THUNK);
+        self.emit_u16(chunk, body as u16);
         Ok(())
     }
 
@@ -310,5 +364,26 @@ mod tests {
     #[test]
     fn unbound_names_are_refused() {
         assert!(compile(&parse("x + 1").unwrap()).is_err());
+    }
+
+    #[test]
+    fn lambdas_and_lazy_arguments() {
+        // (x: x + a) 41 inside a let: the body chunk reads x at depth 0 and a at
+        // depth 1; the literal argument is passed directly, no thunk.
+        let ch = c("let a = 1; in (x: x + a) 41");
+        assert_eq!(ch.len(), 2);
+        assert_eq!(
+            ch[1].code,
+            vec![OP_ENV_GET, 0, 0, 1, 0, OP_FORCE, OP_ENV_GET, 1, 0, 1, 0, OP_FORCE, OP_ADD, OP_RETURN]
+        );
+        assert!(ch[0].code.windows(4).any(|w| w == [OP_CONST, 1, 0, OP_CALL])); // k0 = 1, k1 = 41
+        // a computed argument becomes a thunk; a variable argument is a pointer copy
+        let ch = c("let f = x: x; y = 2; in f (y + 1)");
+        assert!(ch[0].code.windows(4).any(|w| w[0] == OP_THUNK && w[3] == OP_CALL));
+        let ch = c("let f = x: x; y = 2; in f y");
+        assert!(ch[0].code.windows(6).any(|w| w == [OP_ENV_GET, 0, 0, 2, 0, OP_CALL]));
+        // assert
+        let ch = c("assert true; 1");
+        assert_eq!(ch[0].code, vec![OP_TRUE, OP_ASSERT, OP_CONST, 0, 0, OP_RETURN]);
     }
 }
