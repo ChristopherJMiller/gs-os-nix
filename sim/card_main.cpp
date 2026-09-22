@@ -13,6 +13,7 @@
 #include "Va2nix_card.h"
 #include "verilated.h"
 
+#include "cardbus.h"
 #include "heapmem.h"
 
 #include <algorithm>
@@ -25,39 +26,9 @@
 
 namespace {
 
-// Register offsets -- must match docs/CARD-ISA.md.
-enum : uint8_t {
-    R_CMD = 0x0, R_CTRL = 0x1, R_ASEL = 0x2, R_APORT = 0x3,
-    R_DATA = 0x4, R_TAG = 0x5, R_PSEL = 0x6, R_PPORT = 0x7,
-    R_LEN = 0x8, R_IRQ = 0x9,
-};
-
-// Verbs.
-enum : uint8_t {
-    V_HASH_INIT = 0x10, V_HASH_STREAM = 0x11, V_HASH_FINAL = 0x12,
-    V_STOREPATH = 0x14, V_HASH_PUSH = 0x15,
-    V_ALLOC = 0x20, V_FOLLOW = 0x21,
-};
-
-// Heap geometry and tags -- must match rtl/a2nix_card.v and docs/HEAP.md.
-constexpr uint32_t HEAP_BASE = 0x00000010;
-constexpr uint8_t  TAG_INT = 0x01, TAG_STRING = 0x04, TAG_INDIRECT = 0x0A;
-
-// Status bits.
-enum : uint8_t {
-    ST_BUSY = 0x80, ST_DONE = 0x40, ST_ERR = 0x20, ST_READY = 0x10,
-};
-
-// The card owns its own oscillator; the Apple II reaches it through a slot throttled
-// to 1.024 MHz. So the card advances many cycles per bus access, and modelling that
-// ratio is not a detail -- it decides how much of a compression stall the CPU ever
-// observes, and therefore what the polling actually costs.
-//
-//   50 MHz card / 1.024 MHz bus ~= 48 card cycles per $C0nX access.
-//
-// Ticking once per access (the first version of this harness) made the card look 48x
-// slower than reality and inflated every poll count accordingly.
-constexpr int CARD_CYCLES_PER_ACCESS = 48;
+// Register offsets, verbs, status bits, error codes, heap tags and the bus clock
+// ratio all come from sim/cardbus.h, so this harness cannot drift from
+// docs/CARD-ISA.md independently of the others.
 
 Va2nix_card *dut = nullptr;
 HeapMem<Va2nix_card> heap;          // the card's off-chip heap (docs/HEAP.md)
@@ -576,6 +547,64 @@ int main(int argc, char **argv) {
         expect(sp == "fsl59pk3f4c65048v3w7vgazqwg4d75w",
                "HASH_STREAM over a card-resident fingerprint yields the right path");
     }
+
+    // --- LOOKUP economics (the D5 gate) ---
+    // The CAM only earns its ~1400 LUT4 and 1024 flops if moving the search off the
+    // bus actually costs fewer accesses than the 65816 doing a binary search over the
+    // same sorted column. Measured, not assumed.
+    uint64_t lk_card = 0, lk_cpu = 0;
+    int lk_attrs = 0;
+    {
+        const std::uint32_t at = 0x40000;
+        const int n = 100;
+        lk_attrs = n;
+        heap.poke(at, TAG_ATTRS);
+        heap.poke(at + 1, static_cast<uint8_t>(n));
+        heap.poke(at + 2, 0);
+        heap.poke(at + 3, 0);
+        for (int i = 0; i < n; ++i) {
+            heap.poke32(at + 4 + 4 * i, 0x70000u + static_cast<uint32_t>(i));
+            heap.poke32(at + 4 + 4 * n + 4 * i, 0xD0000u + static_cast<uint32_t>(i) * 4);
+            heap.poke32(at + 4 + 8 * n + 4 * i, 0);
+        }
+        const uint32_t want_key = 0x70000u + 73;   // deep in a later CAM batch
+        const uint32_t want_val = 0xD0000u + 73 * 4;
+
+        // Card-side LOOKUP.
+        uint64_t a0 = bus_accesses;
+        set_areg(0, at);
+        wr(R_PSEL, 0);
+        for (int i = 0; i < 4; ++i) wr(R_PPORT, static_cast<uint8_t>(want_key >> (8 * i)));
+        wr(R_CMD, 0x30);                            // V_LOOKUP
+        wait_verb();
+        const uint32_t got = get_areg(1);
+        lk_card = bus_accesses - a0;
+        expect(got == want_val, "LOOKUP economics probe returns the right value");
+
+        // The 65816 equivalent: binary search over the sorted key column, reading
+        // each candidate's 4-byte hash through the DATA port.
+        a0 = bus_accesses;
+        int lo = 0, hi = n - 1;
+        while (lo <= hi) {
+            const int mid = (lo + hi) / 2;
+            set_areg(0, at + 4 + 4 * static_cast<uint32_t>(mid));
+            uint32_t k = 0;
+            for (int b = 0; b < 4; ++b)
+                k |= static_cast<uint32_t>(rd(R_DATA)) << (8 * b);
+            if (k == want_key) break;
+            if (k < want_key) lo = mid + 1; else hi = mid - 1;
+        }
+        lk_cpu = bus_accesses - a0;
+    }
+
+    std::printf("\n--- verb economics: LOOKUP over %d sorted attributes ---\n", lk_attrs);
+    std::printf("  card LOOKUP              : %llu bus accesses\n",
+                static_cast<unsigned long long>(lk_card));
+    std::printf("  65816 binary search      : %llu bus accesses\n",
+                static_cast<unsigned long long>(lk_cpu));
+    if (lk_card)
+        std::printf("  LOOKUP is %.1fx cheaper on the bus\n",
+                    static_cast<double>(lk_cpu) / static_cast<double>(lk_card));
 
     std::printf("\n--- verb economics: HASH_PUSH (card %d cycles per bus access) ---\n",
                 CARD_CYCLES_PER_ACCESS);

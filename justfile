@@ -9,8 +9,8 @@
 #   just check      full flake check: parity, lint, synth
 #   just resume     print where the project stands
 
-RTL := "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/a2nix_card.v"
-TOPS := "sha256_core sha256 storepath a2nix_card"
+RTL := "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/keycam.v rtl/a2nix_card.v"
+TOPS := "sha256_core sha256 storepath keycam a2nix_card"
 VECTORS := "tests/vectors/l1.txt"
 SIM_DIR := "sim/build"
 CARD_DIR := "sim/build_card"

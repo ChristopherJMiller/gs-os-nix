@@ -9,7 +9,7 @@
 # Every mutation is reverted afterwards, including on failure or interrupt.
 set -uo pipefail
 
-FILES=(rtl/a2nix_card.v rtl/sha256.v rtl/sha256_core.v rtl/storepath.v)
+FILES=(rtl/a2nix_card.v rtl/sha256.v rtl/sha256_core.v rtl/storepath.v rtl/keycam.v)
 BACKUP_DIR=$(mktemp -d)
 restore() { for f in "${FILES[@]}"; do cp "$BACKUP_DIR/$(basename "$f")" "$f"; done; }
 trap 'restore; rm -rf "$BACKUP_DIR"' EXIT INT TERM
@@ -123,6 +123,22 @@ mutate "R6 cyclic FOLLOW never errors" rtl/a2nix_card.v \
 # R6: swallow unknown verbs instead of reporting BADVERB.
 mutate "R6 unknown verb silently ignored" rtl/a2nix_card.v \
        's/                                    errcode <= E_BADVERB;/                                    errcode <= E_NONE;/'
+
+# L3: make the CAM's priority encoder return the HIGHEST matching lane. Attributes
+# are sorted and callers disambiguate collisions by name, so an arbitrary match hands
+# back a valid value from the wrong key.
+mutate "L3 CAM returns the highest match" rtl/keycam.v \
+       's/        for (j = WIDTH - 1; j >= 0; j = j - 1)/        for (j = 0; j < WIDTH; j = j + 1)/'
+
+# L3: stop LOOKUP after the first CAM batch, so any attribute past lane 31 silently
+# reports NOTFOUND.
+mutate "L3 LOOKUP examines one batch only" rtl/a2nix_card.v \
+       's/                        lk_done <= lk_done + {18.d0, lk_lane};/                        lk_done <= lk_count;/'
+
+# L3: read the value column from the key column's base, returning a hash where a
+# pointer belongs -- a plausible-looking address.
+mutate "L3 LOOKUP reads the wrong column" rtl/a2nix_card.v \
+       's/                        mcur     <= lk_values_at + ({8.d0, lk_hit_index} << 2);/                        mcur     <= lk_keys_at + ({8'"'"'d0, lk_hit_index} << 2);/'
 
 echo
 echo "$pass mutations caught, $fail not caught"

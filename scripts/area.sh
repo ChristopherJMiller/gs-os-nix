@@ -9,10 +9,10 @@
 # ABC9 enabled, but the budget only needs to be right to ~10%.
 set -euo pipefail
 
-RTL="rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/a2nix_card.v"
+RTL="rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/keycam.v rtl/a2nix_card.v"
 TOPS=("$@")
 if [ ${#TOPS[@]} -eq 0 ]; then
-    TOPS=(sha256_core sha256 storepath a2nix_card)
+    TOPS=(sha256_core sha256 storepath keycam a2nix_card)
 fi
 
 # Pull the "including submodules" totals out of a yosys stat report.

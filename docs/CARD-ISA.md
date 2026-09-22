@@ -192,12 +192,36 @@ wide card-side structured write rather than word-at-a-time construction.
 
 | Op | Name | In | Out |
 |---|---|---|---|
-| `$30` | `LOOKUP` | `A0` = attrset, `P0` = key hash | `A1` = value address, or ERR `NOTFOUND` |
+| `$30` | `LOOKUP` | `A0` = attrset, `P0` = key hash (4 bytes, LSB first) | `A1` = value address, `P1` = attribute index; or ERR `NOTFOUND` |
 | `$50` | `ALU64` | `P0`, `P1` operands, `P2` = op selector | `P3` = 64-bit result |
 | `$60` | `DFASTEP` | `A0` = text, `P0` = DFA state | `P1` = token type + length |
 
 `LOOKUP` uses a 32-wide key-hash CAM, collapsing attrset lookup from O(log n) pointer
-chases plus string compares to O(1). This is *the* hot loop in Nix evaluation.
+chases plus string compares to O(1) per batch. This is *the* hot loop in Nix
+evaluation.
+
+`P1` returns the **attribute index**, not just the value, because a hash match is only
+a **candidate** — 32-bit hashes collide, so the caller must compare the name
+(docs/HEAP.md). Without the index it could not locate the name to compare. On a
+collision the CAM returns the **lowest** matching lane, which is the one a sorted-order
+search would have found.
+
+> ### ⚠️ Measured: LOOKUP is only 1.5x cheaper than a CPU binary search
+>
+> Over 100 sorted attributes: **43 bus accesses** for `LOOKUP` against **63** for the
+> 65816 doing a binary search through the `DATA` port.
+>
+> The CAM's width is *not* what is being paid for. Loading the key column dominates:
+> at a byte-wide memory port, filling 32 lanes costs 32 × 4 bytes × 2 cycles ≈ 256
+> card cycles per batch, so reaching attribute 73 takes three batches ≈ 768 cycles —
+> which the CPU observes as ~27 `DONE` polls. The comparison itself is one cycle.
+>
+> So 1400 LUT4 and 1024 flops currently buy 1.5x. **A 32-bit memory port would make
+> lane loading 4x faster** (~64 cycles/batch), taking `LOOKUP` to roughly 3x and making
+> the CAM's width the thing that actually matters. `docs/HEAP.md` already keeps every
+> column 4-byte aligned for exactly this.
+>
+> Open decision — see docs/STATUS.md.
 
 `ALU64` exists because the 65816 has **no multiply or divide at all** and Nix integers
 are 64-bit.

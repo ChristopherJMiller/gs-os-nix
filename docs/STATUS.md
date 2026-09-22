@@ -7,7 +7,7 @@
 | **L0** | Toolchain: flake devShell + justfile + CI gate | **done** (AppleCommander/cadius deferred to L2, only needed for disk images) |
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
 | **L2** | Card in a machine: register map, verilate, a2bus device, patched mame | **done — M2 achieved** (gated by the ROM-free harness; MAME glue written, needs a romset) |
-| **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, CPU nursery | **in progress** — memory engine, `DATA`/`TAG`, `ALLOC`, `FOLLOW`, `HASH_STREAM` done; CAM/ALU64/GC next |
+| **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, CPU nursery | **in progress** — memory engine, `DATA`/`TAG`, `ALLOC`, `FOLLOW`, `HASH_STREAM`, `keycam.v` + `LOOKUP` done; `ALU64`/GC/nursery next |
 | **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | not started |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
 | **L6** | `NARHASH`, ATerm, `derivation` primop, string context | not started |

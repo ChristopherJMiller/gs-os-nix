@@ -328,6 +328,126 @@ void r6_errors_surface() {
           "out-of-range writes being absorbed by the harness");
 }
 
+// ---------------------------------------------------------------------------
+// L3 LOOKUP: attribute-set lookup via the key-hash CAM.
+//
+// Builds ATTRS objects directly in heap memory using the layout in docs/HEAP.md --
+// three parallel columns, key hashes first so the CAM can stream them.
+//
+// Two properties matter beyond "it finds things":
+//   - sets larger than one CAM batch must still be searched (multi-pass);
+//   - a hash COLLISION must return the lowest matching index, not an arbitrary one,
+//     because attributes are sorted and the caller resolves collisions by name.
+std::uint32_t build_attrs(std::uint32_t at,
+                          const std::vector<std::uint32_t> &key_hashes,
+                          const std::vector<std::uint32_t> &values) {
+    const std::uint32_t n = static_cast<std::uint32_t>(key_hashes.size());
+    heap.poke(at, TAG_ATTRS);
+    heap.poke(at + 1, static_cast<std::uint8_t>(n));
+    heap.poke(at + 2, static_cast<std::uint8_t>(n >> 8));
+    heap.poke(at + 3, static_cast<std::uint8_t>(n >> 16));
+    for (std::uint32_t i = 0; i < n; ++i) {
+        heap.poke32(at + 4 + 4 * i, key_hashes[i]);              // key column
+        heap.poke32(at + 4 + 4 * n + 4 * i, values[i]);          // value column
+        // Name column left null: these tests exercise the CAM, and name resolution
+        // is the caller's job (docs/HEAP.md).
+        heap.poke32(at + 4 + 8 * n + 4 * i, 0);
+    }
+    return at;
+}
+
+void set_key(std::uint32_t k) {
+    const std::uint8_t b[4] = {
+        static_cast<std::uint8_t>(k),
+        static_cast<std::uint8_t>(k >> 8),
+        static_cast<std::uint8_t>(k >> 16),
+        static_cast<std::uint8_t>(k >> 24),
+    };
+    bus->write_pslot(0, b, 4);
+}
+
+void l3_lookup() {
+    std::printf("L3 LOOKUP via the key-hash CAM\n");
+
+    // --- a small set, one CAM pass ---
+    std::vector<std::uint32_t> keys, vals;
+    for (int i = 0; i < 10; ++i) {
+        keys.push_back(0x1000u + static_cast<std::uint32_t>(i) * 0x111u);
+        vals.push_back(0xA000u + static_cast<std::uint32_t>(i) * 0x10u);
+    }
+    const std::uint32_t small = build_attrs(0x9000, keys, vals);
+
+    bool all = true;
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        bus->set_areg(0, small);
+        set_key(keys[i]);
+        bus->wr(R_CMD, V_LOOKUP);
+        const std::uint8_t st = bus->wait_verb();
+        if ((st & ST_ERR) || bus->get_areg(1) != vals[i]) all = false;
+    }
+    check(all, "LOOKUP finds every key in a 10-attribute set",
+          "an off-by-one in the value column address");
+
+    // --- a miss must report NOTFOUND, not return a neighbouring value ---
+    bus->set_areg(0, small);
+    set_key(0xDEADBEEF);
+    bus->wr(R_CMD, V_LOOKUP);
+    std::uint8_t st = bus->wait_verb();
+    check((st & ST_ERR) && (st & 0x0F) == E_NOTFOUND,
+          "a missing key reports NOTFOUND",
+          "returning a stale or adjacent value pointer on a miss, which would look "
+          "like a successful lookup of the wrong attribute");
+    bus->wr(R_CTRL, CTRL_RESET);
+
+    // --- more attributes than CAM lanes, forcing multiple passes ---
+    keys.clear(); vals.clear();
+    for (int i = 0; i < 100; ++i) {
+        keys.push_back(0x50000u + static_cast<std::uint32_t>(i));
+        vals.push_back(0xB0000u + static_cast<std::uint32_t>(i) * 4u);
+    }
+    const std::uint32_t big = build_attrs(0x20000, keys, vals);
+
+    // Probe the first lane, a lane inside a later batch, and the very last.
+    const int probes[] = { 0, 31, 32, 63, 64, 99 };
+    bool multi = true;
+    for (int i : probes) {
+        bus->set_areg(0, big);
+        set_key(keys[static_cast<std::size_t>(i)]);
+        bus->wr(R_CMD, V_LOOKUP);
+        const std::uint8_t s = bus->wait_verb();
+        const std::uint32_t got = bus->get_areg(1);
+        if ((s & ST_ERR) || got != vals[static_cast<std::size_t>(i)]) {
+            std::printf("        index %d: want %08x got %08x status %02x\n",
+                        i, vals[static_cast<std::size_t>(i)], got, s);
+            multi = false;
+        }
+    }
+    check(multi, "LOOKUP searches a 100-attribute set across CAM batches",
+          "only ever examining the first 32 lanes, so any later attribute silently "
+          "reports NOTFOUND");
+
+    // --- a collision must resolve to the LOWEST index ---
+    // Attributes are sorted, and the caller disambiguates by name; returning an
+    // arbitrary match would hand back a plausible value from the wrong key.
+    keys = { 0x11111111, 0x22222222, 0x22222222, 0x33333333 };
+    vals = { 0xC0000000, 0xC0000001, 0xC0000002, 0xC0000003 };
+    const std::uint32_t dup = build_attrs(0x30000, keys, vals);
+    bus->set_areg(0, dup);
+    set_key(0x22222222);
+    bus->wr(R_CMD, V_LOOKUP);
+    st = bus->wait_verb();
+    const std::uint32_t got = bus->get_areg(1);
+    std::uint8_t p1[4];
+    bus->read_pslot(1, p1, 4);
+    const std::uint32_t idx = static_cast<std::uint32_t>(p1[0])
+                            | (static_cast<std::uint32_t>(p1[1]) << 8)
+                            | (static_cast<std::uint32_t>(p1[2]) << 16);
+    check((st & ST_ERR) == 0 && got == 0xC0000001 && idx == 1,
+          "a hash collision resolves to the lowest matching index",
+          "returning an arbitrary colliding attribute -- a valid value from the "
+          "wrong key, which no caller could detect");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -347,6 +467,7 @@ int main(int argc, char **argv) {
     r4_dropped_bytes_at_block_boundary(vec_path);
     r5_init_abandons_partial_message();
     r6_errors_surface();
+    l3_lookup();
 
     card->final();
     delete card;

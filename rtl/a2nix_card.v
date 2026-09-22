@@ -69,7 +69,8 @@ module a2nix_card (
                      V_STOREPATH   = 8'h14,
                      V_HASH_PUSH   = 8'h15,
                      V_ALLOC       = 8'h20,
-                     V_FOLLOW      = 8'h21;
+                     V_FOLLOW      = 8'h21,
+                     V_LOOKUP      = 8'h30;
 
     // ---------------------------------------------------------------- errors -------
     // 4 bits: STATUS b4 is READY, so the error code occupies b3..b0.
@@ -190,19 +191,27 @@ module a2nix_card (
     // One engine owns the memory port, so every verb that touches the heap shares a
     // single read microsequence (issue, then latch) rather than each rolling its own.
     // A read costs 2 cycles; at 48 card cycles per bus access that is invisible.
-    localparam [3:0] M_IDLE       = 4'd0,
-                     M_RD_LATCH   = 4'd1,   // mem_addr presented; sample mem_rdata
-                     M_PF_DONE    = 4'd2,
-                     M_STREAM     = 4'd3,
-                     M_STREAM_PUT = 4'd4,
-                     M_ALLOC_HDR  = 4'd5,
-                     M_FOLLOW     = 4'd6,
-                     M_FOLLOW_TAG = 4'd7,
-                     M_FOLLOW_PTR = 4'd8,
-                     M_FOLLOW_PB  = 4'd9;
+    localparam [4:0] M_IDLE       = 5'd0,
+                     M_RD_LATCH   = 5'd1,   // mem_addr presented; sample mem_rdata
+                     M_PF_DONE    = 5'd2,
+                     M_STREAM     = 5'd3,
+                     M_STREAM_PUT = 5'd4,
+                     M_ALLOC_HDR  = 5'd5,
+                     M_FOLLOW     = 5'd6,
+                     M_FOLLOW_TAG = 5'd7,
+                     M_FOLLOW_PTR = 5'd8,
+                     M_FOLLOW_PB  = 5'd9,
+                     M_LK_CNT     = 5'd10,  // assemble the ATTRS attribute count
+                     M_LK_CB      = 5'd11,
+                     M_LK_BATCH   = 5'd12,  // start a batch of up to CAM_WIDTH lanes
+                     M_LK_LOAD    = 5'd13,  // fill the CAM from the key-hash column
+                     M_LK_HB      = 5'd14,
+                     M_LK_CAM     = 5'd15,  // present the key; hit or next batch
+                     M_LK_VAL     = 5'd16,  // read the matched value pointer
+                     M_LK_VB      = 5'd17;
 
-    reg [3:0]  mstate;
-    reg [3:0]  mret;          // state to resume after a generic read latches
+    reg [4:0]  mstate;
+    reg [4:0]  mret;          // state to resume after a generic read latches
     reg [31:0] mcur;          // working address
     reg [7:0]  mbyte;         // byte most recently read
     reg [2:0]  mbidx;         // byte index within a multi-byte field
@@ -217,6 +226,45 @@ module a2nix_card (
     reg [7:0]  dw_data;
     reg        pf_req;
     reg [7:0]  data_latch;    // byte at areg[asel], kept prefetched
+
+    // ---------------------------------------------------------------- LOOKUP -------
+    // Attribute lookup, the hottest operation in Nix evaluation. The key-hash column
+    // is loaded into a CAM_WIDTH-lane comparator array and matched in one cycle
+    // (docs/DECISIONS.md D8); sets larger than one batch are matched in successive
+    // passes, lowest lane first, which preserves sorted order.
+    localparam integer CAM_WIDTH = 32;
+
+    reg [32*CAM_WIDTH-1:0] cam_entries;
+    reg [CAM_WIDTH-1:0]    cam_lane_valid;
+    reg [31:0]             lk_base;    // the ATTRS object
+    reg [23:0]             lk_count;   // total attributes
+    reg [23:0]             lk_done;    // attributes examined in earlier batches
+    reg [5:0]              lk_lane;    // lane being filled this batch
+
+    // The key hash arrives in P0 as a byte array, byte 0 first, and the heap stores
+    // the column little-endian -- so byte 0 is the LSB on both sides.
+    wire [31:0] cam_key = { pslot[0][255 - 8*3 -: 8],
+                            pslot[0][255 - 8*2 -: 8],
+                            pslot[0][255 - 8*1 -: 8],
+                            pslot[0][255 - 8*0 -: 8] };
+
+    wire       cam_hit;
+    wire [4:0] cam_index;
+
+    keycam #(.WIDTH(CAM_WIDTH)) u_cam (
+        .key        (cam_key),
+        .entries    (cam_entries),
+        .lane_valid (cam_lane_valid),
+        .hit        (cam_hit),
+        .index      (cam_index)
+    );
+
+    // Column base addresses, from the layout in docs/HEAP.md.
+    wire [31:0] lk_keys_at   = lk_base + 32'd4;
+    wire [31:0] lk_values_at = lk_base + 32'd4 + ({8'd0, lk_count} << 2);
+
+    // Absolute attribute index of a hit: batches already examined, plus the lane.
+    wire [23:0] lk_hit_index = lk_done + {19'd0, cam_index};
 
     // ---------------------------------------------------------------- read path ----
     // b4 READY now means "the input FIFO has at least FIFO_BURST slots free", so one
@@ -271,6 +319,8 @@ module a2nix_card (
             mcur <= 32'd0; mbyte <= 8'h00; mbidx <= 3'd0;
             mptr <= 32'd0; mcount <= 32'd0; hops <= 8'd0;
             alloc_ptr <= HEAP_BASE;
+            cam_entries <= {32*CAM_WIDTH{1'b0}}; cam_lane_valid <= {CAM_WIDTH{1'b0}};
+            lk_base <= 32'd0; lk_count <= 24'd0; lk_done <= 24'd0; lk_lane <= 6'd0;
             dw_pend <= 1'b0; dw_addr <= 32'd0; dw_data <= 8'h00;
             pf_req <= 1'b0; data_latch <= 8'h00;
             mem_addr <= 32'd0; mem_we <= 1'b0; mem_wdata <= 8'h00;
@@ -392,6 +442,112 @@ module a2nix_card (
                     mstate             <= M_FOLLOW_PTR;
                 end
 
+                // --- LOOKUP: read the attribute count from the header's aux field ---
+                M_LK_CNT: begin
+                    if (mbidx == 3'd3) begin
+                        lk_count <= mptr[23:0];
+                        lk_done  <= 24'd0;
+                        mstate   <= M_LK_BATCH;
+                    end else begin
+                        mem_addr <= lk_base + 32'd1 + {29'd0, mbidx};
+                        mret     <= M_LK_CB;
+                        mstate   <= M_RD_LATCH;
+                    end
+                end
+
+                M_LK_CB: begin
+                    mptr[8*mbidx +: 8] <= mbyte;
+                    mbidx              <= mbidx + 3'd1;
+                    mstate             <= M_LK_CNT;
+                end
+
+                M_LK_BATCH: begin
+                    if (lk_done >= lk_count) begin
+                        // Every batch examined with no candidate.
+                        busy    <= 1'b0;
+                        err     <= 1'b1;
+                        errcode <= E_NOTFOUND;
+                        mstate  <= M_IDLE;
+                    end else begin
+                        cam_lane_valid <= {CAM_WIDTH{1'b0}};
+                        lk_lane        <= 6'd0;
+                        mbidx          <= 3'd0;
+                        mptr           <= 32'd0;
+                        mstate         <= M_LK_LOAD;
+                    end
+                end
+
+                M_LK_LOAD: begin
+                    if (lk_lane == CAM_WIDTH[5:0] ||
+                        (lk_done + {18'd0, lk_lane}) >= lk_count) begin
+                        mstate <= M_LK_CAM;
+                    end else if (mbidx == 3'd4) begin
+                        // lk_lane is 6 bits so it can hold the CAM_WIDTH terminator,
+                        // but only 5 bits index the array -- and this branch is only
+                        // reached while lk_lane < CAM_WIDTH.
+                        cam_entries[32*lk_lane[4:0] +: 32] <= mptr;
+                        cam_lane_valid[lk_lane[4:0]]       <= 1'b1;
+                        lk_lane                            <= lk_lane + 6'd1;
+                        mbidx                              <= 3'd0;
+                        mptr                               <= 32'd0;
+                    end else begin
+                        mem_addr <= lk_keys_at
+                                    + ((({8'd0, lk_done} + {26'd0, lk_lane})) << 2)
+                                    + {29'd0, mbidx};
+                        mret     <= M_LK_HB;
+                        mstate   <= M_RD_LATCH;
+                    end
+                end
+
+                M_LK_HB: begin
+                    mptr[8*mbidx +: 8] <= mbyte;
+                    mbidx              <= mbidx + 3'd1;
+                    mstate             <= M_LK_LOAD;
+                end
+
+                M_LK_CAM: begin
+                    if (cam_hit) begin
+                        // P1 carries the absolute attribute index, because a hash
+                        // match is only a CANDIDATE -- 32-bit hashes collide, so the
+                        // caller must still compare the name (docs/HEAP.md). Without
+                        // the index it could not find the name to compare.
+                        // P slots are byte arrays with byte 0 at the top, so the
+                        // index goes out LSB-first to match how a caller reassembles
+                        // it. Packing it as one 24-bit field instead would put byte 0
+                        // at zero and the index big-endian in bytes 1..3 -- readable,
+                        // plausible, and wrong.
+                        pslot[1] <= {lk_hit_index[7:0], lk_hit_index[15:8],
+                                     lk_hit_index[23:16], 232'd0};
+                        mcur     <= lk_values_at + ({8'd0, lk_hit_index} << 2);
+                        mbidx    <= 3'd0;
+                        mptr     <= 32'd0;
+                        mstate   <= M_LK_VAL;
+                    end else begin
+                        lk_done <= lk_done + {18'd0, lk_lane};
+                        mstate  <= M_LK_BATCH;
+                    end
+                end
+
+                M_LK_VAL: begin
+                    if (mbidx == 3'd4) begin
+                        areg[1] <= mptr;
+                        busy    <= 1'b0;
+                        done    <= 1'b1;
+                        mstate  <= M_IDLE;
+                        pf_req  <= 1'b1;
+                    end else begin
+                        mem_addr <= mcur + {29'd0, mbidx};
+                        mret     <= M_LK_VB;
+                        mstate   <= M_RD_LATCH;
+                    end
+                end
+
+                M_LK_VB: begin
+                    mptr[8*mbidx +: 8] <= mbyte;
+                    mbidx              <= mbidx + 3'd1;
+                    mstate             <= M_LK_VAL;
+                end
+
                 default: mstate <= M_IDLE;
             endcase
 
@@ -492,6 +648,14 @@ module a2nix_card (
                                     hops   <= 8'd0;
                                     busy   <= 1'b1;
                                     mstate <= M_FOLLOW;
+                                end
+
+                                V_LOOKUP: begin
+                                    lk_base <= areg[0];
+                                    mbidx   <= 3'd0;
+                                    mptr    <= 32'd0;
+                                    busy    <= 1'b1;
+                                    mstate  <= M_LK_CNT;
                                 end
                                 V_HASH_FINAL: begin
                                     // Do NOT assert finish yet: queued bytes still
