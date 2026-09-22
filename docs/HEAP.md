@@ -134,6 +134,75 @@ forwarding pointer land on the next object's header.
 `STRING`'s context pointer sits at offset `4 + round4(len)`, i.e. the first aligned
 word after the bytes, so it is always a whole word the scanner can read directly.
 
+## The VM and the two spaces (L4 slice 4)
+
+This is D6 meeting the VM. Decided with Chris (2026-09-22): go straight to
+promotion rather than an in-RAM semispace first.
+
+**Where values live.** Every allocation the VM makes is in the **nursery**, bank 0,
+16 KB, bump-allocated (`nfree`). Constants materialised from the `.nbc` image sit
+at the bottom of the nursery below a watermark and are never moved or scanned (they
+hold no pointers). The VM's own static objects (`true`, `false`, `null`, the type
+names) are in its binary and are recognised by address. Everything that survives a
+collection becomes **mature**: it is copied to the card and its pointer loses bit
+31.
+
+**When a collection happens.** Only between two bytecode instructions: `run`
+checks `nfree` against a margin before every dispatch. At that point no zero-page
+scratch holds a live object (the rule data.s already enforces: anything that runs
+bytecode may clobber all of it), so the roots are exactly:
+
+| Root set | Where |
+|---|---|
+| the value stack | `VSTACK..vsp`, 32-bit pointers |
+| the current environment | `env` |
+| every frame's objects | the **root stack** `RSTACK`: FORCE and CALL frames, and every primop loop that calls back into Nix, keep their environment/thunk/list/function pointers there instead of as raw 16-bit words on the CPU stack, so the collector can find and update them |
+| thunks under evaluation | `FSTACK` |
+| catch frames | the `env` in each `CATCH` entry |
+
+An instruction that needs more than the margin in one go fails with `E_NOMEM`
+rather than collecting mid-instruction; the margin is sized so that does not
+happen on the corpus.
+
+**The collection** is `target/heap/nursery.s`'s algorithm on these roots: a Cheney
+copy of the live graph into a staging area in bank 1 (long addressing; the nursery
+is read with `(dp),y`, staging written with `[dp],y`), then `RESERVE` on the card
+and **one `DATA` burst** of the staging area with every young pointer translated by
+the constant `card = base + (staging − STAGE)`. Then every root is rewritten to its
+mature address and the nursery is empty again. Survivors cross the bus once, at
+about one access per byte; garbage never touches it.
+
+**Reading a mature object.** Bit 31 clear means "on the card". `deref` copies the
+object — header and up to 252 bytes of payload — through the card's address
+window into one of four **copy windows** in bank 0 (`$0400`–`$07FF`, an LRU keyed
+by card address), and returns the window's address, so every accessor written for
+young objects (`(t0),y`) works unchanged on the copy. Fields past the window
+(long strings, big lists and sets) are read individually through the address port.
+A copy costs `1 + 4 + size` bus accesses; a hit costs nothing, which is what makes
+the four windows worth their 1 KB.
+
+**Attribute lookup on a mature set** does not copy the set: it hands the search
+hash, the hash column's card address and the count to the **`LOOKUP` verb** (the
+32-lane CAM), copies only the candidate's name to confirm it, and reads the value
+pointer. This is the operation the CAM was built for, and slice 4 is where it gets
+measured on real programs instead of micro-benchmarks. Young sets are still a CPU
+hash scan.
+
+**Write barrier** (D6's rule, "a mature object never points into the nursery"): the
+two places the VM writes into an existing object are `ENV_SET` (a binding into its
+`let`'s environment, which may have been promoted while an earlier initialiser
+allocated) and the in-place update after forcing a thunk. When the target is
+mature, the value being stored is promoted first — a collection with a single root
+— and the store goes to the card through the address port.
+
+**A discrepancy this exposes, to resolve before the card's own collector runs:**
+the trace table below says `THUNK`/`LAMBDA` word 0 (the code pointer) is a heap
+pointer, but the VM stores a bank-0 code address and a constant-table address
+there, which the card's `MARK` would chase into the heap. Promotion (this slice)
+never asks the card to trace, so it is safe for now; card-side collection (slice
+5) must either give code objects a heap representation or teach the tracer that
+word 0 of a closure is opaque. Recorded here so it cannot be forgotten.
+
 ## What the collector traces
 
 The card's collector (`MARK`/`COMPACT`, see [CARD-ISA.md](CARD-ISA.md)) is a

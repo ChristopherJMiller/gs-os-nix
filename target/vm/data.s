@@ -86,6 +86,76 @@ deref_p1:
 @bad:   lda     #E_BADNBC
         jmp     err_exit
 
+; deref_p0_t1: p0 -> t1, leaving t0 alone.
+deref_p0_t1:
+        lda     p0+2
+        bpl     @bad
+        lda     p0
+        beq     @bad
+        sta     t1
+        rts
+@bad:   lda     #E_BADNBC
+        jmp     err_exit
+
+; --- the root stack ------------------------------------------------------------------
+; Frames that span bytecode keep their object POINTERS here (32-bit, young or
+; mature) rather than as raw addresses on the CPU stack, so a collection can
+; find and rewrite them (HEAP.md, "The VM and the two spaces"). A frame
+; remembers its base offset (rbase) on the CPU stack and reads entries with
+; rget_x / rset_x; leaving the frame sets rsp back to rbase.
+rpush_p0:
+        ldx     rsp
+        cpx     #(RSTACK_END-RSTACK)
+        jcs     nomem
+        lda     p0
+        sta     RSTACK,x
+        lda     p0+2
+        sta     RSTACK+2,x
+        inx
+        inx
+        inx
+        inx
+        stx     rsp
+        rts
+rpush_env:
+        lda     env
+        sta     p0
+        lda     env+2
+        sta     p0+2
+        bra     rpush_p0
+rpop_p0:
+        lda     rsp
+        sec
+        sbc     #4
+        sta     rsp
+        tax
+        lda     RSTACK,x
+        sta     p0
+        lda     RSTACK+2,x
+        sta     p0+2
+        rts
+rpop_env:
+        jsr     rpop_p0
+        lda     p0
+        sta     env
+        lda     p0+2
+        sta     env+2
+        rts
+rget_x:                         ; X = RSTACK offset -> p0
+        lda     RSTACK,x
+        sta     p0
+        lda     RSTACK+2,x
+        sta     p0+2
+        rts
+rset_x:                         ; X = RSTACK offset <- p0
+        lda     p0
+        sta     RSTACK,x
+        lda     p0+2
+        sta     RSTACK+2,x
+        rts
+; rbase_get: A = entry index k (0..) in the frame whose rbase is at 1,s of the
+; CALLER -- so callers pass the offset themselves. (See the loops.)
+
 ; push_int: p2 (8 bytes little-endian) -> a new INT on the stack. Clobbers obj, p0.
 push_int:
         jsr     new_int

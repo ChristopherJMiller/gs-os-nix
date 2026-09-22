@@ -279,47 +279,76 @@ prim_genlist:
         jsr     push_p0
         jmp     run
 
-; filter f list. Frame: kept 1,s  i 3,s  n 5,s  result 7,s  f.hi 9,s  f.lo 11,s  list 13,s
+; --- frame helpers for the loops below ----------------------------------------------
+; Every loop that calls back into Nix keeps its objects on the root stack and
+; its counters on the CPU stack, with rbase at 1,s. robj_k: the object at
+; entry k of the current frame -> p0 and t0 (dereferenced). Called as a
+; subroutine, so the frame is 2 bytes deeper: rbase is at 3,s here.
+robj_0: lda     3,s
+        tax
+        bra     robj_x
+robj_1: lda     3,s
+        clc
+        adc     #4
+        tax
+        bra     robj_x
+robj_2: lda     3,s
+        clc
+        adc     #8
+        tax
+        bra     robj_x
+robj_3: lda     3,s
+        clc
+        adc     #12
+        tax
+robj_x: jsr     rget_x
+        jmp     deref
+
+; rpush_obj: push the young object at obj as a root.
+rpush_obj:
+        lda     obj
+        sta     p0
+        lda     #$8000
+        sta     p0+2
+        jmp     rpush_p0
+
+; filter f list. Roots: list, f, result. CPU: kept 7,s  i 5,s  n 3,s  rbase 1,s
 prim_filter:
         jsr     force_pop_t0
         jsr     need_list
         jsr     aux_t0
         sta     n0
-        jsr     pop_p0          ; f
-        lda     p0
-        sta     p1
-        lda     p0+2
-        sta     p1+2
+        jsr     rpush_p0        ; list
+        jsr     pop_p0
+        jsr     rpush_p0        ; f
         lda     n0
         jsr     list_alloc
-        lda     t0
-        pha
-        lda     p1
-        pha
-        lda     p1+2
-        pha
-        lda     obj
-        pha
+        jsr     rpush_obj       ; result
+        lda     #0
+        pha                     ; kept
         lda     n0
         pha
         lda     #0
-        pha
+        pha                     ; i
+        lda     rsp
+        sec
+        sbc     #12
         pha
 @loop:  lda     3,s
         cmp     5,s
         beq     @done
-        lda     13,s
-        sta     t0
+        jsr     robj_0          ; the list
         lda     3,s
         jsr     elem_t0
         lda     p0
         sta     p1
         lda     p0+2
         sta     p1+2
-        lda     11,s
-        sta     p0
-        lda     9,s
-        sta     p0+2
+        lda     1,s
+        clc
+        adc     #4
+        tax
+        jsr     rget_x          ; f
         jsr     call_with
         jsr     force_pop_t0
         jsr     need_bool
@@ -327,70 +356,68 @@ prim_filter:
         lda     (t0),y
         and     #$00FF
         beq     @skip
-        lda     13,s
-        sta     t0
+        jsr     robj_2          ; the result list -> obj (before p0 is the element)
+        lda     t0
+        sta     obj
+        jsr     robj_0
         lda     3,s
         jsr     elem_t0
         lda     7,s
-        sta     obj
-        lda     1,s
         jsr     set_elem_obj
-        lda     1,s
+        lda     7,s
         inc     a
-        sta     1,s
+        sta     7,s
 @skip:  lda     3,s
         inc     a
         sta     3,s
         bra     @loop
-@done:  lda     7,s
+@done:  jsr     robj_2
+        lda     t0
         sta     obj
-        lda     1,s
+        lda     7,s
         sta     t2
         lda     #T_LIST
         jsr     hdr_obj         ; aux = kept
+        lda     1,s
+        sta     rsp
         tsc
         clc
-        adc     #14
+        adc     #8
         tcs
-        lda     obj
-        sta     p0
-        lda     #$8000
-        sta     p0+2
-        jsr     push_p0
-        jmp     run
+        jmp     push_obj_run
 
 ; foldl' f z list: the accumulator lives on the value stack.
 ; Frame: i 1,s  n 3,s  f.hi 5,s  f.lo 7,s  list 9,s
+; foldl' f z list: the accumulator lives on the value stack. Roots: list, f.
+; CPU: n 5,s  i 3,s  rbase 1,s
 prim_foldl:                     ; f z list, list on top
         jsr     force_pop_t0
         jsr     need_list
         jsr     aux_t0
         sta     n0
-        lda     t0
-        sta     t6
+        jsr     rpush_p0        ; list
         jsr     pop_p0          ; z
         lda     p0
         sta     p2
         lda     p0+2
         sta     p2+2
         jsr     pop_p0          ; f
-        lda     t6
-        pha                     ; list 9,s
-        lda     p0
-        pha                     ; f.lo 7,s
-        lda     p0+2
-        pha                     ; f.hi 5,s
+        jsr     rpush_p0
         lda     n0
-        pha                     ; n 3,s
+        pha
         lda     #0
-        pha                     ; i 1,s
+        pha
+        lda     rsp
+        sec
+        sbc     #8
+        pha
         lda     p2
         sta     p0
         lda     p2+2
         sta     p0+2
-        jsr     push_p0         ; the accumulator lives on the value stack
-@loop:  lda     1,s
-        cmp     3,s
+        jsr     push_p0         ; the accumulator
+@loop:  lda     3,s
+        cmp     5,s
         beq     @done
         ; g = f acc
         jsr     pop_p0          ; acc
@@ -398,50 +425,52 @@ prim_foldl:                     ; f z list, list on top
         sta     p1
         lda     p0+2
         sta     p1+2
-        lda     7,s
-        sta     p0
-        lda     5,s
-        sta     p0+2
+        lda     1,s
+        clc
+        adc     #4
+        tax
+        jsr     rget_x          ; f
         jsr     call_with       ; g on top
         ; acc' = g x, forced (strict accumulator)
-        lda     9,s
-        sta     t0
-        lda     1,s
+        jsr     robj_0
+        lda     3,s
         jsr     elem_t0
         jsr     push_p0         ; x above g
         jsr     do_call
         jsr     force_top
-        lda     1,s
+        lda     3,s
         inc     a
-        sta     1,s
+        sta     3,s
         bra     @loop
-@done:  tsc
-        clc
-        adc     #10
-        tcs
+@done:  pla
+        sta     rsp
+        pla
+        pla
         jmp     run             ; the accumulator is the result
 
 ; concatLists [ [..] [..] ]: force each element, sum, copy. Two passes; the
 ; state is kept on the CPU stack around the forces.
+; Roots: outer. CPU: total 7,s  i 5,s  n 3,s  rbase 1,s
 prim_concatlists:
         jsr     force_pop_t0
         jsr     need_list
         jsr     aux_t0
         sta     n0
-        lda     t0
-        pha
+        jsr     rpush_p0
+        lda     #0
+        pha                     ; total
         lda     n0
         pha
         lda     #0
         pha                     ; i
-        lda     #0
-        pha                     ; total
-        ; frame: total 1,s  i 3,s  n 5,s  outer 7,s
+        lda     rsp
+        sec
+        sbc     #4
+        pha
 @count: lda     3,s
         cmp     5,s
         beq     @alloc
-        lda     7,s
-        sta     t0
+        jsr     robj_0
         lda     3,s
         jsr     elem_t0
         jsr     push_p0
@@ -451,23 +480,22 @@ prim_concatlists:
         jsr     need_list
         jsr     aux_t0
         clc
-        adc     1,s
+        adc     7,s
         jcs     nomem
-        sta     1,s
+        sta     7,s
         lda     3,s
         inc     a
         sta     3,s
         bra     @count
-@alloc: lda     1,s
-        jsr     list_alloc      ; obj = result
+@alloc: lda     7,s
+        jsr     list_alloc      ; obj = result (no bytecode from here on)
         lda     #0
         sta     3,s             ; i = 0
-        sta     1,s             ; bytes written
+        sta     7,s             ; bytes written
 @copy:  lda     3,s
         cmp     5,s
         beq     @done
-        lda     7,s
-        sta     t0
+        jsr     robj_0
         lda     3,s
         jsr     elem_t0
         jsr     deref_follow    ; already forced; maybe through an INDIRECT
@@ -483,141 +511,145 @@ prim_concatlists:
         clc
         adc     #4
         clc
-        adc     1,s
+        adc     7,s
         tay
         lda     t4
         jsr     copy_bytes
-        lda     1,s
+        lda     7,s
         clc
         adc     t4
-        sta     1,s
+        sta     7,s
         lda     3,s
         inc     a
         sta     3,s
         bra     @copy
-@done:  tsc
+@done:  pla
+        sta     rsp
+        tsc
         clc
-        adc     #8
+        adc     #6
         tcs
         jmp     push_obj_run    ; (elem_t0 above clobbered p0)
 
 ; concatMap f list = concatLists (map f list), the map strict.
+; concatMap f list = concatLists (map f list), the map strict.
+; Roots: list, f, mapped. CPU: n 5,s  i 3,s  rbase 1,s
 prim_concatmap:
         jsr     force_pop_t0
         jsr     need_list
         jsr     aux_t0
         sta     n0
+        jsr     rpush_p0        ; list
         jsr     pop_p0          ; f
-        lda     p0
-        sta     p1
-        lda     p0+2
-        sta     p1+2
+        jsr     rpush_p0
         lda     n0
         jsr     list_alloc      ; the mapped list
-        lda     t0
-        pha
-        lda     p1
-        pha
-        lda     p1+2
-        pha
-        lda     obj
-        pha
+        jsr     rpush_obj
         lda     n0
         pha
         lda     #0
         pha
-        ; frame: i 1,s  n 3,s  mapped 5,s  f.hi 7,s  f.lo 9,s  list 11,s
-@loop:  lda     1,s
-        cmp     3,s
+        lda     rsp
+        sec
+        sbc     #12
+        pha
+@loop:  lda     3,s
+        cmp     5,s
         beq     @done
-        lda     11,s
-        sta     t0
-        lda     1,s
+        jsr     robj_0
+        lda     3,s
         jsr     elem_t0
         lda     p0
         sta     p1
         lda     p0+2
         sta     p1+2
-        lda     9,s
-        sta     p0
-        lda     7,s
-        sta     p0+2
+        lda     1,s
+        clc
+        adc     #4
+        tax
+        jsr     rget_x          ; f
         jsr     call_with
         jsr     force_top
         jsr     pop_p0
-        lda     5,s
+        lda     p0
+        sta     p1
+        lda     p0+2
+        sta     p1+2
+        jsr     robj_2          ; mapped
+        lda     t0
         sta     obj
-        lda     1,s
-        jsr     set_elem_obj
-        lda     1,s
-        inc     a
-        sta     1,s
-        bra     @loop
-@done:  lda     5,s
+        lda     p1
         sta     p0
-        lda     #$8000
+        lda     p1+2
         sta     p0+2
-        tsc
-        clc
-        adc     #12
-        tcs
-        jsr     push_p0
+        lda     3,s
+        jsr     set_elem_obj
+        lda     3,s
+        inc     a
+        sta     3,s
+        bra     @loop
+@done:  jsr     robj_2
+        pla
+        sta     rsp
+        pla
+        pla
+        jsr     push_p0         ; the mapped list
         jmp     prim_concatlists
 
-; elem x list. Frame: i 1,s  n 3,s  x.hi 5,s  x.lo 7,s  list 9,s
+; elem x list. Roots: list, x. CPU: n 5,s  i 3,s  rbase 1,s
 prim_elem:
         jsr     force_pop_t0
         jsr     need_list
         jsr     aux_t0
         sta     n0
+        jsr     rpush_p0        ; list
         jsr     pop_p0          ; x
-        lda     t0
-        pha
-        lda     p0
-        pha
-        lda     p0+2
-        pha
+        jsr     rpush_p0
         lda     n0
         pha
         lda     #0
         pha
-@loop:  lda     1,s
-        cmp     3,s
+        lda     rsp
+        sec
+        sbc     #8
+        pha
+@loop:  lda     3,s
+        cmp     5,s
         beq     @no
-        lda     9,s
-        sta     t0
-        lda     1,s
+        jsr     robj_0
+        lda     3,s
         jsr     elem_t0
         lda     p0
         sta     p1
         lda     p0+2
         sta     p1+2
-        lda     7,s
-        sta     p0
-        lda     5,s
-        sta     p0+2
+        lda     1,s
+        clc
+        adc     #4
+        tax
+        jsr     rget_x          ; x
         jsr     values_equal
         beq     @yes
-        lda     1,s
+        lda     3,s
         inc     a
-        sta     1,s
+        sta     3,s
         bra     @loop
-@yes:   tsc
-        clc
-        adc     #10
-        tcs
+@yes:   pla
+        sta     rsp
+        pla
+        pla
         lda     #obj_true
         jsr     push_static
         jmp     run
-@no:    tsc
-        clc
-        adc     #10
-        tcs
+@no:    pla
+        sta     rsp
+        pla
+        pla
         lda     #obj_false
         jsr     push_static
         jmp     run
 
-; any f list / all f list. Frame: i 1,s  n 3,s  f.hi 5,s  f.lo 7,s  list 9,s  want 11,s
+; any f list / all f list. Roots: list, f. CPU: want 7,s  n 5,s  i 3,s  rbase 1,s
 prim_any:
         lda     #1
         bra     any_all
@@ -629,55 +661,57 @@ any_all:
         jsr     need_list
         jsr     aux_t0
         sta     n0
+        jsr     rpush_p0        ; list
         jsr     pop_p0          ; f
-        lda     t0
-        pha
-        lda     p0
-        pha
-        lda     p0+2
-        pha
+        jsr     rpush_p0
         lda     n0
         pha
         lda     #0
         pha
-@loop:  lda     1,s
-        cmp     3,s
+        lda     rsp
+        sec
+        sbc     #8
+        pha
+@loop:  lda     3,s
+        cmp     5,s
         beq     @exhausted
-        lda     9,s
-        sta     t0
-        lda     1,s
+        jsr     robj_0
+        lda     3,s
         jsr     elem_t0
         lda     p0
         sta     p1
         lda     p0+2
         sta     p1+2
-        lda     7,s
-        sta     p0
-        lda     5,s
-        sta     p0+2
+        lda     1,s
+        clc
+        adc     #4
+        tax
+        jsr     rget_x          ; f
         jsr     call_with
         jsr     force_pop_t0
         jsr     need_bool
         ldy     #4
         lda     (t0),y
         and     #$00FF
-        cmp     11,s
+        cmp     7,s
         beq     @decided
-        lda     1,s
+        lda     3,s
         inc     a
-        sta     1,s
+        sta     3,s
         bra     @loop
 @decided:
-        lda     11,s            ; any found true -> true; all found false -> false
+        lda     7,s             ; any found true -> true; all found false -> false
         bra     @result
 @exhausted:
-        lda     11,s
+        lda     7,s
         eor     #1              ; any: false; all: true
 @result:
         sta     t2              ; nothing below runs bytecode
+        pla
+        sta     rsp
         tsc
         clc
-        adc     #12             ; want + the five-word frame
+        adc     #6              ; i, n, want
         tcs
         lda     t2
         beq     @false
@@ -864,6 +898,8 @@ a_name_in_b:
 
 ; removeAttrs set [ names ]: keep entries whose name is not in the list.
 ; The list's elements are forced first; then two passes.
+; removeAttrs set [ names ]. Roots while forcing the names: set, list.
+; CPU: n 5,s  i 3,s  rbase 1,s. Then two passes with no bytecode.
 prim_removeattrs:
         jsr     force_two       ; t0 = the set, t1 = the names list
         jsr     need_attrs
@@ -874,37 +910,47 @@ prim_removeattrs:
         jsr     aux_t1
         sta     n1
         lda     t0
-        pha                     ; set 7,s
+        sta     p0
+        lda     #$8000
+        sta     p0+2
+        jsr     rpush_p0        ; set
         lda     t1
-        pha                     ; names list 5,s
+        sta     p0
+        jsr     rpush_p0        ; list
         lda     n1
-        pha                     ; n 3,s
+        pha
         lda     #0
-        pha                     ; i 1,s
-@force: lda     1,s             ; force every name (runs bytecode: frame-based)
-        cmp     3,s
+        pha
+        lda     rsp
+        sec
+        sbc     #8
+        pha
+@force: lda     3,s             ; force every name (runs bytecode: frame-based)
+        cmp     5,s
         beq     @forced
-        lda     5,s
-        sta     t0
-        lda     1,s
+        jsr     robj_1          ; the list
+        lda     3,s
         jsr     elem_t0
         jsr     push_p0
         jsr     force_top
         jsr     pop_p0
         jsr     deref
         jsr     need_string
-        lda     1,s
+        lda     3,s
         inc     a
-        sta     1,s
+        sta     3,s
         bra     @force
 @forced:
-        pla
-        pla
-        pla
+        jsr     robj_1
+        lda     t0
         sta     t6              ; names list
-        pla
+        jsr     robj_0
+        lda     t0
         sta     sav             ; the set
-        sta     t0
+        pla
+        sta     rsp
+        pla
+        pla
         jsr     aux_t0
         pha                     ; |set| at 1,s
         stz     ix
@@ -974,29 +1020,31 @@ name_in_list:
 ; listToAttrs [ { name; value; } ... ]: first occurrence of a name wins.
 ; Built by insertion into a capacity-n set kept sorted; compacted at the end
 ; if duplicates were dropped.
-; Frame: cnt 1,s  i 3,s  n 5,s  set 7,s  list 9,s
+; Roots: list, set, and while an element is being taken apart, the element
+; and its name (rbase+8, rbase+12). CPU: cnt 7,s  n 5,s  i 3,s  rbase 1,s
 prim_listtoattrs:
         jsr     force_pop_t0
         jsr     need_list
         jsr     aux_t0
         sta     n0
+        jsr     rpush_p0        ; list
         lda     n0
         jsr     attrs_alloc     ; capacity n0; column offsets use n0
-        lda     t0
-        pha                     ; list
-        lda     obj
-        pha                     ; set
-        lda     n0
-        pha                     ; n
-        lda     #0
-        pha                     ; i
+        jsr     rpush_obj       ; set
         lda     #0
         pha                     ; entries so far
+        lda     n0
+        pha
+        lda     #0
+        pha                     ; i
+        lda     rsp
+        sec
+        sbc     #8
+        pha
 @loop:  lda     3,s
         cmp     5,s
         jeq     @done
-        lda     9,s
-        sta     t0
+        jsr     robj_0
         lda     3,s
         jsr     elem_t0
         jsr     push_p0
@@ -1004,12 +1052,11 @@ prim_listtoattrs:
         jsr     pop_p0
         jsr     deref
         jsr     need_attrs
-        lda     t0
-        pha                     ; the element set (frame +2)
+        jsr     rpush_p0        ; the element set, rbase+8
         lda     #str_name
         sta     t1
         jsr     find_attr
-        bcc     @bad1
+        bcc     @bad
         lda     ix
         jsr     attr_value
         jsr     push_p0
@@ -1017,43 +1064,45 @@ prim_listtoattrs:
         jsr     pop_p0
         jsr     deref
         jsr     need_string
-        lda     t0
-        pha                     ; the name STRING (frame +4)
-        lda     3,s
-        sta     t0
+        jsr     rpush_p0        ; the name STRING, rbase+12
+        jsr     robj_2          ; the element set again (maybe moved)
         lda     #str_value
         sta     t1
         jsr     find_attr
-        bcc     @bad2
+        bcc     @bad
         lda     ix
         jsr     attr_value      ; p0 = the value, unforced
         lda     p0
         sta     p2
         lda     p0+2
         sta     p2+2
-        pla
-        sta     t5              ; name
-        pla                     ; the element set, done with
-        lda     7,s
+        jsr     robj_3          ; the name
+        lda     t0
+        sta     t5
+        jsr     robj_1          ; the set
+        lda     t0
         sta     obj
         lda     5,s
         sta     n0
-        lda     1,s
+        lda     7,s
         sta     kx
         jsr     insert_entry    ; kx updated
         lda     kx
-        sta     1,s
+        sta     7,s
+        lda     1,s
+        clc
+        adc     #8
+        sta     rsp             ; drop element and name
         lda     3,s
         inc     a
         sta     3,s
         jmp     @loop
-@bad2:  pla
-@bad1:  pla
-        lda     #E_NOATTR
+@bad:   lda     #E_NOATTR
         jmp     err_exit
-@done:  lda     7,s
+@done:  jsr     robj_1
+        lda     t0
         sta     obj
-        lda     1,s
+        lda     7,s
         sta     kx
         lda     5,s
         cmp     kx
@@ -1075,9 +1124,11 @@ prim_listtoattrs:
         jsr     copy_entry      ; the source's aux is its capacity: right offsets
         inc     ix
         bra     @compact
-@exact: tsc
+@exact: pla
+        sta     rsp
+        tsc
         clc
-        adc     #10
+        adc     #6
         tcs
         jmp     push_obj_run
 
@@ -1244,89 +1295,87 @@ attrs_set_entry:
         rts
 
 ; partition f list -> { right = [...]; wrong = [...]; }
-; Frame: nwrong 1,s  nright 3,s  i 5,s  n 7,s  wrong 9,s  right 11,s  f.hi 13,s  f.lo 15,s  list 17,s
+; Roots: list, f, right, wrong. CPU: nwrong 9,s  nright 7,s  n 5,s  i 3,s  rbase 1,s
 prim_partition:
         jsr     force_pop_t0
         jsr     need_list
         jsr     aux_t0
         sta     n0
+        jsr     rpush_p0        ; list
         jsr     pop_p0          ; f
-        lda     t0
-        pha
-        lda     p0
-        pha
-        lda     p0+2
-        pha
+        jsr     rpush_p0
         lda     n0
         jsr     list_alloc
-        lda     obj
-        pha                     ; right
+        jsr     rpush_obj       ; right
         lda     n0
         jsr     list_alloc
-        lda     obj
-        pha                     ; wrong
+        jsr     rpush_obj       ; wrong
+        lda     #0
+        pha                     ; nwrong
+        pha                     ; nright
         lda     n0
         pha
         lda     #0
+        pha                     ; i
+        lda     rsp
+        sec
+        sbc     #16
         pha
-        pha
-        pha
-@loop:  lda     5,s
-        cmp     7,s
+@loop:  lda     3,s
+        cmp     5,s
         beq     @done
-        lda     17,s
-        sta     t0
-        lda     5,s
+        jsr     robj_0
+        lda     3,s
         jsr     elem_t0
         lda     p0
         sta     p1
         lda     p0+2
         sta     p1+2
-        lda     15,s
-        sta     p0
-        lda     13,s
-        sta     p0+2
+        lda     1,s
+        clc
+        adc     #4
+        tax
+        jsr     rget_x          ; f
         jsr     call_with
         jsr     force_pop_t0
         jsr     need_bool
         ldy     #4
         lda     (t0),y
         and     #$00FF
-        pha
-        lda     19,s            ; list (shifted by the push)
-        sta     t0
-        lda     7,s             ; i
-        jsr     elem_t0
-        pla
+        sta     t2              ; no bytecode until it is used
+        jsr     robj_0
+        lda     3,s
+        jsr     elem_t0         ; p0 = the element
+        lda     t2
         beq     @wrong
-        lda     11,s
-        sta     obj
-        lda     3,s
+        jsr     robj_2_keep     ; right, keeping p0
+        lda     7,s
         jsr     set_elem_obj
-        lda     3,s
+        lda     7,s
+        inc     a
+        sta     7,s
+        bra     @next
+@wrong: jsr     robj_3_keep     ; wrong, keeping p0
+        lda     9,s
+        jsr     set_elem_obj
+        lda     9,s
+        inc     a
+        sta     9,s
+@next:  lda     3,s
         inc     a
         sta     3,s
-        bra     @next
-@wrong: lda     9,s
-        sta     obj
-        lda     1,s
-        jsr     set_elem_obj
-        lda     1,s
-        inc     a
-        sta     1,s
-@next:  lda     5,s
-        inc     a
-        sta     5,s
         bra     @loop
-@done:  lda     11,s
+@done:  jsr     robj_2
+        lda     t0
         sta     obj
-        lda     3,s
+        lda     7,s
         sta     t2
         lda     #T_LIST
         jsr     hdr_obj
-        lda     9,s
+        jsr     robj_3
+        lda     t0
         sta     obj
-        lda     1,s
+        lda     9,s
         sta     t2
         lda     #T_LIST
         jsr     hdr_obj
@@ -1341,10 +1390,14 @@ prim_partition:
         sta     p1
         lda     #$8000
         sta     p1+2
-        lda     11,s
+        lda     1,s
+        clc
+        adc     #8
+        tax
+        lda     RSTACK,x
         sta     p2
-        lda     #$8000
-        sta     p2+2
+        lda     RSTACK+2,x
+        sta     p2+2            ; right
         stz     ix
         jsr     attrs_set_entry
         lda     #str_wrong
@@ -1352,21 +1405,41 @@ prim_partition:
         jsr     hash_t0
         lda     #str_wrong
         sta     p1
-        lda     9,s
+        lda     1,s
+        clc
+        adc     #12
+        tax
+        lda     RSTACK,x
         sta     p2
+        lda     RSTACK+2,x
+        sta     p2+2            ; wrong
         lda     #1
         sta     ix
         jsr     attrs_set_entry
+        pla
+        sta     rsp
         tsc
         clc
-        adc     #18
+        adc     #8
         tcs
-        lda     obj
-        sta     p0
-        lda     #$8000
-        sta     p0+2
-        jsr     push_p0
-        jmp     run
+        jmp     push_obj_run
+
+; robj_k_keep: like robj_k but leaves p0 alone (obj <- the object's address).
+robj_2_keep:
+        lda     3,s
+        clc
+        adc     #8
+        tax
+        bra     robj_keep_x
+robj_3_keep:
+        lda     3,s
+        clc
+        adc     #12
+        tax
+robj_keep_x:
+        lda     RSTACK,x        ; young: the low word is the address
+        sta     obj
+        rts
 
 ; --- strings ---------------------------------------------------------------------------
 prim_stringlength:
@@ -1380,8 +1453,7 @@ prim_stringlength:
 prim_substring:
         jsr     force_pop_t0
         jsr     need_string
-        lda     t0
-        pha                     ; s
+        jsr     rpush_p0        ; s, a root while len and start are forced
         jsr     force_pop_t0    ; len: negative means "to the end"
         jsr     need_int
         ldy     #10
@@ -1410,8 +1482,8 @@ prim_substring:
         sta     n0              ; start
         pla
         sta     n1              ; len
-        pla
-        sta     t0              ; s
+        jsr     rpop_p0
+        jsr     deref           ; t0 = s
         jsr     aux_t0
         sta     slen            ; |s|
         lda     n0
@@ -1453,7 +1525,7 @@ prim_substring:
         jsr     push_p0
         jmp     run
 @past:  pla
-        pla
+        jsr     rpop_p0
 @empty: lda     #0
         jsr     str_alloc
         jsr     push_p0
@@ -1476,51 +1548,71 @@ tostring_top:
         cmp     #T_STRING
         beq     @same
         cmp     #T_INT
-        beq     @int
+        jeq     @int
         cmp     #T_BOOL
-        beq     @bool
+        jeq     @bool
         cmp     #T_NULL
-        beq     @empty
+        jeq     @empty
         cmp     #T_LIST
         beq     @list
         jmp     type_err
 @same:  jmp     push_p0
 @list:  ; map tostring over the elements into a fresh list, then join with " "
+        ; Roots: source, mapped. CPU: i 3,s  rbase 1,s
         jsr     aux_t0
         sta     n0
-        jsr     list_alloc      ; the converted elements (obj)
-        lda     t0
-        pha                     ; source 5,s
-        lda     obj
-        pha                     ; mapped 3,s
+        jsr     rpush_p0        ; source
+        lda     n0
+        jsr     list_alloc      ; the converted elements
+        jsr     rpush_obj       ; mapped
         lda     #0
-        pha                     ; i 1,s
-@ll:    lda     5,s
-        sta     t0
+        pha
+        lda     rsp
+        sec
+        sbc     #8
+        pha
+@ll:    jsr     robj_0
         jsr     aux_t0
-        cmp     1,s
+        cmp     3,s
         beq     @joined
-        lda     1,s
+        lda     3,s
         jsr     elem_t0
         jsr     push_p0
         jsr     tostring_top    ; recursion, frame-based
         jsr     pop_p0
-        lda     3,s
+        lda     p0
+        sta     p1
+        lda     p0+2
+        sta     p1+2
+        jsr     robj_1
+        lda     t0
         sta     obj
-        lda     1,s
+        lda     p1
+        sta     p0
+        lda     p1+2
+        sta     p0+2
+        lda     3,s
         jsr     set_elem_obj
-        lda     1,s
+        lda     3,s
         inc     a
-        sta     1,s
+        sta     3,s
         bra     @ll
 @joined:
+        jsr     robj_1
         pla
+        sta     rsp
         pla
-        sta     obj
-        pla
+        lda     p0
+        sta     p1
+        lda     p0+2
+        sta     p1+2
         lda     #str_space
         jsr     push_static     ; sep
-        jsr     push_obj_run_nojmp
+        lda     p1
+        sta     p0
+        lda     p1+2
+        sta     p0+2
+        jsr     push_p0         ; the mapped list
         jmp     concat_strings_sep_top
 @bool:  ldy     #4
         lda     (t0),y
@@ -1714,6 +1806,7 @@ prim_concatstringssep:          ; sep list, list on top
 
 ; concat_strings_sep_top: as above, but returns with the result on the stack
 ; (toString's list case shares it).
+; Roots: sep, list. CPU: total 7,s  n 5,s  i 3,s  rbase 1,s
 concat_strings_sep_top:
         jsr     force_two       ; t0 = sep, t1 = list
         jsr     need_string
@@ -1724,21 +1817,27 @@ concat_strings_sep_top:
         jsr     aux_t1
         sta     n0
         lda     t0
-        pha                     ; sep 9,s
+        sta     p0
+        lda     #$8000
+        sta     p0+2
+        jsr     rpush_p0        ; sep
         lda     t1
-        pha                     ; list 7,s
+        sta     p0
+        jsr     rpush_p0        ; list
+        lda     #0
+        pha                     ; total
         lda     n0
-        pha                     ; n 5,s
+        pha
         lda     #0
-        pha                     ; i 3,s
-        lda     #0
-        pha                     ; total 1,s
-        ; frame: total 1,s  i 3,s  n 5,s  list 7,s  sep 9,s
+        pha                     ; i
+        lda     rsp
+        sec
+        sbc     #8
+        pha
 @count: lda     3,s
         cmp     5,s
         beq     @alloc
-        lda     7,s
-        sta     t0
+        jsr     robj_1
         lda     3,s
         jsr     elem_t0
         jsr     push_p0
@@ -1748,15 +1847,14 @@ concat_strings_sep_top:
         jsr     need_string
         jsr     aux_t0
         clc
-        adc     1,s
+        adc     7,s
         jcs     nomem
-        sta     1,s
+        sta     7,s
         lda     3,s
         inc     a
         sta     3,s
         bra     @count
-@alloc: lda     9,s
-        sta     t0
+@alloc: jsr     robj_0          ; sep (no bytecode from here on)
         jsr     aux_t0
         sta     n1              ; |sep|
         lda     5,s
@@ -1766,16 +1864,16 @@ concat_strings_sep_top:
 @mul:   lda     t4
         beq     @nosep
         dec     t4
-        lda     1,s
+        lda     7,s
         clc
         adc     n1
         jcs     nomem
-        sta     1,s
+        sta     7,s
         bra     @mul
-@nosep: lda     1,s
+@nosep: lda     7,s
         jsr     str_alloc
         lda     #0
-        sta     1,s             ; bytes written
+        sta     7,s             ; bytes written
         sta     3,s             ; i
 @copy:  lda     3,s
         cmp     5,s
@@ -1783,8 +1881,7 @@ concat_strings_sep_top:
         lda     3,s
         beq     @elem
         ; separator first
-        lda     9,s
-        sta     t0
+        jsr     robj_0
         jsr     aux_t0
         sta     n1
         lda     t0
@@ -1795,16 +1892,15 @@ concat_strings_sep_top:
         clc
         adc     #4
         clc
-        adc     1,s
+        adc     7,s
         tay
         lda     n1
         jsr     copy_bytes
-        lda     1,s
+        lda     7,s
         clc
         adc     n1
-        sta     1,s
-@elem:  lda     7,s
-        sta     t0
+        sta     7,s
+@elem:  jsr     robj_1
         lda     3,s
         jsr     elem_t0
         jsr     deref_follow
@@ -1818,21 +1914,23 @@ concat_strings_sep_top:
         clc
         adc     #4
         clc
-        adc     1,s
+        adc     7,s
         tay
         lda     n1
         jsr     copy_bytes
-        lda     1,s
+        lda     7,s
         clc
         adc     n1
-        sta     1,s
+        sta     7,s
         lda     3,s
         inc     a
         sta     3,s
         bra     @copy
-@done:  tsc
+@done:  pla
+        sta     rsp
+        tsc
         clc
-        adc     #10
+        adc     #6
         tcs
         jmp     push_obj_run_nojmp  ; (elem_t0 above clobbered p0); returns
 
@@ -1954,10 +2052,8 @@ prim_tryeval:
         jcs     nomem
         asl
         asl
-        sta     t2
         asl
-        clc
-        adc     t2              ; * 12
+        asl                     ; * 16
         tax
         tsc
         sta     CATCH+0,x
@@ -1965,12 +2061,16 @@ prim_tryeval:
         sta     CATCH+2,x
         lda     env
         sta     CATCH+4,x
-        lda     pc
+        lda     env+2
         sta     CATCH+6,x
-        lda     ctab
+        lda     pc
         sta     CATCH+8,x
-        lda     fstack_n
+        lda     ctab
         sta     CATCH+10,x
+        lda     fstack_n
+        sta     CATCH+12,x
+        lda     rsp
+        sta     CATCH+14,x
         inc     catch_n
         jsr     force_top
         dec     catch_n
@@ -2044,32 +2144,20 @@ throw_exit:
         jmp     err_exit
 
 prim_seq:
-        jsr     pop_p0          ; b
-        lda     p0
-        pha
-        lda     p0+2
-        pha
+        jsr     pop_p0          ; b, a root while a is forced
+        jsr     rpush_p0
         jsr     force_top
         jsr     pop_p0
-        pla
-        sta     p0+2
-        pla
-        sta     p0
+        jsr     rpop_p0
         jsr     push_p0
         jmp     run
 
 prim_deepseq:
         jsr     pop_p0          ; b
-        lda     p0
-        pha
-        lda     p0+2
-        pha
+        jsr     rpush_p0
         jsr     deep_force_top
         jsr     pop_p0
-        pla
-        sta     p0+2
-        pla
-        sta     p0
+        jsr     rpop_p0
         jsr     push_p0
         jmp     run
 

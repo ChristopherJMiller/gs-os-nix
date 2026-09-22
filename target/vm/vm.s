@@ -21,8 +21,9 @@
 ;
 ; Memory map, bank 0:
 ;   $0300 RESULT     $0320 status   $0321 error code   (harness contract)
-;   $0B00 CATCH      tryEval frames        $0F00 FSTACK   thunks under evaluation
-;   $0C00 CHUNK_INFO 4 bytes/chunk: code address, constant-table address (192 chunks)
+;   $0800 RSTACK     root stack            $0B00 CATCH    tryEval frames
+;   $0C00 FSTACK     thunks under evaluation
+;   $0E00 CHUNK_INFO 4 bytes/chunk: code address, constant-table address (128 chunks)
 ;   $1000 CTAB       constant pointer tables         $1800 CPU stack (grows down to $1840)
 ;   $2000 this program, 12 KB at most -- vm.cfg makes the linker refuse more,
 ;         because the first time it grew past $4000 the nursery silently
@@ -70,16 +71,18 @@ RESULT          = $0300
 RESULT_STAT     = $0320
 RESULT_ERR      = $0321
 
-CHUNK_INFO      = $0C00         ; 256 chunks max
+CHUNK_INFO      = $0E00         ; CHUNK_MAX chunks
 CTAB            = $1000
 CTAB_END        = $1800
 CPU_STACK_MIN   = $1840         ; FORCE refuses to nest below this
 CPU_STACK       = $1FFF
-CATCH           = $0B00         ; tryEval catch frames: sp, vsp, env, pc, ctab, fstack
-CATCH_MAX       = 16            ; ... 12 bytes each, up to $0BC0
-FSTACK          = $0F00         ; the thunks being forced, innermost last: a
-FSTACK_MAX      = 256           ; caught throw un-blackholes them ($0F00-$0FFF)
-CHUNK_MAX       = 192           ; CHUNK_INFO stops where FSTACK begins
+RSTACK          = $0800         ; the root stack: 32-bit object pointers that
+RSTACK_END      = $0B00         ;   frames hold across bytecode (HEAP.md, "roots")
+CATCH           = $0B00         ; tryEval catch frames: sp, vsp, env(4), pc, ctab,
+CATCH_MAX       = 12            ;   fstack, rsp -- 16 bytes each, up to $0BC0
+FSTACK          = $0C00         ; the thunks being forced, innermost last, 32-bit
+FSTACK_END      = $0E00         ;   pointers: a caught throw un-blackholes them
+CHUNK_MAX       = 128           ; CHUNK_INFO at $0E00-$0FFF
 NURSERY         = $5000
 NURSERY_END     = $9000
 NBC_BASE        = $9000
@@ -112,8 +115,9 @@ A_DIV           = $03
         .zeropage
 pc:             .res 2
 ctab:           .res 2
-env:            .res 2          ; 16-bit address of the current env LIST; 0 = none
+env:            .res 4          ; pointer to the current env LIST (young or mature); 0 = none
 vsp:            .res 2
+rsp:            .res 2          ; bytes used in RSTACK (4 per pointer)
 nfree:          .res 2
 obj:            .res 2          ; address of the object alloc just returned
 p0:             .res 4          ; a 32-bit value
@@ -187,6 +191,8 @@ start:
         lda     #VSTACK
         sta     vsp
         stz     env
+        stz     env+2
+        stz     rsp
         stz     catch_n
         stz     fstack_n
 
@@ -234,21 +240,23 @@ err_exit:
         lda     catch_n
         asl
         asl
-        sta     t2
         asl
-        clc
-        adc     t2              ; * 12
+        asl                     ; * 16
         tax
         lda     CATCH+2,x
         sta     vsp
         lda     CATCH+4,x
         sta     env
         lda     CATCH+6,x
-        sta     pc
+        sta     env+2
         lda     CATCH+8,x
-        sta     ctab
+        sta     pc
         lda     CATCH+10,x
+        sta     ctab
+        lda     CATCH+12,x
         sta     t2              ; fstack_n at the time of the tryEval
+        lda     CATCH+14,x
+        sta     rsp
         lda     CATCH+0,x
         tcs
         ; Every thunk that was under evaluation inside the tryEval was left
@@ -258,11 +266,15 @@ err_exit:
         lda     fstack_n
         cmp     t2
         beq     @unwound
-        dec     fstack_n
-        dec     fstack_n
-        ldx     fstack_n
+        sec
+        sbc     #4
+        sta     fstack_n
+        tax
         lda     FSTACK,x
-        sta     t0
+        sta     p0
+        lda     FSTACK+2,x
+        sta     p0+2
+        jsr     deref
         sep     #$20
         .a8
         lda     #T_THUNK
@@ -839,70 +851,67 @@ cmp_values:
         jmp     type_err
 
 ; cmp_lists: LISTs t0 (a) and t1 (b), lexicographic by element with the same
-; ordering recursively; a proper prefix is less. Frame: i 1,s  b 3,s  a 5,s.
+; ordering recursively; a proper prefix is less. a and b on the root stack
+; (rbase+0, rbase+4); i 3,s  rbase 1,s.
 cmp_lists:
         lda     t0
-        pha
+        sta     p0
+        lda     #$8000
+        sta     p0+2
+        jsr     rpush_p0        ; a
         lda     t1
-        pha
+        sta     p0
+        jsr     rpush_p0        ; b
         lda     #0
         pha
-@loop:  lda     5,s
-        sta     t0
+        lda     rsp
+        sec
+        sbc     #8
+        pha
+@loop:  lda     1,s
+        tax
+        jsr     rget_x
+        jsr     deref
         jsr     aux_t0
         sta     n0              ; |a|
-        lda     3,s
-        sta     t0
+        lda     1,s
+        clc
+        adc     #4
+        tax
+        jsr     rget_x
+        jsr     deref
         jsr     aux_t0
         sta     n1              ; |b|
-        lda     1,s
+        lda     3,s
         cmp     n0
         beq     @a_end
-        lda     1,s
+        lda     3,s
         cmp     n1
         beq     @greater        ; b is a proper prefix of a
         ; Nix skips equal prefixes with `==` (so pointer-equal functions pass)
         ; and orders by `<` only at the first difference.
-        lda     5,s
-        sta     t0
-        lda     1,s
-        jsr     elem_t0
-        lda     p0
-        sta     p2
-        lda     p0+2
-        sta     p2+2
-        lda     3,s
-        sta     t0
-        lda     1,s
-        jsr     elem_t0
-        lda     p0
-        sta     p1
-        lda     p0+2
-        sta     p1+2
-        lda     p2
-        sta     p0
-        lda     p2+2
-        sta     p0+2
+        jsr     @elems          ; p0 = a[i], p1 = b[i]
         jsr     values_equal    ; runs bytecode
         bne     @differ
-        lda     1,s
+        lda     3,s
         inc     a
-        sta     1,s
+        sta     3,s
         bra     @loop
 @differ:
-        lda     5,s
-        sta     t0
-        lda     1,s
-        jsr     elem_t0
+        jsr     @elems
+        lda     p1
+        pha
+        lda     p1+2
+        pha
         jsr     push_p0
-        lda     3,s
-        sta     t0
-        lda     1,s
-        jsr     elem_t0
+        pla
+        sta     p0+2
+        pla
+        sta     p0
         jsr     push_p0
         jsr     cmp_values      ; pops both; runs bytecode
         bra     @decided
-@a_end: lda     1,s
+@a_end: lda     3,s
         cmp     n1
         beq     @equal
         lda     #0              ; a is a proper prefix of b
@@ -914,9 +923,37 @@ cmp_lists:
 @decided:
         sta     t2
         pla
-        pla
+        sta     rsp
         pla
         lda     t2
+        rts
+; (a subroutine: its caller's frame is 2 bytes deeper)
+@elems: lda     3,s
+        tax
+        jsr     rget_x
+        jsr     deref
+        lda     5,s
+        jsr     elem_t0
+        lda     p0
+        sta     p2
+        lda     p0+2
+        sta     p2+2
+        lda     3,s
+        clc
+        adc     #4
+        tax
+        jsr     rget_x
+        jsr     deref
+        lda     5,s
+        jsr     elem_t0
+        lda     p0
+        sta     p1
+        lda     p0+2
+        sta     p1+2
+        lda     p2
+        sta     p0
+        lda     p2+2
+        sta     p0+2
         rts
 
 op_lt:  jsr     cmp_values
@@ -1061,13 +1098,12 @@ op_env_new:
         and     #$00FF
         ldy     #2
         sta     (obj),y
-        ldy     #4              ; [0] = old env as a young pointer, or 0
+        ldy     #4              ; [0] = the old env pointer, or 0
         lda     env
         sta     (obj),y
-        beq     @z
-        lda     #$8000
-@z:     iny
         iny
+        iny
+        lda     env+2
         sta     (obj),y
         ldx     t2
         beq     @done
@@ -1083,7 +1119,17 @@ op_env_new:
         bne     @clr
 @done:  lda     obj
         sta     env
+        lda     #$8000
+        sta     env+2
         jmp     run
+
+; The current environment, dereferenced: t0. (A mature env is a copy window
+; once promotion exists; ENV_SET into one is the write barrier's job.)
+env_t0: lda     env
+        sta     p0
+        lda     env+2
+        sta     p0+2
+        jmp     deref
 
 op_env_set:
         jsr     fetch16
@@ -1093,14 +1139,17 @@ op_env_set:
         adc     #4
         sta     t1              ; byte offset of element i (pop_p0 uses Y)
         jsr     pop_p0
-        lda     env
-        sta     t0
-        ldy     t1
         lda     p0
+        sta     p1
+        lda     p0+2
+        sta     p1+2
+        jsr     env_t0
+        ldy     t1
+        lda     p1
         sta     (t0),y
         iny
         iny
-        lda     p0+2
+        lda     p1+2
         sta     (t0),y
         jmp     run
 
@@ -1113,15 +1162,20 @@ op_env_get:
         clc
         adc     #4
         sta     t1              ; byte offset of element i
-        lda     env
-        sta     t0
+        jsr     env_t0
 @walk:  lda     t2
         beq     @got
         dec     t2
         ldy     #4
-        lda     (t0),y          ; parent's low word is its address
+        lda     (t0),y          ; the parent pointer
+        sta     p0
+        iny
+        iny
+        lda     (t0),y
+        sta     p0+2
+        ora     p0
         beq     badenv
-        sta     t0
+        jsr     deref
         bra     @walk
 @got:   ldy     t1
         lda     (t0),y
@@ -1138,11 +1192,14 @@ badenv: lda     #E_BADNBC
         jmp     err_exit
 
 op_env_pop:
-        lda     env
-        sta     t0
+        jsr     env_t0
         ldy     #4
         lda     (t0),y
         sta     env
+        iny
+        iny
+        lda     (t0),y
+        sta     env+2
         jmp     run
 
 ; --- assert ---------------------------------------------------------------------------
@@ -1191,9 +1248,8 @@ closure:
         lda     env
         ldy     #8
         sta     (obj),y
-        beq     @z
-        lda     #$8000
-@z:     ldy     #10
+        lda     env+2
+        ldy     #10
         sta     (obj),y
         jsr     push_p0
         jmp     run
@@ -1221,12 +1277,10 @@ do_call:
         pha
         lda     ctab
         pha
-        lda     env
-        pha
+        jsr     rpush_env       ; a root
         jsr     call_enter
         jsr     run             ; leaves the value where f was
-        pla
-        sta     env
+        jsr     rpop_env
         pla
         sta     ctab
         pla
@@ -1260,10 +1314,15 @@ call_enter:
         beq     @lambda
         cmp     #T_ATTRS
         jne     type_err
+        lda     p0
+        pha                     ; the set's pointer (p0 after pop/deref)
+        lda     p0+2
+        pha
         lda     p1
-        pha
+        sta     p0
         lda     p1+2
-        pha
+        sta     p0+2
+        jsr     rpush_p0        ; the argument: a root across the functor call
         lda     #str_functor
         sta     t1
         jsr     find_attr
@@ -1271,16 +1330,13 @@ call_enter:
         lda     ix
         jsr     attr_value      ; the functor, unforced
         jsr     push_p0
-        lda     t0
-        sta     p0
-        lda     #$8000
+        pla
         sta     p0+2
+        pla
+        sta     p0
         jsr     push_p0         ; the set, as its own first argument
         jsr     do_call         ; g = s.__functor s
-        pla
-        sta     p0+2
-        pla
-        sta     p0
+        jsr     rpop_p0
         jsr     push_p0         ; then g x
         jmp     call_enter
 @lambda:
@@ -1316,6 +1372,8 @@ call_enter:
         sta     ctab
         lda     obj
         sta     env
+        lda     #$8000
+        sta     env+2
         rts
 
 ; --- with ------------------------------------------------------------------------------
@@ -1336,10 +1394,9 @@ op_with_push:
         ldy     #4
         lda     env
         sta     (obj),y
-        beq     @z
-        lda     #$8000
-@z:     iny
         iny
+        iny
+        lda     env+2
         sta     (obj),y
         ldy     #8
         lda     p1
@@ -1350,6 +1407,8 @@ op_with_push:
         sta     (obj),y
         lda     obj
         sta     env
+        lda     #$8000
+        sta     env+2
         jmp     run
 
 ; WITH_GET / TRY_WITH_GET: k -> v. Walk the environment chain; at each with
@@ -1359,17 +1418,27 @@ op_with_get:
         bra     with_get
 op_try_with_get:
         lda     #0
+; Frame: strict flag on the CPU stack (3,s), rbase (1,s); the key and the
+; current environment on the root stack at rbase+0 and rbase+4.
 with_get:
         pha
         jsr     force_pop_t0
         jsr     need_string
-        lda     t0
-        pha
-        lda     env
-        pha
+        jsr     rpush_p0        ; the key
+        jsr     rpush_env       ; cur
+        lda     rsp
+        sec
+        sbc     #8
+        pha                     ; rbase
 @walk:  lda     1,s
+        clc
+        adc     #4
+        tax
+        jsr     rget_x          ; p0 = cur
+        lda     p0
+        ora     p0+2
         beq     @miss
-        sta     t0
+        jsr     deref
         ldy     #2
         lda     (t0),y
         and     #$4000
@@ -1382,29 +1451,44 @@ with_get:
         lda     (t0),y
         sta     p0+2
         jsr     push_p0
-        jsr     force_top       ; runs bytecode; the frame is on the CPU stack
+        jsr     force_top       ; runs bytecode; the frame is on the stacks
         jsr     pop_p0
         jsr     deref
         jsr     need_attrs
-        lda     3,s
-        sta     t1
+        lda     1,s
+        tax
+        jsr     rget_x          ; p0 = the key
+        jsr     deref_p0_t1     ; t1 = the key (t0 untouched)
         jsr     find_attr
         bcc     @next
         lda     ix
         jsr     attr_value
         pla
-        pla
+        sta     rsp             ; drops key and cur
         pla
         jsr     push_p0
         jmp     run
 @next:  lda     1,s
-        sta     t0
+        clc
+        adc     #4
+        tax
+        jsr     rget_x
+        jsr     deref
         ldy     #4
         lda     (t0),y
-        sta     1,s
+        sta     p0
+        iny
+        iny
+        lda     (t0),y
+        sta     p0+2
+        lda     1,s
+        clc
+        adc     #4
+        tax
+        jsr     rset_x          ; cur = parent
         bra     @walk
 @miss:  pla
-        pla
+        sta     rsp
         pla                     ; the strict flag
         bne     @novar
         stz     p0
@@ -1451,10 +1535,14 @@ force_top:
         rep     #$20
         .a16
         ldx     fstack_n        ; remember it, for a caught throw to un-blackhole
-        cpx     #FSTACK_MAX
+        cpx     #(FSTACK_END-FSTACK)
         jcs     @deep
-        lda     t0
+        lda     p0              ; p0 is still the thunk's pointer (peek/poke)
         sta     FSTACK,x
+        lda     p0+2
+        sta     FSTACK+2,x
+        inx
+        inx
         inx
         inx
         stx     fstack_n
@@ -1462,10 +1550,7 @@ force_top:
         pha
         lda     ctab
         pha
-        lda     env
-        pha
-        lda     t0
-        pha
+        jsr     rpush_env       ; the caller's environment, a root
         ldy     #4
         lda     (t0),y
         sta     pc
@@ -1475,18 +1560,36 @@ force_top:
         ldy     #8
         lda     (t0),y
         sta     env
+        ldy     #10
+        lda     (t0),y
+        sta     env+2
         jsr     run             ; leaves the thunk's value above the thunk pointer
-        dec     fstack_n
-        dec     fstack_n
-        pla
-        sta     t0
-        pla
-        sta     env
+        jsr     rpop_env
         pla
         sta     ctab
         pla
         sta     pc
+        lda     fstack_n        ; the thunk, by its (possibly updated) pointer
+        sec
+        sbc     #4
+        sta     fstack_n
+        tax
+        lda     FSTACK,x
+        sta     p1
+        lda     FSTACK+2,x
+        sta     p1+2
         jsr     pop_p0          ; the value
+        lda     p1
+        pha
+        lda     p1+2
+        pha
+        jsr     deref_p1        ; t1 = the thunk
+        lda     t1
+        sta     t0
+        pla
+        sta     p1+2
+        pla
+        sta     p1
         lda     p0+2
         bpl     @deep2          ; a mature result is not something slice 1 makes
         lda     p0
@@ -1538,7 +1641,11 @@ force_top:
         sta     (t0),y
         lda     (t1)
         sta     (t0)
-@again: jsr     peek_p0         ; the thunk pointer, now pointing at a value
+@again: lda     p1              ; the thunk pointer (it may have been updated by
+        sta     p0              ; a collection while the body ran), now a value
+        lda     p1+2
+        sta     p0+2
+        jsr     poke_p0
         jmp     @loop
 @deep:  lda     #E_NOMEM
         jmp     err_exit
