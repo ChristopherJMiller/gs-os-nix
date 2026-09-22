@@ -118,10 +118,10 @@ current as modules land, since a budget that drifts from reality is worse than n
 | `sha256` (+ padding FSM) | 1673 | 1657 | measured |
 | `storepath` (fold + nixbase32) | 505 | 0 | measured — purely combinational |
 | `keycam` (32-wide CAM) | 1400 | 0 | measured — combinational |
-| **`a2nix_card`** (whole card, incl. above) | **9186** | **5308** | measured, after L3 + CAM |
+| **`a2nix_card`** (whole card, incl. above) | **9099** | **5333** | measured, after L3 + CAM + 32-bit port |
 | `ALU64` | ~1.5k | — | estimate |
 
-The whole card is **9186 LUT4 of a 25F's ~24k (38%)**. The CAM is the expensive
+The whole card is **9099 LUT4 of a 25F's ~24k (38%)**. The CAM is the expensive
 addition: 1400 LUT4 of comparators plus **1024 flops** for the 32×32-bit lane array,
 which is most of the FF growth. That array cannot be block RAM — comparing all lanes
 in one cycle is the entire point — so it is the honest price of O(1) lookup.
@@ -132,9 +132,9 @@ than flops, which is what we want.
 The **heap itself is not in this budget** — it is off-chip by design (see
 [HEAP.md](HEAP.md)), because a 25F's ~128 KB of block RAM cannot hold a Nix heap.
 
-**Known inefficiency:** of the card's 3916 flops, 2048 are the eight 256-bit
-parameter slots. Those are addressed one byte at a time and never need random access,
-so they belong in block RAM. Worth fixing if flops get tight — not before.
+**Known inefficiency:** of the card's 5333 flops, 2048 are the eight 256-bit parameter
+slots. Those are addressed one byte at a time and never need random access, so they
+belong in block RAM. Worth fixing if flops get tight — not before.
 
 Toolchain is fully open and already packaged: `yosys`, `nextpnr`, `trellis`,
 `openfpgaloader`, `verible`. Refresh these numbers with `just area`.

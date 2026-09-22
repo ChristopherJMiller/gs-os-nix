@@ -21,6 +21,7 @@
 
 #include "Va2nix_card.h"
 
+#include <algorithm>
 #include <memory>
 
 namespace {
@@ -82,13 +83,20 @@ private:
 	void update_irq();
 
 	std::unique_ptr<Va2nix_card> m_card;
+	std::unique_ptr<u8 []> m_heap;
 	attotime m_last_time;
 	bool m_irq_asserted;
 };
 
+// The card's heap lives off-chip (docs/HEAP.md), so the device has to provide it --
+// the RTL exposes a port, not an array. Must match HEAP_TOP in rtl/a2nix_card.v.
+constexpr u32 HEAP_BYTES = 1u << 20;
+
 void a2bus_a2nix_device::device_start()
 {
 	m_card = std::make_unique<Va2nix_card>();
+	m_heap = std::make_unique<u8 []>(HEAP_BYTES);
+	std::fill_n(m_heap.get(), HEAP_BYTES, 0);
 
 	m_card->clk       = 0;
 	m_card->rst_n     = 0;
@@ -97,6 +105,7 @@ void a2bus_a2nix_device::device_start()
 	m_card->c0n_write = 0;
 	m_card->c0n_wdata = 0;
 	m_card->c8_addr   = 0;
+	m_card->mem_rdata = 0;
 
 	save_item(NAME(m_irq_asserted));
 	// NOTE: the Verilated model's internal state is not save-state capable.
@@ -134,12 +143,44 @@ void a2bus_a2nix_device::reset_from_bus()
 	update_irq();
 }
 
+// One card clock. The heap port is serviced either side of the edge, matching the
+// contract in rtl/a2nix_card.v: rdata must be the aligned word containing mem_addr
+// and valid the cycle after the address is presented; a write lands on the edge where
+// mem_we is high, under mem_wstrb.
 void a2bus_a2nix_device::tick()
 {
+	// --- settle: present the addressed word ---
+	{
+		const u32 w = m_card->mem_addr & ~3u;
+		u32 v = 0;
+		if (w + 3 < HEAP_BYTES)
+			v = u32(m_heap[w]) | (u32(m_heap[w + 1]) << 8)
+			  | (u32(m_heap[w + 2]) << 16) | (u32(m_heap[w + 3]) << 24);
+		m_card->mem_rdata = v;
+	}
+
 	m_card->clk = 0;
 	m_card->eval();
 	m_card->clk = 1;
 	m_card->eval();
+
+	// --- commit: honour a write, lane by lane ---
+	if (m_card->mem_we)
+	{
+		const u32 w = m_card->mem_addr & ~3u;
+		if (w + 3 < HEAP_BYTES)
+		{
+			for (int lane = 0; lane < 4; lane++)
+				if (BIT(m_card->mem_wstrb, lane))
+					m_heap[w + lane] = u8(m_card->mem_wdata >> (8 * lane));
+		}
+		else
+		{
+			// Do not absorb this quietly: a dropped heap write surfaces much later
+			// as a mysteriously wrong hash.
+			logerror("a2nix: heap write outside memory at %08x\n", w);
+		}
+	}
 }
 
 // Advance the model to the present, so the card progresses while the CPU is

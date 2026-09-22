@@ -41,11 +41,12 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card VL_NOT_FINAL : public VerilatedMo
     VL_OUT8(&c8_rdata,7,0);
     VL_OUT8(&take_c800,0,0);
     VL_OUT8(&mem_we,0,0);
-    VL_OUT8(&mem_wdata,7,0);
-    VL_IN8(&mem_rdata,7,0);
+    VL_OUT8(&mem_wstrb,3,0);
     VL_OUT8(&irq,0,0);
     VL_IN16(&c8_addr,10,0);
     VL_OUT(&mem_addr,31,0);
+    VL_OUT(&mem_wdata,31,0);
+    VL_IN(&mem_rdata,31,0);
 
     // CELLS
     // Public to allow access to /* verilator public */ items.

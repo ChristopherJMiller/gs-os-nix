@@ -23,7 +23,7 @@ bytes through a port that auto-increments.
 | `$C0n2` | `ASEL` | W | Select address register `A0..A3`; resets its byte index |
 | `$C0n3` | `APORT` | RW | Sequential bytes of selected address register (LSB first, 4 bytes); auto-increments byte index |
 | `$C0n4` | `DATA` | RW | Heap/store data at selected address register; **auto-increments that register** |
-| `$C0n5` | `TAG` | R | Tag byte of the most recent `DATA` read |
+| `$C0n5` | `TAG` | R | The byte at the selected address register, **without advancing it** |
 | `$C0n6` | `PSEL` | W | Select parameter/result slot `P0..P7`; resets its byte index |
 | `$C0n7` | `PPORT` | RW | Sequential bytes of selected `P` slot; auto-increments |
 | `$C0n8` | `LEN` | RW | Sequential bytes of the 32-bit length/count register (LSB first) |
@@ -206,22 +206,17 @@ a **candidate** — 32-bit hashes collide, so the caller must compare the name
 collision the CAM returns the **lowest** matching lane, which is the one a sorted-order
 search would have found.
 
-> ### ⚠️ Measured: LOOKUP is only 1.5x cheaper than a CPU binary search
+> ### Measured: LOOKUP is 2.7x cheaper than a CPU binary search
 >
-> Over 100 sorted attributes: **43 bus accesses** for `LOOKUP` against **63** for the
+> Over 100 sorted attributes: **23 bus accesses** for `LOOKUP` against **63** for the
 > 65816 doing a binary search through the `DATA` port.
 >
-> The CAM's width is *not* what is being paid for. Loading the key column dominates:
-> at a byte-wide memory port, filling 32 lanes costs 32 × 4 bytes × 2 cycles ≈ 256
-> card cycles per batch, so reaching attribute 73 takes three batches ≈ 768 cycles —
-> which the CPU observes as ~27 `DONE` polls. The comparison itself is one cycle.
->
-> So 1400 LUT4 and 1024 flops currently buy 1.5x. **A 32-bit memory port would make
-> lane loading 4x faster** (~64 cycles/batch), taking `LOOKUP` to roughly 3x and making
-> the CAM's width the thing that actually matters. `docs/HEAP.md` already keeps every
-> column 4-byte aligned for exactly this.
->
-> Open decision — see docs/STATUS.md.
+> It was 1.5x (43 accesses) at a byte-wide memory port, because filling a CAM batch
+> cost 32 × 4 bytes × 2 cycles ≈ 256 card cycles and the CPU saw that as ~27 `DONE`
+> polls -- the one-cycle comparison was lost in the noise, and the CAM's 1400 LUT4 and
+> 1024 flops were buying almost nothing. Widening the port to 32 bits made a lane one
+> access (docs/HEAP.md), and cost no area: the byte-assembly registers the engine
+> needed simply disappeared.
 
 `ALU64` exists because the 65816 has **no multiply or divide at all** and Nix integers
 are 64-bit.

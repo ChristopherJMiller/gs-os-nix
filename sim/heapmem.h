@@ -5,9 +5,10 @@
 // off-chip SDRAM. Here it is a plain byte array.
 //
 // Contract, matching the port's comment in rtl/a2nix_card.v:
-//   - mem_rdata must be COMBINATIONAL on mem_addr, so the cycle after the card
-//     presents an address, the data is there.
-//   - a write happens on the clock edge where mem_we is high.
+//   - The port is 32 bits wide and BYTE-addressed. mem_rdata must be COMBINATIONAL
+//     on mem_addr and return the ALIGNED WORD CONTAINING that byte, so the low two
+//     address bits select a lane rather than shifting the word.
+//   - A write happens on the clock edge where mem_we is high, under mem_wstrb.
 //
 // So a harness tick is: settle read data, clock the card, then honour any write.
 
@@ -24,27 +25,39 @@ public:
     // 1 MB, matching HEAP_TOP in rtl/a2nix_card.v. Keep the two in step.
     explicit HeapMem(std::size_t bytes = 1u << 20) : m_ram(bytes, 0) {}
 
-    // Present the byte the card is currently addressing.
+    // Present the aligned word containing the addressed byte.
     void settle(CardT *card) {
-        const std::uint32_t a = card->mem_addr;
-        card->mem_rdata = (a < m_ram.size()) ? m_ram[a] : 0x00;
+        const std::uint32_t w = card->mem_addr & ~3u;
+        std::uint32_t v = 0;
+        if (w + 3 < m_ram.size())
+            v = static_cast<std::uint32_t>(m_ram[w])
+              | (static_cast<std::uint32_t>(m_ram[w + 1]) << 8)
+              | (static_cast<std::uint32_t>(m_ram[w + 2]) << 16)
+              | (static_cast<std::uint32_t>(m_ram[w + 3]) << 24);
+        card->mem_rdata = v;
     }
 
-    // Honour a write issued on the edge just clocked.
+    // Honour a write issued on the edge just clocked, lane by lane.
     void commit(CardT *card) {
         if (!card->mem_we) return;
-        const std::uint32_t a = card->mem_addr;
-        if (a < m_ram.size()) {
-            m_ram[a] = card->mem_wdata;
-        } else {
+        const std::uint32_t w = card->mem_addr & ~3u;
+        const std::uint32_t strb = card->mem_wstrb;
+        const std::uint32_t data = card->mem_wdata;
+
+        if (w + 3 >= m_ram.size()) {
             // Out-of-range writes are a bug in the card or the test, not something to
             // absorb quietly -- silently dropping them would show up much later as a
             // mysteriously wrong hash.
             std::fprintf(stderr,
                          "heapmem: write outside memory at 0x%08x (size 0x%zx)\n",
-                         a, m_ram.size());
+                         w, m_ram.size());
             ++m_bad_writes;
+            return;
         }
+        for (int lane = 0; lane < 4; ++lane)
+            if (strb & (1u << lane))
+                m_ram[w + static_cast<std::uint32_t>(lane)] =
+                    static_cast<std::uint8_t>(data >> (8 * lane));
     }
 
     std::uint8_t  peek(std::uint32_t a) const { return a < m_ram.size() ? m_ram[a] : 0; }

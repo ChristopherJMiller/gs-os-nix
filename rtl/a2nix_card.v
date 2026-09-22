@@ -37,13 +37,20 @@ module a2nix_card (
     output wire         take_c800,
 
     // --- Heap memory port (see docs/HEAP.md for why this is external) ---
-    // BRAM-like: drive addr/we/wdata on a clock edge, rdata is valid the next cycle.
-    // An SDRAM controller and the tree-PLRU cache slot in behind this later without
-    // the card's logic changing.
+    // 32 bits wide, byte-addressed with byte strobes -- the shape real SDRAM has, and
+    // the shape that makes the CAM worth its gates: filling a lane is one access
+    // instead of four. Measured at byte width, LOOKUP was only 1.5x cheaper than a
+    // 65816 binary search because loading the key column dominated.
+    //
+    // mem_addr is a BYTE address; the memory returns the aligned 32-bit word
+    // CONTAINING it, so the low two bits select a lane rather than changing the word.
+    // rdata is valid the cycle after addr is presented; a write lands on the edge
+    // where mem_we is high, under mem_wstrb.
     output reg  [31:0]  mem_addr,
     output reg          mem_we,
-    output reg  [7:0]   mem_wdata,
-    input  wire [7:0]   mem_rdata,
+    output reg  [3:0]   mem_wstrb,   // per-byte write enables
+    output reg  [31:0]  mem_wdata,
+    input  wire [31:0]  mem_rdata,
 
     output wire         irq
 );
@@ -200,22 +207,19 @@ module a2nix_card (
                      M_FOLLOW     = 5'd6,
                      M_FOLLOW_TAG = 5'd7,
                      M_FOLLOW_PTR = 5'd8,
-                     M_FOLLOW_PB  = 5'd9,
                      M_LK_CNT     = 5'd10,  // assemble the ATTRS attribute count
                      M_LK_CB      = 5'd11,
                      M_LK_BATCH   = 5'd12,  // start a batch of up to CAM_WIDTH lanes
                      M_LK_LOAD    = 5'd13,  // fill the CAM from the key-hash column
                      M_LK_HB      = 5'd14,
                      M_LK_CAM     = 5'd15,  // present the key; hit or next batch
-                     M_LK_VAL     = 5'd16,  // read the matched value pointer
-                     M_LK_VB      = 5'd17;
+                     M_LK_VAL     = 5'd16;  // read the matched value pointer
 
     reg [4:0]  mstate;
     reg [4:0]  mret;          // state to resume after a generic read latches
     reg [31:0] mcur;          // working address
-    reg [7:0]  mbyte;         // byte most recently read
-    reg [2:0]  mbidx;         // byte index within a multi-byte field
-    reg [31:0] mptr;          // pointer being assembled
+    reg [31:0] mword;         // word most recently read
+    reg [7:0]  mbyte;         // the addressed byte of that word
     reg [31:0] mcount;        // bytes left to stream
     reg [7:0]  hops;          // FOLLOW chain length so far
     reg [31:0] alloc_ptr;     // bump allocator
@@ -316,19 +320,20 @@ module a2nix_card (
             for (i = 0; i < 4; i = i + 1) areg[i]  <= 32'd0;
             for (i = 0; i < 8; i = i + 1) pslot[i] <= 256'd0;
             mstate <= M_IDLE; mret <= M_IDLE;
-            mcur <= 32'd0; mbyte <= 8'h00; mbidx <= 3'd0;
-            mptr <= 32'd0; mcount <= 32'd0; hops <= 8'd0;
+            mcur <= 32'd0; mword <= 32'd0; mbyte <= 8'h00;
+            mcount <= 32'd0; hops <= 8'd0;
             alloc_ptr <= HEAP_BASE;
             cam_entries <= {32*CAM_WIDTH{1'b0}}; cam_lane_valid <= {CAM_WIDTH{1'b0}};
             lk_base <= 32'd0; lk_count <= 24'd0; lk_done <= 24'd0; lk_lane <= 6'd0;
             dw_pend <= 1'b0; dw_addr <= 32'd0; dw_data <= 8'h00;
             pf_req <= 1'b0; data_latch <= 8'h00;
-            mem_addr <= 32'd0; mem_we <= 1'b0; mem_wdata <= 8'h00;
+            mem_addr <= 32'd0; mem_we <= 1'b0; mem_wstrb <= 4'd0; mem_wdata <= 32'd0;
         end else begin
             // Single-cycle strobes.
             h_init  <= 1'b0;
             h_valid <= 1'b0;
-            mem_we  <= 1'b0;          // writes are one cycle; default the port to read
+            mem_we    <= 1'b0;        // writes are one cycle; default the port to read
+            mem_wstrb <= 4'd0;
 
             // ------------------------------------------------ memory engine --------
             case (mstate)
@@ -337,7 +342,11 @@ module a2nix_card (
                     // of the same address cannot observe stale data.
                     if (dw_pend) begin
                         mem_addr  <= dw_addr;
-                        mem_wdata <= dw_data;
+                        // Replicate the byte across all lanes and enable only the one
+                        // the address selects, so a byte store needs no read-modify-
+                        // write against the surrounding word.
+                        mem_wdata <= {4{dw_data}};
+                        mem_wstrb <= 4'b0001 << dw_addr[1:0];
                         mem_we    <= 1'b1;
                         dw_pend   <= 1'b0;
                     end else if (pf_req) begin
@@ -348,9 +357,12 @@ module a2nix_card (
                     end
                 end
 
-                // mem_addr was presented last cycle, so mem_rdata is valid now.
+                // mem_addr was presented last cycle, so mem_rdata is valid now. Keep
+                // both the whole word (pointers, key hashes) and the addressed byte
+                // (tags, streaming) -- which is the point of the wider port.
                 M_RD_LATCH: begin
-                    mbyte  <= mem_rdata;
+                    mword  <= mem_rdata;
+                    mbyte  <= mem_rdata[8*mem_addr[1:0] +: 8];
                     mstate <= mret;
                 end
 
@@ -360,6 +372,9 @@ module a2nix_card (
                 end
 
                 // --- HASH_STREAM: hash card-resident bytes; none cross the bus ---
+                // One word fetch feeds up to four FIFO pushes. The gain here is
+                // modest, because the hasher only accepts a byte every two cycles
+                // regardless -- the wide port pays off in LOOKUP, not here.
                 M_STREAM: begin
                     if (mcount == 32'd0) begin
                         busy   <= 1'b0;
@@ -374,26 +389,29 @@ module a2nix_card (
                 end
 
                 M_STREAM_PUT: begin
-                    fifo[wptr[4:0]] <= mbyte;
-                    wptr            <= wptr + 6'd1;
-                    mcur            <= mcur + 32'd1;
-                    mcount          <= mcount - 32'd1;
-                    mstate          <= M_STREAM;
+                    if (mcount == 32'd0) begin
+                        mstate <= M_STREAM;
+                    end else if (!fifo_full) begin
+                        fifo[wptr[4:0]] <= mword[8*mcur[1:0] +: 8];
+                        wptr            <= wptr + 6'd1;
+                        mcur            <= mcur + 32'd1;
+                        mcount          <= mcount - 32'd1;
+                        // Exhausted this word's lanes: fetch the next one.
+                        if (mcur[1:0] == 2'b11) mstate <= M_STREAM;
+                    end
                 end
 
-                // --- ALLOC: write the 4 header bytes taken from P0 ---
+                // --- ALLOC: write the whole 4-byte header in one word access ---
                 M_ALLOC_HDR: begin
-                    mem_addr  <= mcur + {29'd0, mbidx};
-                    mem_wdata <= pslot[0][255 - 8*mbidx -: 8];
+                    mem_addr  <= mcur;
+                    mem_wdata <= {pslot[0][255 - 8*3 -: 8], pslot[0][255 - 8*2 -: 8],
+                                  pslot[0][255 - 8*1 -: 8], pslot[0][255 - 8*0 -: 8]};
+                    mem_wstrb <= 4'b1111;
                     mem_we    <= 1'b1;
-                    if (mbidx == 3'd3) begin
-                        busy   <= 1'b0;
-                        done   <= 1'b1;
-                        mstate <= M_IDLE;
-                        pf_req <= 1'b1;
-                    end else begin
-                        mbidx <= mbidx + 3'd1;
-                    end
+                    busy      <= 1'b0;
+                    done      <= 1'b1;
+                    mstate    <= M_IDLE;
+                    pf_req    <= 1'b1;
                 end
 
                 // --- FOLLOW: chase an INDIRECT chain to the first real object ---
@@ -418,47 +436,30 @@ module a2nix_card (
                         errcode <= E_BADADDR;
                         mstate  <= M_IDLE;
                     end else begin
-                        mbidx  <= 3'd0;
-                        mptr   <= 32'd0;
-                        hops   <= hops + 8'd1;
-                        mstate <= M_FOLLOW_PTR;
+                        hops     <= hops + 8'd1;
+                        mem_addr <= mcur + 32'd4;   // the pointer, in one access
+                        mret     <= M_FOLLOW_PTR;
+                        mstate   <= M_RD_LATCH;
                     end
                 end
 
                 M_FOLLOW_PTR: begin
-                    if (mbidx == 3'd4) begin
-                        mcur   <= mptr;
-                        mstate <= M_FOLLOW;
-                    end else begin
-                        mem_addr <= mcur + 32'd4 + {29'd0, mbidx};
-                        mret     <= M_FOLLOW_PB;
-                        mstate   <= M_RD_LATCH;
-                    end
+                    mcur   <= mword;    // pointers are stored little-endian
+                    mstate <= M_FOLLOW;
                 end
 
-                M_FOLLOW_PB: begin
-                    mptr[8*mbidx +: 8] <= mbyte;   // pointers are little-endian
-                    mbidx              <= mbidx + 3'd1;
-                    mstate             <= M_FOLLOW_PTR;
-                end
-
-                // --- LOOKUP: read the attribute count from the header's aux field ---
+                // --- LOOKUP: the attribute count is the header's aux field, i.e.
+                // the top 24 bits of the header word. One access. ---
                 M_LK_CNT: begin
-                    if (mbidx == 3'd3) begin
-                        lk_count <= mptr[23:0];
-                        lk_done  <= 24'd0;
-                        mstate   <= M_LK_BATCH;
-                    end else begin
-                        mem_addr <= lk_base + 32'd1 + {29'd0, mbidx};
-                        mret     <= M_LK_CB;
-                        mstate   <= M_RD_LATCH;
-                    end
+                    mem_addr <= lk_base;
+                    mret     <= M_LK_CB;
+                    mstate   <= M_RD_LATCH;
                 end
 
                 M_LK_CB: begin
-                    mptr[8*mbidx +: 8] <= mbyte;
-                    mbidx              <= mbidx + 3'd1;
-                    mstate             <= M_LK_CNT;
+                    lk_count <= mword[31:8];
+                    lk_done  <= 24'd0;
+                    mstate   <= M_LK_BATCH;
                 end
 
                 M_LK_BATCH: begin
@@ -471,38 +472,33 @@ module a2nix_card (
                     end else begin
                         cam_lane_valid <= {CAM_WIDTH{1'b0}};
                         lk_lane        <= 6'd0;
-                        mbidx          <= 3'd0;
-                        mptr           <= 32'd0;
                         mstate         <= M_LK_LOAD;
                     end
                 end
 
+                // Each lane is one aligned word, so one access per lane. This is the
+                // access that the wide port exists for: at byte width this was four,
+                // and loading the column dominated LOOKUP's whole cost.
                 M_LK_LOAD: begin
                     if (lk_lane == CAM_WIDTH[5:0] ||
                         (lk_done + {18'd0, lk_lane}) >= lk_count) begin
                         mstate <= M_LK_CAM;
-                    end else if (mbidx == 3'd4) begin
-                        // lk_lane is 6 bits so it can hold the CAM_WIDTH terminator,
-                        // but only 5 bits index the array -- and this branch is only
-                        // reached while lk_lane < CAM_WIDTH.
-                        cam_entries[32*lk_lane[4:0] +: 32] <= mptr;
-                        cam_lane_valid[lk_lane[4:0]]       <= 1'b1;
-                        lk_lane                            <= lk_lane + 6'd1;
-                        mbidx                              <= 3'd0;
-                        mptr                               <= 32'd0;
                     end else begin
                         mem_addr <= lk_keys_at
-                                    + ((({8'd0, lk_done} + {26'd0, lk_lane})) << 2)
-                                    + {29'd0, mbidx};
+                                    + ((({8'd0, lk_done} + {26'd0, lk_lane})) << 2);
                         mret     <= M_LK_HB;
                         mstate   <= M_RD_LATCH;
                     end
                 end
 
                 M_LK_HB: begin
-                    mptr[8*mbidx +: 8] <= mbyte;
-                    mbidx              <= mbidx + 3'd1;
-                    mstate             <= M_LK_LOAD;
+                    // lk_lane is 6 bits so it can hold the CAM_WIDTH terminator, but
+                    // only 5 bits index the array -- and this state is only reached
+                    // while lk_lane < CAM_WIDTH.
+                    cam_entries[32*lk_lane[4:0] +: 32] <= mword;
+                    cam_lane_valid[lk_lane[4:0]]       <= 1'b1;
+                    lk_lane                            <= lk_lane + 6'd1;
+                    mstate                             <= M_LK_LOAD;
                 end
 
                 M_LK_CAM: begin
@@ -518,10 +514,9 @@ module a2nix_card (
                         // plausible, and wrong.
                         pslot[1] <= {lk_hit_index[7:0], lk_hit_index[15:8],
                                      lk_hit_index[23:16], 232'd0};
-                        mcur     <= lk_values_at + ({8'd0, lk_hit_index} << 2);
-                        mbidx    <= 3'd0;
-                        mptr     <= 32'd0;
-                        mstate   <= M_LK_VAL;
+                        mem_addr <= lk_values_at + ({8'd0, lk_hit_index} << 2);
+                        mret     <= M_LK_VAL;
+                        mstate   <= M_RD_LATCH;
                     end else begin
                         lk_done <= lk_done + {18'd0, lk_lane};
                         mstate  <= M_LK_BATCH;
@@ -529,23 +524,11 @@ module a2nix_card (
                 end
 
                 M_LK_VAL: begin
-                    if (mbidx == 3'd4) begin
-                        areg[1] <= mptr;
-                        busy    <= 1'b0;
-                        done    <= 1'b1;
-                        mstate  <= M_IDLE;
-                        pf_req  <= 1'b1;
-                    end else begin
-                        mem_addr <= mcur + {29'd0, mbidx};
-                        mret     <= M_LK_VB;
-                        mstate   <= M_RD_LATCH;
-                    end
-                end
-
-                M_LK_VB: begin
-                    mptr[8*mbidx +: 8] <= mbyte;
-                    mbidx              <= mbidx + 3'd1;
-                    mstate             <= M_LK_VAL;
+                    areg[1] <= mword;       // the value pointer, in one access
+                    busy    <= 1'b0;
+                    done    <= 1'b1;
+                    mstate  <= M_IDLE;
+                    pf_req  <= 1'b1;
                 end
 
                 default: mstate <= M_IDLE;
@@ -637,7 +620,6 @@ module a2nix_card (
                                         mcur      <= alloc_ptr;
                                         alloc_ptr <= alloc_ptr + 32'd4
                                                      + ((len + 32'd3) & ~32'd3);
-                                        mbidx     <= 3'd0;
                                         busy      <= 1'b1;
                                         mstate    <= M_ALLOC_HDR;
                                     end
@@ -652,8 +634,6 @@ module a2nix_card (
 
                                 V_LOOKUP: begin
                                     lk_base <= areg[0];
-                                    mbidx   <= 3'd0;
-                                    mptr    <= 32'd0;
                                     busy    <= 1'b1;
                                     mstate  <= M_LK_CNT;
                                 end

@@ -138,7 +138,7 @@ mutate "L3 LOOKUP examines one batch only" rtl/a2nix_card.v \
 # L3: read the value column from the key column's base, returning a hash where a
 # pointer belongs -- a plausible-looking address.
 mutate "L3 LOOKUP reads the wrong column" rtl/a2nix_card.v \
-       's/                        mcur     <= lk_values_at + ({8.d0, lk_hit_index} << 2);/                        mcur     <= lk_keys_at + ({8'"'"'d0, lk_hit_index} << 2);/'
+       's/mem_addr <= lk_values_at + ({8.d0, lk_hit_index} << 2);/mem_addr <= lk_keys_at + ({8'"'"'d0, lk_hit_index} << 2);/'
 
 echo
 echo "$pass mutations caught, $fail not caught"
