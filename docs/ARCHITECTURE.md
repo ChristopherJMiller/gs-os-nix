@@ -1,0 +1,138 @@
+# Architecture
+
+## Division of labor
+
+Three parties. **Only one of them decides anything.**
+
+| Party | Owns |
+|---|---|
+| **Apple IIgs (65816)** | Lexer, parser, compiler, bytecode VM, lazy forcing, all primops, string context, store policy, derivation logic, CLI, GS/OS integration |
+| **Card (ECP5 FPGA)** | Memory capacity, compute-bound kernels, coarse amortizing verbs. Never decides, never touches the world |
+| **Linux host** | Toolchain, golden test fixtures, MAME CI. **Nothing at runtime** |
+
+If the card ever makes a policy decision or performs I/O, the Apple II has become a
+terminal and the project has failed. That is the single invariant to protect.
+
+## The economic fact everything rests on
+
+Two verified numbers (see [REFERENCES.md](REFERENCES.md)):
+
+- The IIgs **throttles to 1.024 MHz** for any `$C000–$CFFF` access — the FPI stretches
+  the clock to sync with the Mega II. One card byte ≈ **~10–11 fast-cycle equivalents**.
+- `LDA [dp],Y` (direct-page indirect **long** indexed, `B7`) = **6 cycles**, +1 if the
+  direct-page low byte ≠ 0, +1 on page cross → **6–8 cycles** per dereference, before
+  the cost of getting a 3-byte pointer into direct page at all.
+
+> **One card access costs about the same as one fast-RAM pointer dereference.**
+
+Consequences, and they are not negotiable:
+
+1. **The bus carries verbs, not data.** Offload chains, searches, and high-volume
+   streaming. Never offload a single dereference.
+2. **The hot heap cannot live on the card.** This kills the naive "card is memory
+   behind a window" design.
+3. Every verb must earn its crossing by replacing *many* CPU cycles. Enforced by
+   `checks.verb-economics` — a verb that doesn't pay gets deleted.
+
+## Memory model
+
+The generational boundary **is the slot connector**. This is the project's keystone
+idea and the reason the bus penalty stops mattering.
+
+```
+      Apple IIgs fast RAM                 Card SDRAM
+   ┌──────────────────────────┐        ┌──────────────────────────┐
+   │ NURSERY                  │        │ MATURE SPACE             │
+   │  thunks born here        │ promote│  survivors only          │
+   │  deref = 6-8 cycles      ├───────>│  O(survivors)            │
+   │  CPU copying collector   │  on    │  mark-compact (card-side)│
+   │  most die here, never    │ survival                          │
+   │  crossing the bus        │        ├──────────────────────────┤
+   ├──────────────────────────┤        │ STORE (immutable)        │
+   │ VM value + env stacks    │        │  pure BRAM read cache,   │
+   │  hottest, youngest data  │        │  no coherency protocol   │
+   └──────────────────────────┘        └──────────────────────────┘
+```
+
+Lazy functional evaluation has extreme infant mortality, so the overwhelming majority
+of allocations never cross the bus. Only data that has *proven* it will live pays the
+crossing. This is Symbolics' **ephemeral** GC (Moon 1984) with the generation boundary
+placed on a peripheral bus.
+
+Supporting decisions:
+
+- **Tags: the bank byte is the type tag** CPU-side (region tagging — the classic
+  6502-Lisp trick). Free type dispatch on a machine that is bad at masking. The card
+  uses explicit tag bits.
+- **Cache: 4-way set-associative, tree-PLRU (3 bits/set)** over SDRAM — *not* true LRU,
+  which costs gates for negligible gain. For pointer chasing, associativity beats
+  policy precision.
+- **Store region needs no invalidation.** It is immutable and content-addressed, so it
+  is a pure read cache: no dirty bits, no coherency, cacheable forever.
+- **Inline caches at bytecode sites** (monomorphic → polymorphic) eliminate repeat card
+  round-trips entirely. Cheapest large win available, and it lives in software.
+
+## One source of truth for the card
+
+The RTL is authoritative. Three consumers, never divergent:
+
+```
+rtl/*.v ──┬── verilator ─────> C++ class ──> MAME a2bus device
+          │                                  (real GS/OS boots the actual RTL)
+          ├── cocotb ────────> unit tests (NIST vectors, host-nix parity)
+          └── yosys/nextpnr/trellis ──> ECP5 bitstream
+```
+
+MAME's `device_a2bus_card_interface` maps ~1:1 onto a Verilog port list
+(`read_c0nx`/`write_c0nx`, `read_cnxx`, `read_c800`/`take_c800`, `bus_reset`,
+`raise_slot_irq`/`raise_slot_dma`), which is why this works cleanly rather than
+needing an abstraction layer. Do not invent one.
+
+## Software stack on the 65816
+
+```
+  target/lex/     lexer, driving the card's DFASTEP verb
+  target/parse/   recursive-descent parser + compiler -> bytecode
+  target/vm/      bytecode VM: thunks, lazy forcing, attrsets, lists, strings
+  target/heap/    nursery, copying collector, promotion to card
+  target/primops/ all primops, incl. STRING CONTEXT tracking
+  target/store/   store paths, NAR, ATerm, derivation identity
+```
+
+**String context must stay here.** Nix tracks which store paths a string value depends
+on, so `"${pkgs.hello}/bin/hello"` makes the referring derivation depend on `hello`.
+Contexts flow out of derivation outputs at *runtime*, so this can never be a
+compile-time concern. It is the part naive Nix reimplementations get wrong.
+
+## Hardware target
+
+**ECP5** (25F ≈ 24k LUTs, 85F ≈ 84k). The heap needs real SDRAM/DDR3; ice40's 128 KB
+SPRAM cannot hold a Nix heap.
+
+Gate budget. **Measured** rows come from `just area` (`synth_ecp5 -noabc9`); keep them
+current as modules land, since a budget that drifts from reality is worse than none.
+
+| Block | LUT4 | FF | Status |
+|---|---:|---:|---|
+| `sha256_core` (compression) | 1688 | 1064 | measured |
+| `sha256` (+ padding FSM) | 1738 | 1657 | measured |
+| `storepath` (fold + nixbase32) | 505 | 0 | measured — purely combinational |
+| 32-wide key CAM | ~1k | — | estimate |
+| `ALU64` | ~1.5k | — | estimate |
+| Address/verb FSMs, cache ctrl | ~3k | — | estimate |
+
+L1 lands at ~2.2k LUT4 of a 25F's ~24k, so there is comfortable headroom for L7
+stretch work. Toolchain is fully open and already packaged: `yosys`, `nextpnr`,
+`trellis`, `openfpgaloader`, `verible`.
+
+## Scope boundaries
+
+- `nix build nixpkgs#hello` is **permanently** out of reach. Evaluating nixpkgs needs
+  gigabytes of heap. This is physics, not effort.
+- Self-contained flakes **evaluate**. Flake *fetching* is reachable via **HTTP +
+  Ed25519**, not TLS: narinfo files are Ed25519-signed and store paths are
+  content-addressed, so Nix's integrity model never needed TLS. Marinetti (pure 65c816
+  TCP/IP, with an existing Uthernet II link layer) covers transport.
+- Pre-generated `.nbc` bytecode files are **test fixtures only**, never a runtime
+  component. Enforced by `checks.fixture-purity`.
+- Self-hosting the compiler is on the **critical path** (L5), not a late aspiration.

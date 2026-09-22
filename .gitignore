@@ -1,0 +1,9 @@
+result
+result-*
+obj_dir/
+sim/build/
+build/
+*.vcd
+*.fst
+__pycache__/
+.direnv/
