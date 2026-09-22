@@ -12,7 +12,8 @@
       });
 
       # Every RTL module, in dependency order.
-      rtlSources = "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v";
+      rtlSources = "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/a2nix_card.v";
+      rtlTops = [ "sha256_core" "sha256" "storepath" "a2nix_card" ];
     in
     {
       devShells = forAll ({ pkgs, ... }: {
@@ -83,6 +84,23 @@
             grep -q "M1 PASS" "$out"
           '';
 
+        # L2: the card's $C0nX register map and verb dispatch, driven through exactly
+        # the access pattern MAME uses and the CPU sequence in CARD-ISA.md. Proves the
+        # card before any MAME glue exists, so an M2 failure localises to the glue.
+        l2-card = pkgs.runCommandCC "check-l2-card"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests .
+            chmod -R +w .
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o card_test \
+              rtl/a2nix_card.v sim/card_main.cpp
+            ./build/card_test tests/vectors/l1.txt | tee "$out"
+            grep -q "L2 CARD PASS" "$out"
+          '';
+
         # Lint must stay clean: the RTL is the single source of truth for the MAME
         # device and the bitstream, so warnings here become bugs in two places.
         rtl-lint = pkgs.runCommand "check-rtl-lint"
@@ -92,7 +110,7 @@
             chmod -R +w rtl
             # Lint each module as its own top. Linting them together would trip
             # MULTITOP, and per-module linting is stricter anyway.
-            for top in sha256_core sha256 storepath; do
+            for top in ${nixpkgs.lib.concatStringsSep " " rtlTops}; do
               echo "=== lint $top ==="
               verilator --lint-only -Wall -Wno-DECLFILENAME \
                 --top-module "$top" ${rtlSources}

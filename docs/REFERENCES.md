@@ -28,33 +28,65 @@ If one turns out wrong, correct it here and note the impact.
 
 ## MAME card interface
 
-`device_a2bus_card_interface`, verified against tag `mame0281`
-(`src/devices/bus/a2bus/a2bus.h`):
+`device_a2bus_card_interface`, verified against tag **`mame0289`** — the version the
+flake actually pins (`src/devices/bus/a2bus/a2bus.h`):
 
 ```cpp
+// C0nX (/DEVSEL)
 virtual uint8_t read_c0nx(uint8_t offset)
 virtual void    write_c0nx(uint8_t offset, uint8_t data)
+// CnXX (/IOSEL)
 virtual uint8_t read_cnxx(uint8_t offset)
 virtual void    write_cnxx(uint8_t offset, uint8_t data)
+// C800 (/IOSTB)
 virtual uint8_t read_c800(uint16_t offset)
 virtual void    write_c800(uint16_t offset, uint8_t data)
-virtual bool    take_c800()
+virtual bool    take_c800() const            // NOTE: const
+// Inhibit
 virtual uint8_t read_inh_rom(uint16_t offset)
 virtual void    write_inh_rom(uint16_t offset, uint8_t data)
-virtual uint16_t inh_start()  /  inh_end()  /  inh_check(...)  /  inh_type()
-virtual void    bus_reset()
-void raise_slot_irq() / lower_slot_irq()
-void raise_slot_nmi() / lower_slot_nmi()
-void raise_slot_dma() / lower_slot_dma()
+virtual uint16_t inh_start() / inh_end() / inh_check(...) / inh_type()
+// Reset
+virtual void    reset_from_bus()             // NOTE: renamed
+
+// protected helpers
+void     raise_slot_irq() / lower_slot_irq()
+void     raise_slot_nmi() / lower_slot_nmi()
+void     raise_slot_dma() / lower_slot_dma()
+void     recalc_slot_inh()
+uint8_t  slot_dma_read(uint16_t offset)
+void     slot_dma_write(uint16_t offset, uint8_t data)
+uint32_t get_slotromspace() / get_slotiospace()
+
+device_a2bus_card_interface(const machine_config &mconfig, device_t &device)
+int slotno() const;  a2bus_device &a2bus();
 ```
 
-This maps ~1:1 onto a Verilog port list, which is why RTL-in-MAME works without an
-abstraction layer. Note that **DMA and interrupts are both available** — relevant to
-L7 stretch work.
+No pure virtuals — every method has a default, so a card only overrides what it uses.
 
-nixpkgs `mame` is **0.281, built from source** (GitHub archive `mame0281`, 1 patch), so
-`overrideAttrs` can inject a new device. Adding a card requires editing
-`scripts/src/bus.lua` and the a2bus slot-option registration.
+**Changes from 0.281** (the risk this note existed to catch, and it fired):
+
+| 0.281 | 0.289 |
+|---|---|
+| `bus_reset()` | **`reset_from_bus()`** — renamed |
+| `take_c800()` | **`take_c800() const`** — now const |
+| — | `recalc_slot_inh()`, `slot_dma_read/write()` added |
+
+This still maps ~1:1 onto a Verilog port list, which is why RTL-in-MAME works without
+an abstraction layer. **DMA and interrupts are both available**, and `slot_dma_read/
+write` make bus-master DMA straightforward — relevant to L7.
+
+**Where to patch.** Cards are registered in `src/devices/bus/a2bus/cards.cpp`, which
+defines `apple2_slot0_cards()`, `apple2_cards()`, `apple2e_cards()`,
+`apple2gs_cards()` and `apple3_cards()`. Each adds entries as:
+
+```cpp
+device.option_add("mockingboard", A2BUS_MOCKINGBOARD);
+device.option_add("scsi",         A2BUS_SCSI);
+```
+
+So the L2 patch is: include our header in `cards.cpp`, add one `option_add` line to
+`apple2gs_cards()`, and add the source files to `scripts/src/bus.lua`.
 
 ## Nix formats
 

@@ -17,7 +17,7 @@ bytes through a port that auto-increments.
 | Addr | Name | Access | Meaning |
 |---|---|---|---|
 | `$C0n0` | `CMD` | W | Write a verb opcode; execution begins immediately |
-| `$C0n0` | `STATUS` | R | `b7` BUSY, `b6` DONE, `b5` ERR, `b4..b0` error code |
+| `$C0n0` | `STATUS` | R | `b7` BUSY, `b6` DONE, `b5` ERR, `b4` **READY**, `b3..b0` error code |
 | `$C0n1` | `CTRL` | W | `b0` RESET, `b1` IRQ_EN, `b2` ABORT |
 | `$C0n1` | `ID` | R | `$A2` magic, then version via `PPORT` |
 | `$C0n2` | `ASEL` | W | Select address register `A0..A3`; resets its byte index |
@@ -36,6 +36,17 @@ does not have, and `DATA`'s auto-increment is what makes sequential heap access 
 **Parameter slots** `P0..P7` are 32 bytes each — sized to hold a SHA-256 digest or a
 32-character nixbase32 store-path component.
 
+### Byte order — the two ports differ, deliberately
+
+| Port | Order | Because |
+|---|---|---|
+| `APORT`, `LEN` | **little-endian integer**, LSB first | They hold numbers, and the 65816 is little-endian, so a pointer streams out in native order |
+| `PPORT` | **byte array**, index 0 = first byte | They hold digests and path strings, where "byte 0" means the first byte, not the least significant |
+
+Getting this backwards yields a byte-reversed digest — which still *looks* like a
+plausible hash, so it is worth stating explicitly. `tb`/`card_main.cpp` assert both
+orders.
+
 ## Verbs
 
 Written to `CMD`. All set BUSY, then DONE or ERR. Operands are named by the register
@@ -43,13 +54,67 @@ they read.
 
 ### Hashing and store paths
 
-| Op | Name | In | Out |
-|---|---|---|---|
-| `$10` | `HASH_INIT` | — | resets streaming hash state |
-| `$11` | `HASH_STREAM` | `A0` = start, `LEN` = bytes | absorbs card-resident bytes |
-| `$12` | `HASH_FINAL` | — | `P0` = 32-byte SHA-256 digest |
-| `$13` | `NARHASH` | `A0` = tree root node | `P0` = digest of the NAR serialization |
-| `$14` | `STOREPATH` | `P0` = digest, `P1` = name, `P2` = type string | `P3` = 32-char nixbase32 |
+| Op | Name | In | Out | Layer |
+|---|---|---|---|---|
+| `$10` | `HASH_INIT` | — | resets streaming hash state | L1 |
+| `$15` | `HASH_PUSH` | enters push mode; writes to `DATA` are absorbed | — | L1 |
+| `$11` | `HASH_STREAM` | `A0` = start, `LEN` = bytes | absorbs card-resident bytes | L3 |
+| `$12` | `HASH_FINAL` | — | `P0` = digest, **`P3` = 32-char nixbase32** | L1 |
+| `$13` | `NARHASH` | `A0` = tree root node | `P0` = digest of the NAR serialization | L6 |
+| `$14` | `STOREPATH` | `P0` = digest supplied by the caller | `P3` = 32-char nixbase32 | L1 |
+
+`HASH_PUSH` exists because M2 must work before the card has any memory of its own
+(that arrives at L3), so the CPU has to hand bytes over directly. It stays useful
+after L3 for data the CPU holds in main RAM and has no reason to park on the card.
+
+> ### ⚠️ Measured economics: 13.7 bus accesses per byte
+>
+> `card_main.cpp` counts the real cost, and the first implementation is **far worse
+> than the design claimed**. The estimate was ~1 access/byte for a ~300x win over
+> software SHA-256. Measured: **13.7 accesses/byte**, because the CPU must poll READY
+> before every single byte and spins ~65 cycles per block while the hasher compresses.
+>
+> | | accesses/byte | ≈ cycles/byte | vs software |
+> |---|---:|---:|---:|
+> | software SHA-256 on 65816 | — | ~3125 | 1x |
+> | `HASH_PUSH`, poll-per-byte (now) | 13.7 | ~137 | **~23x** |
+> | `HASH_PUSH` + 64-byte input FIFO | ~1.1 | ~11 | ~280x |
+>
+> 23x is still a real win and M2 is achievable on it, but it squanders an order of
+> magnitude. **Fix: a 64-byte input FIFO** so the CPU streams a whole block at bus
+> rate and polls once per block instead of once per byte. One BRAM, and READY then
+> means "the FIFO has space" rather than "the hasher is idle".
+>
+> This is `checks.verb-economics` doing its job (DECISIONS.md D5). The claim in
+> ARCHITECTURE.md of a 100-300x hashing win is only true *with* the FIFO.
+
+`HASH_FINAL` yields the encoded path in `P3` as well as the raw digest in `P0`,
+because `storepath.v` is purely combinational — once the digest settles, the 32
+characters cost nothing. `$14 STOREPATH` remains for folding a digest the caller
+computed some other way.
+
+### Flow control in push mode — not optional
+
+The slot bus has no back-pressure, and the hasher stops accepting bytes for ~65 cycles
+while it compresses each full 64-byte block. **The 65816 must poll `STATUS` bit 4
+(READY) before every `DATA` write in push mode**, or bytes are silently dropped and
+the digest is quietly wrong — the worst possible failure mode for a hash.
+
+The expected loop is therefore:
+
+```
+  CMD <- $10 (HASH_INIT)
+  CMD <- $15 (HASH_PUSH)
+  for each byte:
+      repeat: b = STATUS  until b & $10
+      DATA <- byte
+  CMD <- $12 (HASH_FINAL)
+  repeat: b = STATUS  until b & $40      ; DONE
+  PSEL <- 3 ; read 32 bytes from PPORT   ; the store path
+```
+
+`HASH_INIT` is required before pushing: after a `HASH_FINAL` the hasher parks in its
+done state with READY low, so pushes without a re-init would stall forever.
 
 `NARHASH` is the highest-value verb in the design: it serializes a directory tree to
 NAR *and* hashes it entirely card-side. Zero bytes cross the bus; 20 come back.

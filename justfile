@@ -9,9 +9,11 @@
 #   just check      full flake check: parity, lint, synth
 #   just resume     print where the project stands
 
-RTL := "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v"
+RTL := "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/a2nix_card.v"
+TOPS := "sha256_core sha256 storepath a2nix_card"
 VECTORS := "tests/vectors/l1.txt"
 SIM_DIR := "sim/build"
+CARD_DIR := "sim/build_card"
 
 # Show available tasks.
 default:
@@ -36,7 +38,7 @@ isa:
 lint:
     #!/usr/bin/env bash
     set -euo pipefail
-    for top in sha256_core sha256 storepath; do
+    for top in {{TOPS}}; do
         echo "=== lint $top ==="
         verilator --lint-only -Wall -Wno-DECLFILENAME --top-module "$top" {{RTL}}
     done
@@ -57,6 +59,28 @@ build:
 # Build and run the L1 testbench: NIST vectors + store-path parity (M1).
 test: build
     ./{{SIM_DIR}}/l1_test {{VECTORS}}
+
+# --- L2: card register interface ---------------------------------------------
+
+# Build the card testbench, which drives $C0nX exactly as the MAME device will.
+build-card:
+    verilator --cc --exe --build -j 0 \
+        -Irtl --top-module a2nix_card \
+        -Wall -Wno-DECLFILENAME \
+        --Mdir {{CARD_DIR}} -o card_test \
+        rtl/a2nix_card.v sim/card_main.cpp
+
+# Run the card testbench: register map, verb dispatch, and store-path parity
+# through the documented CPU sequence. Also reports bus accesses per byte.
+test-card: build-card
+    ./{{CARD_DIR}}/card_test {{VECTORS}}
+
+# Print just the verb-economics numbers (the D5 gate).
+economics: build-card
+    @./{{CARD_DIR}}/card_test {{VECTORS}} | grep -E "bus accesses|cost:"
+
+# Everything: L1 and L2 testbenches.
+test-all: test test-card
 
 # Regenerate golden vectors from the REAL nix on this host.
 # Aborts if the reference model disagrees with nix, so parity can't silently rot.

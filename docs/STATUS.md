@@ -6,7 +6,7 @@
 |---|---|---|
 | **L0** | Toolchain: flake devShell + justfile + CI gate | **done** (AppleCommander/cadius deferred to L2, only needed for disk images) |
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
-| **L2** | Card in MAME: register map, verilate, a2bus device, patched mame | not started |
+| **L2** | Card in MAME: register map, verilate, a2bus device, patched mame | **in progress** — `a2nix_card.v` + register/verb tests pass; MAME glue next |
 | **L3** | Memory model: `heap.v`, `cache.v`, `keycam.v`, `alu64.v`, CPU nursery | not started |
 | **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | not started |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
@@ -26,6 +26,23 @@
 
 M1/M2/M4 are byte-parity assertions against upstream Nix. They are what separate an
 implementation from a tribute.
+
+## Next actions (L2)
+
+1. **Add a 64-byte input FIFO to `a2nix_card.v`.** Measured cost is 13.7 bus accesses
+   per byte because the CPU polls READY per byte; a FIFO gets it to ~1.1 and restores
+   the 100–300x hashing claim. See the boxed note in CARD-ISA.md. Do this before the
+   MAME glue — it changes what READY means.
+2. **`mame/a2nix.cpp`**: wrap the Verilated model in a `device_a2bus_card_interface`.
+   Note the 0.289 API: `reset_from_bus()` (not `bus_reset()`) and `take_c800() const`.
+   The bus model is `set inputs -> eval() -> sample -> tick()`; `card_main.cpp`'s
+   `rd()`/`wr()` are the reference implementation.
+3. **Patch MAME**: include the header in `src/devices/bus/a2bus/cards.cpp`, add one
+   `device.option_add("a2nix", A2BUS_A2NIX);` to `apple2gs_cards()`, and add sources
+   to `scripts/src/bus.lua`. Wire it up in `nix/pkgs/mame-a2nix.nix` via
+   `mame.overrideAttrs`.
+4. **65816 test program** (`target/` + ca65) that runs the CARD-ISA.md sequence and
+   prints a store path — then M2.
 
 ## Resuming
 
