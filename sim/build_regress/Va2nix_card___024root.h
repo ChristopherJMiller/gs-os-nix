@@ -131,6 +131,8 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         VL_OUT(mem_addr,31,0);
         VL_OUT(mem_wdata,31,0);
         VL_IN(mem_rdata,31,0);
+        IData/*31:0*/ a2nix_card__DOT____VlemCall_4__alloc_total;
+        IData/*31:0*/ a2nix_card__DOT____VlemCall_3__alloc_total;
         IData/*31:0*/ a2nix_card__DOT____VlemCall_2__alloc_total;
         IData/*31:0*/ a2nix_card__DOT____VlemCall_1__alloc_total;
         IData/*31:0*/ a2nix_card__DOT__obj_size__Vstatic__aux;
@@ -144,10 +146,10 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         IData/*31:0*/ a2nix_card__DOT__mword;
         IData/*31:0*/ a2nix_card__DOT__mcount;
         IData/*31:0*/ a2nix_card__DOT__alloc_ptr;
-        IData/*31:0*/ a2nix_card__DOT__gc_free;
-        IData/*31:0*/ a2nix_card__DOT__gc_scan;
     };
     struct {
+        IData/*31:0*/ a2nix_card__DOT__gc_free;
+        IData/*31:0*/ a2nix_card__DOT__gc_scan;
         IData/*31:0*/ a2nix_card__DOT__gc_root_at;
         IData/*31:0*/ a2nix_card__DOT__gc_root_n;
         IData/*31:0*/ a2nix_card__DOT__gc_root_i;

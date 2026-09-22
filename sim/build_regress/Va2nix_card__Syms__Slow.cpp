@@ -12,7 +12,7 @@ Va2nix_card__Syms::Va2nix_card__Syms(VerilatedContext* contextp, const char* nam
     , TOP{this, namep}
 {
     // Check resources
-    Verilated::stackCheck(1177);
+    Verilated::stackCheck(1214);
     // Setup sub module instances
     // Configure time unit / time precision
     _vm_contextp__->timeunit(-12);

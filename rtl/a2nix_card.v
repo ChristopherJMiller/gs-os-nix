@@ -77,6 +77,7 @@ module a2nix_card (
                      V_HASH_PUSH   = 8'h15,
                      V_ALLOC       = 8'h20,
                      V_FOLLOW      = 8'h21,
+                     V_RESERVE     = 8'h25,
                      V_LOOKUP      = 8'h30,
                      V_MARK        = 8'h40,
                      V_COMPACT     = 8'h41,
@@ -951,6 +952,22 @@ module a2nix_card (
                                     hops   <= 8'd0;
                                     busy   <= 1'b1;
                                     mstate <= M_FOLLOW;
+                                end
+
+                                // RESERVE: claim LEN bytes (rounded to 4, min 8) with
+                                // no header written, for the nursery's promotion
+                                // stream -- survivors are laid out contiguously by
+                                // the CPU's Cheney copy and pushed as one DATA burst.
+                                // A1 = base. Single cycle.
+                                V_RESERVE: begin
+                                    if ((alloc_ptr + alloc_total(len) - 32'd4) > from_top) begin
+                                        err     <= 1'b1;
+                                        errcode <= E_OOM;
+                                    end else begin
+                                        areg[1]   <= alloc_ptr;
+                                        alloc_ptr <= alloc_ptr + alloc_total(len) - 32'd4;
+                                        done      <= 1'b1;
+                                    end
                                 end
 
                                 V_LOOKUP: begin

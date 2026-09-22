@@ -59,6 +59,26 @@ of allocations never cross the bus. Only data that has *proven* it will live pay
 crossing. This is Symbolics' **ephemeral** GC (Moon 1984) with the generation boundary
 placed on a peripheral bus.
 
+**Measured** (`just bench-nursery`, `target/heap/nursery.s` on the 65816 harness): a
+workload of 50 objects / 600 bytes born in the nursery, with 4 objects / 48 bytes kept
+live by two roots. The collection ran in CPU RAM; promotion was **one `DATA` burst of
+48 bytes into a `RESERVE`d block — 66 bus accesses in total, 18 of them fixed
+overhead**. 552 bytes of garbage never touched the slot. The fraction that crosses is
+set by the workload's survival rate, not by the mechanism; the mechanism's cost is
+~1 access per surviving byte.
+
+Three rules make this work, and they are load-bearing:
+
+1. **A mature object never points into the nursery.** The card cannot dereference a
+   CPU-RAM address, so an old→young pointer would be meaningless to it anyway.
+   Anything stored into a mature object is promoted first. That *is* the write
+   barrier; there is no remembered set.
+2. **Young pointers carry bit 31.** The card's 1 MB heap never uses it, so the two
+   address spaces cannot be confused.
+3. **Promotion translates by a constant.** Cheney lays survivors out contiguously
+   with sizes preserved, so `card = base + (addr − staging_base)` — no forwarding
+   table on the promotion path.
+
 Supporting decisions:
 
 - **Tags: the bank byte is the type tag** CPU-side (region tagging — the classic
@@ -119,10 +139,10 @@ current as modules land, since a budget that drifts from reality is worse than n
 | `storepath` (fold + nixbase32) | 505 | 0 | measured — purely combinational |
 | `keycam` (32-wide CAM) | 1400 | 0 | measured — combinational |
 | `alu64` (sequential mul/div) | 1462 | 336 | measured — the ~1.5k estimate held |
-| Cheney collector (inside the card's engine) | ~830 | ~380 | measured by difference |
-| **`a2nix_card`** (whole card, incl. above) | **11247** | **6052** | measured, L3 card side complete |
+| Cheney collector (inside the card's engine) | ~800 | ~380 | measured by difference |
+| **`a2nix_card`** (whole card, incl. above) | **11213** | **6052** | measured, L3 complete |
 
-The whole card is **11247 LUT4 of a 25F's ~24k (47%)**. The CAM is the expensive
+The whole card is **11213 LUT4 of a 25F's ~24k (47%)**. The CAM is the expensive
 addition: 1400 LUT4 of comparators plus **1024 flops** for the 32×32-bit lane array,
 which is most of the FF growth. That array cannot be block RAM — comparing all lanes
 in one cycle is the entire point — so it is the honest price of O(1) lookup.

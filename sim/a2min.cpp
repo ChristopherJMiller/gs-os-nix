@@ -27,6 +27,7 @@
 #include "Va2nix_card.h"
 #include "verilated.h"
 
+#include "cardbus.h"      // tag constants, for verifying the promoted graph
 #include "heapmem.h"
 
 #include <cstdint>
@@ -264,6 +265,19 @@ void step() {
                  wr(ea, v); set_nz(v); cyc = 6; } break;
     case 0x7D: do_adc(rd(addr_abs_x())); cyc = 4; break;                        // ADC abs,x
 
+    // Zero-page indexed, and the accumulator rotates -- the nursery's pointer
+    // tables and 32-bit arithmetic want these.
+    case 0xB5: cpu.a = rd(static_cast<uint8_t>(fetch() + cpu.x)); set_nz(cpu.a); cyc = 4; break; // LDA zp,x
+    case 0x95: wr(static_cast<uint8_t>(fetch() + cpu.x), cpu.a); cyc = 4; break;                 // STA zp,x
+    case 0x2A: { const bool cin = cpu.c; cpu.c = (cpu.a & 0x80) != 0;                             // ROL A
+                 cpu.a = static_cast<uint8_t>((cpu.a << 1) | (cin ? 1 : 0)); set_nz(cpu.a); } break;
+    case 0x6A: { const bool cin = cpu.c; cpu.c = cpu.a & 1;                                       // ROR A
+                 cpu.a = static_cast<uint8_t>((cpu.a >> 1) | (cin ? 0x80 : 0)); set_nz(cpu.a); } break;
+    case 0xEE: { const uint16_t ea = addr_abs(); const uint8_t r = rd(ea) + 1;                    // INC abs
+                 wr(ea, r); set_nz(r); cyc = 6; } break;
+    case 0xCE: { const uint16_t ea = addr_abs(); const uint8_t r = rd(ea) - 1;                    // DEC abs
+                 wr(ea, r); set_nz(r); cyc = 6; } break;
+
     case 0xC9: do_cmp(cpu.a, fetch());        break;                          // CMP #
     case 0xC5: do_cmp(cpu.a, rd(addr_zp()));  cyc = 3; break;                 // CMP zp
     case 0xCD: do_cmp(cpu.a, rd(addr_abs())); cyc = 4; break;                 // CMP abs
@@ -406,8 +420,107 @@ int bench_mul64(const char *bin_path, uint64_t a, uint64_t b) {
     return 0;
 }
 
+// --- The D6 measurement: what fraction of allocated bytes crosses the bus? ---
+//
+//   a2min --bench-nursery <bin>
+//
+// Runs target/tests/nursery_bench.s, which allocates a workload in CPU RAM, keeps
+// a little of it live, collects and promotes. The program reports allocated and
+// promoted bytes; this harness counts slot accesses independently and then walks
+// the promoted block on the card to verify the graph arrived intact with every
+// young pointer translated -- a promoter that streamed the right byte COUNT but
+// the wrong pointers would look perfect by the counts alone.
+int bench_nursery(const char *bin_path) {
+    std::ifstream bin(bin_path, std::ios::binary);
+    if (!bin) { std::fprintf(stderr, "cannot open %s\n", bin_path); return 2; }
+    std::memset(ram, 0, sizeof(ram));
+    const std::vector<uint8_t> image((std::istreambuf_iterator<char>(bin)),
+                                     std::istreambuf_iterator<char>());
+    for (size_t i = 0; i < image.size(); ++i) ram[LOAD_ADDR + i] = image[i];
+
+    card = new Va2nix_card;
+    card->clk = 0; card->rst_n = 0;
+    card->c0n_addr = 0; card->c0n_read = 0; card->c0n_write = 0; card->c0n_wdata = 0;
+    card->c8_addr = 0; card->mem_rdata = 0;
+    for (int i = 0; i < 8; ++i) tick();
+    card->rst_n = 1;
+    tick();
+
+    const uint16_t seed = HALT_ADDR - 1;
+    push(static_cast<uint8_t>(seed >> 8));
+    push(static_cast<uint8_t>(seed & 0xFF));
+
+    const uint64_t budget = 50'000'000;
+    while (!cpu.halted && cpu_cycles < budget) step();
+    if (!cpu.halted) { std::fprintf(stderr, "bench: did not halt\n"); return 1; }
+
+    auto r16 = [&](int off) { return static_cast<uint32_t>(ram[RESULT + off]) | (static_cast<uint32_t>(ram[RESULT + off + 1]) << 8); };
+    auto r32 = [&](int off) { return r16(off) | (r16(off + 2) << 16); };
+    const uint32_t allocd = r16(0), promoted = r16(2);
+    const uint32_t nobj = r16(4), nprom = r16(6);
+    const uint32_t base = r32(8), root0 = r32(12);
+
+    std::printf("bench nursery (D6: the generational boundary is the slot connector)\n");
+    std::printf("  status            : $%02X\n", ram[RESULT_STAT]);
+    std::printf("  CPU cycles        : %llu\n", static_cast<unsigned long long>(cpu_cycles));
+    std::printf("  allocated         : %u bytes in %u objects   (nursery, fast RAM)\n", allocd, nobj);
+    std::printf("  promoted          : %u bytes in %u objects   (crossed the bus)\n", promoted, nprom);
+    std::printf("  bus accesses      : %llu total\n", static_cast<unsigned long long>(slot_accesses));
+    if (allocd)
+        std::printf("  crossed the bus   : %.1f%% of allocated bytes\n",
+                    100.0 * static_cast<double>(promoted) / static_cast<double>(allocd));
+    std::printf("  card block base   : %08x, root0 -> %08x\n", base, root0);
+
+    // --- verify the promoted graph on the card ---
+    // Expected: 2 LISTs of 2, and the INTs they reference. The two root lists
+    // (indices 3 and 7) reference ints[3],ints[0] and ints[7&3],ints[8&3] -- the
+    // SAME two INTs -- so exactly 2 distinct INTs survive and each must appear on
+    // the card once: 2x12 + 2x12 = 48 bytes. A first version of this check
+    // expected 4 INTs; the collector was right and the arithmetic was not, and the
+    // sharing across separate roots is the more valuable case to have exercised.
+    bool ok = (ram[RESULT_STAT] == 0x01);
+    int lists = 0, ints = 0, bad_ptr = 0, bad_tag = 0;
+    for (uint32_t off = 0; off < promoted;) {
+        const uint32_t at = base + off;
+        const uint8_t tag = heap.peek(at);
+        const uint32_t aux = heap.peek32(at) >> 8;
+        uint32_t size = 8;
+        if (tag == TAG_INT) { size = 12; ++ints; }
+        else if (tag == TAG_LIST) {
+            size = 4 + 4 * aux; ++lists;
+            for (uint32_t k = 0; k < aux; ++k) {
+                const uint32_t p = heap.peek32(at + 4 + 4 * k);
+                // Must be a translated MATURE pointer inside the promoted block.
+                if ((p & 0x80000000u) || p < base || p >= base + promoted) ++bad_ptr;
+                else if (heap.peek(p) != TAG_INT) ++bad_ptr;
+            }
+        } else { ++bad_tag; }
+        off += size;
+    }
+    std::printf("  on the card       : %d lists, %d ints, %d bad pointers, %d bad tags\n",
+                lists, ints, bad_ptr, bad_tag);
+    ok &= (lists == 2 && ints == 2 && bad_ptr == 0 && bad_tag == 0);
+    ok &= (root0 >= base && root0 < base + promoted && heap.peek(root0) == TAG_LIST);
+    ok &= (promoted == 48 && allocd == 600 && nprom == 4 && nobj == 50);
+    // The bus must have carried each promoted byte exactly once, plus a small fixed
+    // overhead (card scan, RESERVE, two address-register loads). A promoter that
+    // re-sent bytes or per-object verbs would show up here.
+    ok &= (slot_accesses >= promoted && slot_accesses <= promoted + 32);
+
+    card->final();
+    delete card;
+
+    if (!ok) { std::fprintf(stderr, "BENCH FAIL: promoted graph is not what was expected\n"); return 1; }
+    std::printf("BENCH OK: %u of %u bytes crossed the bus; the rest died in the nursery\n",
+                promoted, allocd);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     Verilated::commandArgs(argc, argv);
+
+    if (argc >= 3 && std::string(argv[1]) == "--bench-nursery")
+        return bench_nursery(argv[2]);
 
     if (argc >= 5 && std::string(argv[1]) == "--bench-mul64")
         return bench_mul64(argv[2],

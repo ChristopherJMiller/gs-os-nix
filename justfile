@@ -164,6 +164,20 @@ bench-mul64 a="123456789" b="987654321":
         rtl/a2nix_card.v sim/a2min.cpp
     ./sim/build_a2min/a2min --bench-mul64 target/build/mul64_bench.bin {{a}} {{b}}
 
+# The D6 measurement: run the nursery (target/heap/nursery.s) on a2min and report
+# what fraction of allocated bytes crossed the bus.
+bench-nursery:
+    mkdir -p target/build
+    ca65 --cpu 65816 -o target/build/nursery_bench.o target/tests/nursery_bench.s
+    ld65 -C target/tests/apple2.cfg -o target/build/nursery_bench.bin \
+        target/build/nursery_bench.o
+    verilator --cc --exe --build -j 0 \
+        -Irtl --top-module a2nix_card \
+        -Wall -Wno-DECLFILENAME \
+        --Mdir sim/build_a2min -o a2min \
+        rtl/a2nix_card.v sim/a2min.cpp
+    ./sim/build_a2min/a2min --bench-nursery target/build/nursery_bench.bin
+
 # M2 again, but on real MAME for higher fidelity (real slot timing, real IIgs).
 # Needs a complete apple2gs romset: ROMPATH=~/mame/roms just m2-mame
 m2-mame: asm-headless

@@ -188,6 +188,11 @@ mutate "GC skips the scan" rtl/a2nix_card.v \
 mutate "GC roots not written back" rtl/a2nix_card.v \
        '/M_GC_ROOT_WB: begin/,/mstate    <= M_GC_ROOT;/ s/                    mem_we    <= 1.b1;/                    mem_we    <= 1'"'"'b0;/'
 
+# RESERVE: size the block like an ALLOC (header included), shifting every pointer
+# the promoter translates by a constant offset.
+mutate "RESERVE adds a header's worth of padding" rtl/a2nix_card.v \
+       's/                                        alloc_ptr <= alloc_ptr + alloc_total(len) - 32.d4;/                                        alloc_ptr <= alloc_ptr + alloc_total(len);/'
+
 echo
 echo "$pass mutations caught, $fail not caught"
 [ "$fail" -eq 0 ] || exit 1

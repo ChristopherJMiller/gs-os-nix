@@ -175,6 +175,7 @@ end** of the byte string.
 | Op | Name | In | Out |
 |---|---|---|---|
 | `$20` | `ALLOC` | `LEN` = size, `P0` = tag | `A1` = address of new object |
+| `$25` | `RESERVE` | `LEN` = bytes | `A1` = base of a headerless block; bumps the allocator |
 | `$21` | `FOLLOW` | `A0` | `A1` = first non-indirection in the chain |
 | `$22` | `MEMCMP` | `A0`, `A1`, `LEN` | `P0` = sign of comparison |
 | `$23` | `MEMCPY` | `A0` → `A1`, `LEN` | — |
@@ -214,6 +215,20 @@ Every pointer the CPU holds into mature space must have been in some root list b
 
 `INSTANTIATE` is the one surviving idea from Reduceron: a template becomes a single
 wide card-side structured write rather than word-at-a-time construction.
+
+`RESERVE` exists for **promotion**. A nursery collection (`target/heap/nursery.s`) is
+a Cheney copy inside CPU RAM into a staging area; survivors come out contiguous with
+their sizes preserved, so the whole staging area can be pushed to the card as **one
+`DATA` burst** into a reserved block, and every young pointer translates by a constant:
+`card = base + (addr − staging_base)`. One verb and ~1 access per surviving byte, with
+no per-object `ALLOC`. Young pointers carry bit 31, which the card's 1 MB heap never
+uses, so the two address spaces cannot be confused.
+
+The rule that makes this sound: **a mature object never points into the nursery.**
+The card cannot dereference a CPU-RAM address, so an old→young pointer would be
+meaningless to `LOOKUP` or `FOLLOW` anyway. Anything stored into a mature object is
+promoted first. That is the entire generational write barrier — there is no
+remembered set.
 
 ### Evaluation support
 

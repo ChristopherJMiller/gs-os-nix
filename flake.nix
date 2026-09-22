@@ -150,6 +150,28 @@
             grep -q "M2 PASS" "$out"
           '';
 
+        # D6: the generational boundary is the slot connector. Runs the CPU-side
+        # nursery (target/heap/nursery.s) on the 65816 harness, verifies the promoted
+        # graph arrived on the card intact with every young pointer translated, and
+        # asserts the bus carried each surviving byte once plus a small fixed cost.
+        d6-nursery = pkgs.runCommandCC "check-d6-nursery"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 pkgs.cc65 ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/target .
+            chmod -R +w .
+            mkdir -p target/build
+            ca65 --cpu 65816 -o target/build/nursery_bench.o target/tests/nursery_bench.s
+            ld65 -C target/tests/apple2.cfg \
+              -o target/build/nursery_bench.bin target/build/nursery_bench.o
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            ./build/a2min --bench-nursery target/build/nursery_bench.bin | tee "$out"
+            grep -q "BENCH OK" "$out"
+          '';
+
         # Regressions for the silent-corruption bug class. Every bug found in this
         # card produced a plausible-looking wrong answer rather than a failure, so
         # each one gets a permanent named test (sim/regress_main.cpp).

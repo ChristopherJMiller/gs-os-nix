@@ -766,6 +766,51 @@ void l3_gc() {
           "the second MARK restarting to-space and orphaning the first's survivors");
 }
 
+// ---------------------------------------------------------------------------
+// L3 RESERVE: a headerless block for the promotion stream.
+void l3_reserve() {
+    std::printf("L3 RESERVE\n");
+    // NB: CTRL reset deliberately does not touch the allocator -- a card reset must
+    // not wipe the heap -- so the allocator is wherever the collector tests left it.
+    // Every assertion here is relative to the first reservation for that reason.
+    bus->wr(R_CTRL, CTRL_RESET);
+
+    // Two reservations must be contiguous and exactly sized: the promoter relies on
+    // card = base + offset, so any padding the card inserted would shift every
+    // translated pointer.
+    bus->set_len(72);
+    bus->wr(R_CMD, V_RESERVE);
+    std::uint8_t st = bus->wait_verb();
+    const std::uint32_t b1 = bus->get_areg(1);
+    bus->set_len(24);
+    bus->wr(R_CMD, V_RESERVE);
+    st |= bus->wait_verb();
+    const std::uint32_t b2 = bus->get_areg(1);
+    check((st & ST_ERR) == 0 && (b1 % 4) == 0 && b2 == b1 + 72,
+          "RESERVE hands out exactly LEN contiguous bytes with no header",
+          "the block being sized like an ALLOC (header added), which would shift "
+          "every pointer the promoter translates by a constant");
+
+    // It must still round like ALLOC so the next object stays aligned.
+    bus->set_len(5);
+    bus->wr(R_CMD, V_RESERVE);
+    bus->wait_verb();
+    const std::uint32_t b3 = bus->get_areg(1);
+    bus->set_len(8);
+    bus->wr(R_CMD, V_RESERVE);
+    bus->wait_verb();
+    check(bus->get_areg(1) == b3 + 8,
+          "RESERVE rounds to 4 with an 8-byte minimum, like ALLOC",
+          "a misaligned block breaking single-access word reads of what follows");
+
+    bus->set_len(0x00FFFFFF);
+    bus->wr(R_CMD, V_RESERVE);
+    st = bus->wait_verb();
+    check((st & ST_ERR) && (st & 0x0F) == E_OOM, "RESERVE reports OOM past the semispace",
+          "the bump pointer running into to-space");
+    bus->wr(R_CTRL, CTRL_RESET);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -788,6 +833,7 @@ int main(int argc, char **argv) {
     l3_lookup();
     l3_alu64();
     l3_gc();
+    l3_reserve();
 
     card->final();
     delete card;

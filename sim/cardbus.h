@@ -24,6 +24,7 @@ enum : std::uint8_t {
     V_HASH_INIT = 0x10, V_HASH_STREAM = 0x11, V_HASH_FINAL = 0x12,
     V_NARHASH = 0x13, V_STOREPATH = 0x14, V_HASH_PUSH = 0x15,
     V_ALLOC = 0x20, V_FOLLOW = 0x21, V_MEMCMP = 0x22, V_MEMCPY = 0x23,
+    V_RESERVE = 0x25,
     V_LOOKUP = 0x30,
     V_MARK = 0x40, V_COMPACT = 0x41,
     V_ALU64 = 0x50,
