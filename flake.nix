@@ -19,6 +19,8 @@
           verilatedCard = self'.verilated-card;
           cardSrc = ./mame;
         };
+        # Host-side, test-only fixture generator (D7, D16).
+        nbc = self'.callPackage ./nix/pkgs/nbc.nix { };
       });
 
       forAll = f: nixpkgs.lib.genAttrs systems (system:
@@ -57,6 +59,12 @@
             # --- 65816 target ---
             cc65                 # ca65 --cpu 65816; the C compiler is 6502-only
 
+            # --- Host tools that never touch the Verilated model (D16) ---
+            cargo                # tools/nbc, the test-only fixture generator
+            rustc
+            rustfmt
+            clippy
+
             # --- Emulation ---
             mame                 # stock; `nix build .#mame-a2nix` adds the card
 
@@ -79,7 +87,79 @@
         };
       });
 
-      checks = forAll ({ pkgs, ... }: {
+      checks = forAll ({ pkgs, ours, ... }: {
+
+        # --- L4: bytecode VM ---------------------------------------------------
+
+        # The fixture generator's unit tests: lexer, Nix precedence, thunk
+        # placement, the .nbc container round-trip. Building the package runs
+        # `cargo test` (nix/pkgs/nbc.nix).
+        nbc-tests = ours.nbc;
+
+        # The opcode table lives in BYTECODE.md, opcodes.rs and opcodes.inc. A
+        # disagreement between generator and VM would yield fixtures that run and
+        # return plausible wrong answers, so the three are diffed mechanically.
+        nbc-opcodes = pkgs.runCommand "check-nbc-opcodes"
+          { nativeBuildInputs = [ pkgs.python3 ]; }
+          ''
+            cp -r ${self}/docs ${self}/tools ${self}/target ${self}/scripts .
+            chmod -R +w .
+            python3 scripts/check-opcodes.py --selftest | tee "$out"
+            python3 scripts/check-opcodes.py | tee -a "$out"
+          '';
+
+        # D7 made mechanical: the generator contains no hashing or store-path code,
+        # and no fixture carries a store path or digest its source does not. The
+        # checker self-tests first (plants each violation, expects a catch), then
+        # runs for real.
+        fixture-purity = pkgs.runCommand "check-fixture-purity" { }
+          ''
+            cp -r ${self}/tools ${self}/tests ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            ./scripts/fixture-purity.sh --selftest | tee "$out"
+            ./scripts/fixture-purity.sh tests/fixtures | tee -a "$out"
+          '';
+
+        # THE HEADLINE METRIC. Compile every vendored tvix eval-okay test with the
+        # generator, run each on the 65816 VM under a2min, compare with the .exp
+        # file. tests/corpus/expected-pass.txt lists what passes today; a test
+        # dropping out of it fails the check, so the number can only rise. The
+        # compiled fixtures are then purity-checked against their sources.
+        scoreboard = pkgs.runCommandCC "check-scoreboard"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 pkgs.cc65 ours.nbc ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/target ${self}/scripts ${self}/tools .
+            chmod -R +w .
+            patchShebangs scripts
+            mkdir -p target/build
+            ca65 --cpu 65816 -I target/vm -o target/build/vm.o target/vm/vm.s
+            ld65 -C target/tests/apple2.cfg -o target/build/vm.bin target/build/vm.o
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            python3 scripts/scoreboard.py \
+              --nbc nbc --a2min ./build/a2min --vm target/build/vm.bin \
+              --corpus tests/corpus/tvix --corpus tests/fixtures \
+              --build target/build/nbc \
+              --expected tests/corpus/expected-pass.txt | tee "$out"
+            grep -q "^SCOREBOARD:" "$out"
+            ./scripts/fixture-purity.sh target/build/nbc | tee -a "$out"
+
+            # The ratchet must be able to fail: a listed test that does not pass
+            # is a regression, and the run must say so and exit non-zero.
+            echo "ghost/eval-okay-never-passed" > ghost.txt
+            if python3 scripts/scoreboard.py \
+                 --nbc nbc --a2min ./build/a2min --vm target/build/vm.bin \
+                 --corpus tests/fixtures --build build/ghost --expected ghost.txt \
+                 > ghost.log 2>&1; then
+              echo "scoreboard ratchet SURVIVED a planted regression" >&2; exit 1
+            fi
+            grep -q "^REGRESSION:" ghost.log
+            echo "ratchet self-test: a planted regression is caught" | tee -a "$out"
+          '';
 
         # M1: the RTL's store paths must be byte-identical to upstream nix.
         #

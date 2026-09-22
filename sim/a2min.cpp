@@ -74,6 +74,8 @@ constexpr uint16_t HALT_ADDR   = 0xFFFE;        // RTS from the entry point land
 constexpr uint16_t RESULT      = 0x0300;
 constexpr uint16_t RESULT_STAT = 0x0320;
 constexpr uint16_t SELFTEST_RESULT = 0x0400;    // the native self-test's word table
+constexpr uint16_t NBC_BASE    = 0x8000;        // where --run-nbc places the image
+constexpr uint16_t NBC_MAX     = 0x2000;
 
 int card_slot = 4;
 
@@ -671,6 +673,63 @@ int selftest(const char *bin_path) {
     return 0;
 }
 
+// --- L4: run one .nbc fixture on the 65816 VM --------------------------------------
+//
+//   a2min --run-nbc <vm.bin> <fixture.nbc>
+//
+// Loads target/vm/vm.bin at $2000 and the fixture at NBC_BASE, runs to the halt, and
+// prints the VM's answer in Nix syntax on a `result:` line (or `error: E_NAME`), which
+// is what scripts/scoreboard.py compares with the corpus's .exp files. The result
+// contract is BYTECODE.md "Result reporting".
+int run_nbc(const char *vm_path, const char *nbc_path) {
+    if (!load_image(vm_path)) return 2;
+    {
+        std::ifstream f(nbc_path, std::ios::binary);
+        if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }
+        const std::vector<uint8_t> nbc((std::istreambuf_iterator<char>(f)),
+                                       std::istreambuf_iterator<char>());
+        if (nbc.empty() || nbc.size() > NBC_MAX) {
+            std::fprintf(stderr, "%s: %zu bytes; the VM accepts 1..%u\n", nbc_path, nbc.size(),
+                         static_cast<unsigned>(NBC_MAX));
+            return 2;
+        }
+        for (size_t i = 0; i < nbc.size(); ++i) ram[NBC_BASE + i] = nbc[i];
+    }
+    bring_up_card();
+    const bool halted = run_to_halt();
+    card->final();
+    delete card;
+
+    std::printf("a2min --run-nbc %s: %llu instructions, %llu CPU cycles, %llu slot accesses\n",
+                nbc_path, static_cast<unsigned long long>(cpu.instructions),
+                static_cast<unsigned long long>(cpu_cycles),
+                static_cast<unsigned long long>(slot_accesses));
+    if (!halted) { std::printf("error: did not halt\n"); return 1; }
+
+    const uint8_t status = ram[RESULT_STAT];
+    if (status == 0xFF) {
+        static const char *names[] = { "E_NONE?", "E_BADOP", "E_TYPE", "E_DIVZERO",
+                                       "E_INFREC", "E_NOMEM", "E_BADNBC", "E_NOCARD" };
+        const uint8_t code = ram[RESULT_STAT + 1];
+        std::printf("error: %s\n", code < sizeof(names) / sizeof(names[0]) ? names[code] : "E_?");
+        return 1;
+    }
+    if (status != 0x01) { std::printf("error: status $%02X\n", status); return 1; }
+
+    switch (ram[RESULT]) {
+        case TAG_INT: {
+            uint64_t u = 0;
+            for (int i = 0; i < 8; ++i) u |= static_cast<uint64_t>(ram[RESULT + 1 + i]) << (8 * i);
+            std::printf("result: %lld\n", static_cast<long long>(static_cast<int64_t>(u)));
+            break;
+        }
+        case TAG_BOOL: std::printf("result: %s\n", ram[RESULT + 1] ? "true" : "false"); break;
+        case TAG_NULL: std::printf("result: null\n"); break;
+        default: std::printf("error: unknown result tag $%02X\n", ram[RESULT]); return 1;
+    }
+    return 0;
+}
+
 // --- Benchmark mode for the D5 verb-economics gate ---
 //
 //   a2min --bench-mul64 <bin> <a> <b>
@@ -793,6 +852,9 @@ int main(int argc, char **argv) {
 
     if (argc >= 3 && std::string(argv[1]) == "--bench-nursery")
         return bench_nursery(argv[2]);
+
+    if (argc >= 4 && std::string(argv[1]) == "--run-nbc")
+        return run_nbc(argv[2], argv[3]);
 
     if (argc >= 5 && (std::string(argv[1]) == "--bench-mul64" || std::string(argv[1]) == "--bench-mul64-native"))
         return bench_mul64(argv[2],

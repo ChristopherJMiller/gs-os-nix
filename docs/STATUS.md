@@ -8,7 +8,7 @@
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
 | **L2** | Card in a machine: register map, verilate, a2bus device, patched mame | **done — M2 achieved** (gated by the ROM-free harness; MAME glue written, needs a romset) |
 | **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, collector, CPU nursery | **done** — card side (memory engine, `DATA`/`TAG`, `ALLOC`/`RESERVE`, `FOLLOW`, `HASH_STREAM`, `LOOKUP`, `ALU64`, `MARK`/`COMPACT`) and the CPU-side nursery (`target/heap/nursery.s`: bump alloc, Cheney in RAM, one-burst promotion). D6 measured: `just bench-nursery` |
-| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress** — prerequisite done: `sim/a2min.cpp` models 65816 **native mode** (`checks.a2min-native`: 39-case self-test with the oracle in the harness; `checks.mutation-a2min`: 18 interpreter breaks, all caught). ALU64 gate re-measured in native mode: 5693 CPU cycles vs 32 bus accesses (the "roughly halves" guess was wrong; it is 1.7x). VM itself not started |
+| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — slice 1 done, scoreboard live.** `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **17 / 376 pass** (7 tvix + 10 local fixtures), 0 fail, 336 unsupported by the generator, 23 notyetpassing. `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
 | **L6** | `NARHASH`, ATerm, `derivation` primop, string context | not started |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | not started |
@@ -32,30 +32,30 @@
 M1/M2/M4 are byte-parity assertions against upstream Nix. They are what separate an
 implementation from a tribute.
 
-## Next actions (L2)
+## Next actions (L4)
 
-1. ~~Input FIFO~~ **done.** 32 entries, READY = "≥16 slots free". Streaming is now
-   **1.07 accesses/byte** (~285× over software SHA-256) against 2.00 with per-byte
-   polling. The ~100–300× claim holds. Fixed per-call overhead (~72 accesses, mostly
-   `PPORT` readout) is now the larger cost — attack that only if it becomes hot.
-2. ~~`mame/a2nix.cpp`~~ **written.** Shim over the Verilated model; contains no card
-   behaviour. Advances the model by *elapsed emulated time* at 50 MHz rather than a
-   fixed count per access, so the card progresses while the CPU works elsewhere.
-   Honours `side_effects_disabled()` so the debugger does not advance
-   auto-incrementing ports just by looking at them.
-3. ~~Patch MAME~~ **done and verified.** `nix/pkgs/mame-a2nix.nix` makes three
-   anchored edits (`bus.lua` file list, `cards.cpp` include, `option_add` inside
-   `apple2gs_cards()`) and *verifies each one*, so a MAME version bump fails at a
-   named anchor rather than silently producing a MAME without the card. The RTL is
-   linked as a static library via `ARCHOPTS`/`LDOPTS` (`nix/pkgs/verilated-card.nix`).
-4. ~~65816 test program~~ **written and assembling** (407 bytes).
-   `target/tests/storepath_demo.s` scans slots for ID `$A2`, runs the CARD-ISA.md
-   burst sequence, and prints the 32-character path. `checks.target-asm` keeps its
-   hardcoded fingerprint in sync with the golden vectors.
-5. **Remaining for M2:** finish the MAME build, confirm `-listslots apple2gs` lists
-   `a2nix`, then run the demo binary against it. Needs a user-supplied `apple2gs`
-   ROM. Loading via the MAME debugger is the quickest route; a ProDOS disk image
-   (AppleCommander/cadius, still unpackaged) is the tidier one.
+The scoreboard reads **17 / 376**, and 336 of the rest are `unsupported` — refused
+by the slice-1 generator, not failed by the VM. So the number rises by widening the
+generator and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
+
+1. **Slice 2: strings, lists, attribute sets.** `STRING` constants (with the
+   context pointer from day one), `LIST`/`ATTRS` construction, `++`, `//`, `.`
+   selection through the card's `LOOKUP`, `?`, string interpolation. This is where
+   the CAM earns its 1400 LUT4 on real code — measure it.
+2. **Slice 3: lambdas and application**, `with`, `rec`, inline caches at selection
+   sites. Most of the corpus needs functions; expect the biggest jump here.
+3. **Slice 4: builtins and `import`**, paths, and the nursery collector running
+   *during* evaluation (slice 1 aborts with `E_NOMEM` when 16 KB fills — loud, but
+   a limit). Then promotion of survivors to the card, closing the loop with L3.
+4. **The parser decision.** The generator's hand-written subset parser is enough
+   through slice 2. Beyond that, either grow it or switch to `rnix` — a real
+   dependency, which D16 and D7 both have opinions about. **Decide with Chris
+   before starting slice 3.**
+5. **`eval-fail` corpus.** Vendor it once the VM's error reporting is worth scoring;
+   `E_INFREC` already matches Nix for `let x = x; in x`.
+6. **Verb economics on real programs.** `a2min --run-nbc` prints cycles and slot
+   accesses per fixture; once slice 2 lands, turn that into `checks.verb-economics`
+   with the corpus as the workload instead of micro-benchmarks.
 
 ## Resuming
 
@@ -80,8 +80,16 @@ implementation from a tribute.
 
 - **`checks.verb-economics`** — every verb's measured MAME cycle cost vs. its 65816
   equivalent. A verb that doesn't pay for its bus crossing gets deleted.
-- **`checks.fixture-purity`** — no `.nbc` fixture contains a store path or hash; no
-  fixture generator links a crypto library.
+- **`checks.scoreboard`** — the headline metric. Every vendored tvix test is
+  compiled by `tools/nbc` and run on the VM under `a2min`; `tests/corpus/
+  expected-pass.txt` is a ratchet, so the count can only go up, and the check
+  proves the ratchet can fail by planting a regression.
+- **`checks.fixture-purity`** — D7 made mechanical: the generator has no hashing,
+  crypto or store-path code (its manifest and source are grepped, comments
+  stripped), and no compiled `.nbc` carries a store path or digest that is not a
+  literal in its `.nix` source. Self-tests by planting each violation first.
+- **`checks.nbc-opcodes`** — BYTECODE.md, `opcodes.rs` and `opcodes.inc` are one
+  table; self-tests by changing one VM opcode in a copy.
 - **Every stretch idea sits behind a measurement gate.** Parallel mark engines,
   `NEXTOP` dispatch assist, and stack ports are all unproven. Enthusiasm is not
   evidence.

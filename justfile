@@ -186,6 +186,56 @@ bench-mul64-native a="123456789" b="987654321": build-a2min (asm-test "mul64_nat
 bench-nursery: build-a2min (asm-test "nursery_bench")
     ./sim/build_a2min/a2min --bench-nursery target/build/nursery_bench.bin
 
+# --- L4: bytecode VM ---------------------------------------------------------
+
+NBC := "tools/nbc/target/release/nbc"
+
+# Build the test-only .nbc fixture generator (Rust, no dependencies; D7/D16).
+nbc-build:
+    cd tools/nbc && cargo build --release --quiet
+
+# Run the generator's unit tests: precedence, thunk placement, container round-trip.
+nbc-test:
+    cd tools/nbc && cargo test --quiet
+
+# Compile one .nix file to target/build/<name>.nbc and disassemble it.
+nbc file: nbc-build
+    mkdir -p target/build
+    {{NBC}} {{file}} -o target/build/$(basename {{file}} .nix).nbc
+    {{NBC}} --dump target/build/$(basename {{file}} .nix).nbc
+
+# Assemble the 65816 VM (target/vm/vm.s) to target/build/vm.bin.
+asm-vm:
+    mkdir -p target/build
+    ca65 --cpu 65816 -I target/vm -o target/build/vm.o -l target/build/vm.lst target/vm/vm.s
+    ld65 -C target/tests/apple2.cfg -o target/build/vm.bin -m target/build/vm.map target/build/vm.o
+    @ls -l target/build/vm.bin
+
+# Compile one .nix file and run it on the VM under a2min.
+run-nbc file: build-a2min asm-vm nbc-build
+    mkdir -p target/build
+    {{NBC}} {{file}} -o target/build/$(basename {{file}} .nix).nbc
+    ./sim/build_a2min/a2min --run-nbc target/build/vm.bin target/build/$(basename {{file}} .nix).nbc
+
+# THE HEADLINE METRIC: run the vendored tvix corpus on the VM and count.
+scoreboard *flags: build-a2min asm-vm nbc-build
+    python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
+        --vm target/build/vm.bin --corpus tests/corpus/tvix --corpus tests/fixtures \
+        --build target/build/nbc --expected tests/corpus/expected-pass.txt {{flags}}
+    ./scripts/fixture-purity.sh target/build/nbc
+
+# Claim newly passing tests in tests/corpus/expected-pass.txt (the ratchet).
+scoreboard-update: (scoreboard "--update")
+
+# D7: the generator has no hashing code and no fixture smuggles a store path.
+purity:
+    ./scripts/fixture-purity.sh --selftest
+    ./scripts/fixture-purity.sh tests/fixtures target/build/nbc
+
+# The opcode table must be one table across BYTECODE.md, opcodes.rs, opcodes.inc.
+opcodes:
+    python3 scripts/check-opcodes.py
+
 # M2 again, but on real MAME for higher fidelity (real slot timing, real IIgs).
 # Needs a complete apple2gs romset: ROMPATH=~/mame/roms just m2-mame
 m2-mame: asm-headless

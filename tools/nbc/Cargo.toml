@@ -1,0 +1,15 @@
+[package]
+name = "nbc"
+version = "0.1.0"
+edition = "2021"
+description = "Test-only .nbc fixture generator for the gs-os-nix 65816 VM (DECISIONS.md D7)"
+license = "MIT"
+
+# No dependencies, on purpose. checks.fixture-purity greps this section: a crypto
+# or hashing crate here would mean the generator can manufacture store paths, which
+# is exactly what a test fixture must never be able to do.
+[dependencies]
+
+[[bin]]
+name = "nbc"
+path = "src/main.rs"

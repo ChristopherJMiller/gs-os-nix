@@ -13,3 +13,4 @@ target/build/
 *.vcd
 sim/build_*/
 target/build/
+tools/nbc/target/

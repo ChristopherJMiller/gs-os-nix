@@ -279,3 +279,53 @@ tolerate).
 The one place a copying collector can go silently wrong is tracing a non-pointer as a
 pointer. `ATTRS` stores 32-bit hashes that look exactly like addresses, so the scanner
 skips that column by construction, and there is a mutation to prove the test notices.
+
+---
+
+## D16 — C++ at the Verilator boundary, Rust for host tools that never touch it
+
+**Decision:** anything that instantiates the Verilated card (`sim/*.cpp`,
+`mame/a2nix.cpp`) stays C++. Host-side tools that never touch the model — the
+test-only fixture generator `tools/nbc`, and whatever follows it — are Rust.
+Glue that merely invokes binaries (`scripts/*.py`, `scripts/*.sh`) stays scripts.
+
+**Why:** Verilator emits a C++ class, and every harness is a thin driver over that
+class's ports. Wrapping it for Rust would add a binding layer with no consumer
+benefit, and the harnesses' value is precisely that they contain nothing but the
+port contract. The generator, by contrast, is a compiler front-end whose next
+step is a full Nix parser, and the best one available (`rnix`) is a Rust crate;
+starting the subset generator in Rust means swapping the parser later without
+rewriting the compiler behind it. Asked whether to rewrite `a2min` in Rust while
+adding native mode, the answer was no for this reason.
+
+`tools/nbc` has **no dependencies**, on purpose: `checks.fixture-purity` greps its
+manifest for hashing and crypto crates (D7), and a trivial lockfile keeps the nix
+package (`nix/pkgs/nbc.nix`) trivial too. That constraint is revisited when the full
+parser arrives — and *that* choice (rnix versus growing the subset) is deliberately
+left open, to be made with Chris when the subset runs out of corpus.
+
+---
+
+## D17 — Environments are heap objects; thunks capture one pointer
+
+**Decision:** the VM's `let` scopes are ordinary `LIST` objects on the heap
+(element 0 = parent, elements 1..n = bindings), variables are resolved at compile
+time to `(depth, index)` in that chain, and a thunk captures exactly one pointer —
+the current environment. tvix, whose design the VM otherwise follows, resolves
+locals to stack slots and copies captured values into each closure and thunk.
+
+**Why:** thunk creation is the hottest allocation in lazy evaluation, and the 65816
+has three registers and no block-copy that helps here. Copying `k` upvalues costs
+`O(k)` per thunk; capturing the environment costs one 32-bit store. It also makes
+recursive `let` free: every thunk sees the *slot*, so forward and self references
+need no fix-up pass (tvix's `OpFinalise`), and `let x = x; in x` blackholes and
+reports infinite recursion exactly as Nix does. Because environments are ordinary
+`LIST`s, both collectors trace and promote them with no special case.
+
+**Cost accepted:** a variable read is a pointer walk of `depth` steps instead of a
+stack index. `depth` is the lexical nesting of `let`s, which is small in real Nix,
+and every step is in fast RAM (D6) — the nursery is exactly where these live.
+Inline caches at bytecode sites (ARCHITECTURE.md) remain the plan for the lookups
+that actually hurt, which are attribute selections, not `let` variables.
+
+Full detail, including the thunk-placement table, is in [BYTECODE.md](BYTECODE.md).

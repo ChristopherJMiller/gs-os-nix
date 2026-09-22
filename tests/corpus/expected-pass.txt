@@ -1,0 +1,19 @@
+# Tests the 65816 VM passes. scripts/scoreboard.py --update maintains it;
+# checks.scoreboard fails if any of these stops passing.
+fixtures/eval-okay-bool-ops
+fixtures/eval-okay-carry-chain
+fixtures/eval-okay-div-truncates
+fixtures/eval-okay-int-min-wrap
+fixtures/eval-okay-int-min-wraps-down
+fixtures/eval-okay-let-forward
+fixtures/eval-okay-nested-let-shadow
+fixtures/eval-okay-shadow-global
+fixtures/eval-okay-signed-compare
+fixtures/eval-okay-thunk-chain
+tvix/tvix_tests/eval-okay-eq-int
+tvix/tvix_tests/eval-okay-late-binding
+tvix/tvix_tests/eval-okay-let-sibling-access
+tvix/tvix_tests/eval-okay-ne-int
+tvix/tvix_tests/eval-okay-nested-let
+tvix/tvix_tests/eval-okay-nested-thunks
+tvix/tvix_tests/eval-okay-simple-let
