@@ -172,6 +172,46 @@
             grep -q "BENCH OK" "$out"
           '';
 
+        # The 65816 model the L4 VM runs on. native_test.s exercises every native-mode
+        # addressing mode and mode switch; the expected values live in the harness,
+        # worked out from the data sheet, so the test and the interpreter cannot share
+        # a mistake. Then both mul64 benchmarks, whose cycle counts are the D5 gate for
+        # ALU64 (CARD-ISA.md quotes them; keep it in sync).
+        a2min-native = pkgs.runCommandCC "check-a2min-native"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 pkgs.cc65 ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/target .
+            chmod -R +w .
+            mkdir -p target/build
+            for t in native_test mul64_native mul64_bench; do
+              ca65 --cpu 65816 -o target/build/$t.o target/tests/$t.s
+              ld65 -C target/tests/apple2.cfg -o target/build/$t.bin target/build/$t.o
+            done
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            ./build/a2min --selftest target/build/native_test.bin \
+              | tee "$out" | grep -q "SELFTEST OK"
+            ./build/a2min --bench-mul64-native target/build/mul64_native.bin \
+              123456789 987654321 | tee -a "$out" | grep -q "BENCH OK"
+            ./build/a2min --bench-mul64 target/build/mul64_bench.bin \
+              123456789 987654321 | tee -a "$out" | grep -q "BENCH OK"
+          '';
+
+        # And prove that self-test can fail: break the interpreter one feature at a
+        # time and expect every break to be caught. Same rationale as `mutation`.
+        mutation-a2min = pkgs.runCommandCC "check-mutation-a2min"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 pkgs.cc65 ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/target ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            ./scripts/mutation-a2min.sh | tee "$out"
+            grep -q "MUTATION PASS" "$out"
+          '';
+
         # Regressions for the silent-corruption bug class. Every bug found in this
         # card produced a plausible-looking wrong answer rather than a failure, so
         # each one gets a permanent named test (sim/regress_main.cpp).

@@ -8,14 +8,14 @@ Three routes, for three different jobs. All need `nix develop`.
 | 1. MAME debugger | `just m2-mame` | yes | Higher-fidelity confirmation |
 | 2. ProDOS disk | `just disk` | yes | Interactive, and the route for L4+ |
 
-## Route 0 — minimal 65C02 harness (the gating check)
+## Route 0 — minimal 65816 harness (the gating check)
 
 ```sh
 just m2
 ```
 
-`sim/a2min.cpp` is 64K of RAM, a slot decoder, and a 65C02-subset interpreter wired
-directly to the Verilated card. It executes the **same binary** against the **same
+`sim/a2min.cpp` is 1 MB of RAM, a slot decoder, and a 65816 interpreter (emulation
+and native mode) wired directly to the Verilated card. It executes the **same binary** against the **same
 RTL** as the other routes, with no ROM and no copyrighted material — so it runs in
 `nix flake check` on any machine.
 
@@ -25,8 +25,16 @@ touches. See [DECISIONS.md](DECISIONS.md) D13.
 
 It models the clocks that matter: 50 MHz card against a 2.8 MHz CPU, with `$Cxxx`
 accesses stretched to 1.024 MHz. It is **not** an Apple IIgs — no video, no ROM, no
-soft switches, emulation mode only — and unknown opcodes abort rather than being
-skipped, because a skipped instruction would yield a wrong-but-plausible digest.
+soft switches, no interrupts — and unknown opcodes abort rather than being skipped,
+because a skipped instruction would yield a wrong-but-plausible digest.
+
+The 65816 model is itself under test, since the L4 VM runs on it:
+
+```sh
+just selftest          # 39 native-mode cases; expected values live in the harness
+just mutation-a2min    # break the interpreter 18 ways, expect 18 catches
+just bench-mul64-native # the ALU64 gate, measured in the mode the VM uses
+```
 
 ## What we are *not* doing
 

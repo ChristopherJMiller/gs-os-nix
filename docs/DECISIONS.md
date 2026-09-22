@@ -158,7 +158,7 @@ explicit tag bits, where masking is free.
 
 ---
 
-## D13 — M2 is gated by a minimal 65C02 harness, not by MAME
+## D13 — M2 is gated by a minimal 65816 harness, not by MAME
 
 **MAME cannot be the gating check**, because `apple2gs` refuses to start without all
 four of its ROMs — and one of them, `344s0047.bin`, is only the **character-generator
@@ -172,7 +172,7 @@ Note also that archived MAME romsets stop at 0.278, which still carries the supe
 (CRC `2d541944`), so even a complete 0.278 set does not satisfy 0.289.
 
 **So `sim/a2min.cpp` supplies the smallest thing that can execute the real binary:**
-64K of RAM, a slot decoder, and a 65C02-subset interpreter. It runs the *same* `.bin`
+1 MB of RAM, a slot decoder, and a 65816 interpreter. It runs the *same* `.bin`
 and the *same* RTL, with no ROM and no copyrighted material.
 
 What it is and is not:
@@ -180,10 +180,17 @@ What it is and is not:
 - It **is** a test harness: real machine code, real bus cycles, real RTL, modelling
   the 50 MHz card clock against the 2.8 MHz CPU and the 1.024 MHz `$Cxxx` stretch.
 - It is **not** an Apple IIgs and does not pretend to be — no video, no ROM, no soft
-  switches, emulation mode only.
+  switches, no interrupts. It began as an emulation-mode-only 65C02 subset; native
+  mode (16-bit registers, `D`/`DBR`/`PBR`, the long addressing modes, `JSL`/`RTL`,
+  block moves) was added before L4 because the VM needs it. Its self-test
+  (`checks.a2min-native`, 39 cases) keeps the expected values in the harness, worked
+  out from the data sheet, rather than in the assembly — so the test and the
+  interpreter cannot share a mistake — and `checks.mutation-a2min` breaks the
+  interpreter 18 ways to prove the self-test notices.
 - Unknown opcodes **abort**. A silently-skipped instruction would produce a
   wrong-but-plausible digest, which is the failure mode this project guards hardest
-  against. Decimal-mode ADC/SBC and a native-mode `XCE` abort for the same reason.
+  against. Decimal-mode ADC/SBC and the interrupt instructions (`BRK`, `COP`, `RTI`,
+  `WAI`) abort for the same reason.
 
 MAME stays as the **higher-fidelity confirmation** (`just m2-mame`) for anyone with a
 complete romset: real slot timing, real GS/OS, the genuine FPI clock stretch. The work

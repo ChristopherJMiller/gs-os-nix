@@ -283,18 +283,26 @@ unit is 1462, and its 64 cycles are about one bus access of latency — which th
 polling `DONE`, cannot see. `INT64_MIN / -1`, which C leaves undefined, wraps to
 `INT64_MIN`.
 
-> ### Measured: a card multiply is ~31x cheaper than the 65816's own
+> ### Measured: a card multiply is ~18x cheaper than the 65816's own
 >
 > | | cost | ≈ fast cycles |
 > |---|---:|---:|
-> | 65816 shift-add multiply, 8-bit emulation mode (`just bench-mul64`) | 9819 CPU cycles | 9819 |
+> | 65816 shift-add multiply, **16-bit native mode** (`just bench-mul64-native`) | **5693 CPU cycles** | 5693 |
+> | 65816 shift-add multiply, 8-bit emulation mode (`just bench-mul64`) | 9675 CPU cycles | 9675 |
 > | `ALU64 MUL`, end to end: operands in, verb, poll, result out | **32 bus accesses** | ~320 |
 >
-> The CPU figure is an **upper bound**: `a2min` models emulation mode only, and a
-> native-mode 16-bit routine would run in roughly half the cycles. Even so the card
-> wins ~15x, so the conclusion does not depend on the mode. Two thirds of the card's
-> 32 accesses are moving the 16 operand bytes in and 8 result bytes out through
-> `PPORT`; the arithmetic itself is invisible.
+> Operands `123456789 × 987654321`; the all-ones worst case is 8560 cycles in native
+> mode. The gate is judged against the **native** figure, since the L4 VM runs in
+> native mode: the card wins ~18x, and ~27x at the worst case.
+>
+> **A prediction corrected by measurement.** The first version of this table had
+> only the 8-bit number and guessed native mode would "roughly halve" it. It does
+> not. Sixteen-bit registers turn each 64-bit operation into four word ops instead
+> of eight byte ops, but every word op costs one more cycle for the extra byte it
+> moves, so the saving is **41% (1.70x)**, not 50%. Both benchmarks live in
+> `checks.a2min-native` so the numbers here can be regenerated rather than trusted.
+> Two thirds of the card's 32 accesses are moving the 16 operand bytes in and 8
+> result bytes out through `PPORT`; the arithmetic itself is invisible.
 >
 > Writing that benchmark surfaced two 6502 traps worth remembering, both of which
 > `a2min` emulated faithfully: **`CPX` clobbers the carry** a multi-byte `ADC` chain

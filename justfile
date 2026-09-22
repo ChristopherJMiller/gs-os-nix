@@ -96,8 +96,8 @@ regress:
 mutation:
     ./scripts/mutation-test.sh
 
-# Everything: L1, L2, regressions, M2.
-test-all: test test-card regress m2
+# Everything: L1, L2, regressions, M2, the 65816 model.
+test-all: test test-card regress m2 selftest bench-mul64-native
 
 # Regenerate golden vectors from the REAL nix on this host.
 # Aborts if the reference model disagrees with nix, so parity can't silently rot.
@@ -139,43 +139,51 @@ disk: asm
 
 # --- M2 ----------------------------------------------------------------------
 
-# Milestone M2, the ROM-free way: run the real binary on a minimal 65C02 machine
+# Every ROM-free run below goes through this binary.
+# Build the minimal 65816 harness (sim/a2min.cpp) against the Verilated card.
+build-a2min:
+    verilator --cc --exe --build -j 0 \
+        -Irtl --top-module a2nix_card \
+        -Wall -Wno-DECLFILENAME \
+        --Mdir sim/build_a2min -o a2min \
+        rtl/a2nix_card.v sim/a2min.cpp
+
+# Assemble target/tests/<name>.s to a raw $2000 binary in target/build/.
+asm-test name:
+    mkdir -p target/build
+    ca65 --cpu 65816 -o target/build/{{name}}.o -l target/build/{{name}}.lst \
+        target/tests/{{name}}.s
+    ld65 -C target/tests/apple2.cfg -o target/build/{{name}}.bin \
+        target/build/{{name}}.o
+
+# Milestone M2, the ROM-free way: run the real binary on the minimal 65816 machine
 # wired to the real RTL, and compare against the golden vector. No ROMs needed,
 # so this is the gating check.
-m2: asm-headless
-    verilator --cc --exe --build -j 0 \
-        -Irtl --top-module a2nix_card \
-        -Wall -Wno-DECLFILENAME \
-        --Mdir sim/build_a2min -o a2min \
-        rtl/a2nix_card.v sim/a2min.cpp
+m2: asm-headless build-a2min
     ./sim/build_a2min/a2min target/build/storepath_demo_headless.bin {{VECTORS}} 4
 
-# The D5 gate for ALU64: how many cycles does the 65816 spend on a 64x64 multiply
-# by itself? Assembles target/tests/mul64_bench.s and runs it on a2min.
-bench-mul64 a="123456789" b="987654321":
-    mkdir -p target/build
-    ca65 --cpu 65816 -o target/build/mul64_bench.o target/tests/mul64_bench.s
-    ld65 -C target/tests/apple2.cfg -o target/build/mul64_bench.bin \
-        target/build/mul64_bench.o
-    verilator --cc --exe --build -j 0 \
-        -Irtl --top-module a2nix_card \
-        -Wall -Wno-DECLFILENAME \
-        --Mdir sim/build_a2min -o a2min \
-        rtl/a2nix_card.v sim/a2min.cpp
+# The expected values live in the harness, not in the assembly (see native_test.s).
+# Self-test a2min's 65816 native-mode model: every addressing mode and mode switch.
+selftest: build-a2min (asm-test "native_test")
+    ./sim/build_a2min/a2min --selftest target/build/native_test.bin
+
+# Prove the self-test can fail: break the interpreter 18 ways, expect 18 catches.
+mutation-a2min: (asm-test "native_test")
+    ./scripts/mutation-a2min.sh
+
+# How many cycles does the 65816 spend on a 64x64 multiply by itself?
+# The D5 gate for ALU64, 8-bit emulation mode (target/tests/mul64_bench.s).
+bench-mul64 a="123456789" b="987654321": build-a2min (asm-test "mul64_bench")
     ./sim/build_a2min/a2min --bench-mul64 target/build/mul64_bench.bin {{a}} {{b}}
 
-# The D6 measurement: run the nursery (target/heap/nursery.s) on a2min and report
-# what fraction of allocated bytes crossed the bus.
-bench-nursery:
-    mkdir -p target/build
-    ca65 --cpu 65816 -o target/build/nursery_bench.o target/tests/nursery_bench.s
-    ld65 -C target/tests/apple2.cfg -o target/build/nursery_bench.bin \
-        target/build/nursery_bench.o
-    verilator --cc --exe --build -j 0 \
-        -Irtl --top-module a2nix_card \
-        -Wall -Wno-DECLFILENAME \
-        --Mdir sim/build_a2min -o a2min \
-        rtl/a2nix_card.v sim/a2min.cpp
+# This is the number the gate is judged against, since the VM runs in native mode.
+# The D5 gate for ALU64, 16-bit native mode (target/tests/mul64_native.s).
+bench-mul64-native a="123456789" b="987654321": build-a2min (asm-test "mul64_native")
+    ./sim/build_a2min/a2min --bench-mul64-native target/build/mul64_native.bin {{a}} {{b}}
+
+# Runs the nursery (target/heap/nursery.s) on a2min.
+# The D6 measurement: what fraction of allocated bytes crossed the bus?
+bench-nursery: build-a2min (asm-test "nursery_bench")
     ./sim/build_a2min/a2min --bench-nursery target/build/nursery_bench.bin
 
 # M2 again, but on real MAME for higher fidelity (real slot timing, real IIgs).

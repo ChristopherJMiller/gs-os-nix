@@ -6,9 +6,10 @@
 ; iterations, each a conditional 64-bit add plus a 64-bit shift of both operands.
 ;
 ; Emulation mode, 8-bit accumulator, so every 64-bit operation is eight byte ops.
-; A native-mode 16-bit version would be roughly half the cycles; a2min models
-; emulation mode only, so treat this as an UPPER bound on the CPU's cost and halve
-; it mentally for the native-mode VM. The conclusion does not flip either way.
+; mul64_native.s is the same algorithm with 16-bit registers. This file once
+; predicted native mode would "roughly halve" the cycles; the measurement says
+; 1.7x (9675 -> 5693), because every 16-bit memory operand costs a cycle more.
+; Both numbers are in CARD-ISA.md; the D5 gate is judged against the native one.
 ;
 ; The harness pokes the operands into MUL_A / MUL_B before entry and reads the
 ; product from RESULT afterwards, so nothing here is hardcoded and the expected

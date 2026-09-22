@@ -8,7 +8,7 @@
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
 | **L2** | Card in a machine: register map, verilate, a2bus device, patched mame | **done — M2 achieved** (gated by the ROM-free harness; MAME glue written, needs a romset) |
 | **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, collector, CPU nursery | **done** — card side (memory engine, `DATA`/`TAG`, `ALLOC`/`RESERVE`, `FOLLOW`, `HASH_STREAM`, `LOOKUP`, `ALU64`, `MARK`/`COMPACT`) and the CPU-side nursery (`target/heap/nursery.s`: bump alloc, Cheney in RAM, one-burst promotion). D6 measured: `just bench-nursery` |
-| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | not started |
+| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress** — prerequisite done: `sim/a2min.cpp` models 65816 **native mode** (`checks.a2min-native`: 39-case self-test with the oracle in the harness; `checks.mutation-a2min`: 18 interpreter breaks, all caught). ALU64 gate re-measured in native mode: 5693 CPU cycles vs 32 bus accesses (the "roughly halves" guess was wrong; it is 1.7x). VM itself not started |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
 | **L6** | `NARHASH`, ATerm, `derivation` primop, string context | not started |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | not started |
@@ -73,6 +73,10 @@ implementation from a tribute.
   permanent named test, *and* the mutation runner reintroduces each bug to prove the
   test can fail. See DECISIONS.md **D14**: R4's first two mutations both survived, so
   this is not a formality.
+- **`checks.a2min-native` + `checks.mutation-a2min`** — the 65816 model the VM runs
+  on is tested against data-sheet-derived expectations, and that self-test is proven
+  to fail when the interpreter is broken. A wrong CPU model would make every VM
+  result suspect, so this sits on the same footing as the RTL regressions.
 
 - **`checks.verb-economics`** — every verb's measured MAME cycle cost vs. its 65816
   equivalent. A verb that doesn't pay for its bus crossing gets deleted.

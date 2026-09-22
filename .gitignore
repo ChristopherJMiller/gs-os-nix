@@ -11,3 +11,5 @@ sim/build_mutation/
 sim/build_regress/
 target/build/
 *.vcd
+sim/build_*/
+target/build/
