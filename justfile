@@ -102,6 +102,31 @@ asm:
         -m target/build/storepath_demo.map target/build/storepath_demo.o
     @ls -l target/build/storepath_demo.bin
 
+# Assemble the printing-free variant used by the automated M2 check. It writes
+# its result to $0300 so the debugger can read it without scraping the screen.
+asm-headless:
+    mkdir -p target/build
+    ca65 --cpu 65816 -D NO_PRINT -o target/build/storepath_demo_headless.o \
+        target/tests/storepath_demo.s
+    ld65 -C target/tests/apple2.cfg -o target/build/storepath_demo_headless.bin \
+        -m target/build/storepath_demo_headless.map \
+        target/build/storepath_demo_headless.o
+    @ls -l target/build/storepath_demo_headless.bin
+
+# Both variants.
+asm-all: asm asm-headless
+
+# Build a ProDOS image carrying the demo, for interactive runs.
+disk: asm
+    ./scripts/mkdisk.sh
+
+# --- M2 ----------------------------------------------------------------------
+
+# Milestone M2: run the demo on an emulated IIgs and compare against the golden
+# vector. Needs an apple2gs ROM: ROMPATH=~/mame/roms just m2
+m2: asm-headless
+    ./scripts/run-m2.sh
+
 # Verify the demo's hardcoded fingerprint still matches the golden vectors.
 check-demo-vector:
     python3 scripts/check-demo-vector.py

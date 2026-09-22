@@ -40,6 +40,19 @@ ST_READY        = $10
 CARD_ID         = $A2
 FIFO_BURST      = 16            ; bytes licensed by one READY (CARD-ISA.md)
 
+; --- Result buffer ---
+; The 32 path characters are written here as plain ASCII, and a status byte is
+; set last. $0300..$03CF is free on the Apple II ($03D0+ holds monitor vectors).
+;
+; This exists so an automated run can read the answer out of memory instead of
+; scraping the text screen, which makes the M2 check deterministic and lets it
+; work with printing compiled out entirely (-D NO_PRINT).
+RESULT          = $0300         ; 32 bytes, plain ASCII
+RESULT_STAT     = $0320         ; $00 not run, $01 ok, $FF error
+
+STAT_OK         = $01
+STAT_ERR        = $FF
+
 ; ---------------------------------------------------------------------------
         .zeropage
 slot_x:         .res 1          ; slot * $10, the index into the register file
@@ -55,9 +68,14 @@ start:
         xce                     ; stay in 6502 emulation mode
         cld
 
+        lda     #0              ; clear first, so a stale value cannot be mistaken
+        sta     RESULT_STAT     ; for a successful run
+
         jsr     find_card
         bcs     have_card
 
+        lda     #STAT_ERR
+        sta     RESULT_STAT
         jsr     print_str
         .byte   "NO A2NIX CARD FOUND", $0D, $00
         rts
@@ -67,12 +85,14 @@ have_card:
         jsr     hash_fingerprint
         bcc     hashed
 
+        lda     #STAT_ERR
+        sta     RESULT_STAT
         jsr     print_str
         .byte   "CARD REPORTED AN ERROR", $0D, $00
         rts
 
 hashed:
-        jmp     print_path
+        jmp     capture_path
 
 ; ---------------------------------------------------------------------------
 ; find_card -- scan slots 7..1 for a card whose ID register reads $A2.
@@ -175,27 +195,45 @@ hash_fingerprint:
         rts
 
 ; ---------------------------------------------------------------------------
-; print_path -- read the 32-character store path from P3 and print it.
+; capture_path -- read the 32-character store path from P3, store it at RESULT,
+; and (unless NO_PRINT) print it.
+;
+; The buffer is written before the status byte, so an automated reader that sees
+; STAT_OK is guaranteed to be looking at a complete result.
 ; ---------------------------------------------------------------------------
-print_path:
+capture_path:
         ldx     slot_x
         lda     #3              ; P3 holds the nixbase32 path
         sta     REG_PSEL,x
 
         ldy     #0
 @loop:
-        ldx     slot_x          ; COUT does not preserve X
+        ldx     slot_x          ; COUT preserves neither X nor Y
         lda     REG_PPORT,x     ; auto-increments the slot's byte index
+        sta     RESULT,y        ; plain ASCII, for an automated reader
+.ifndef NO_PRINT
+        phy
         ora     #$80            ; the monitor wants high-bit ASCII
         jsr     COUT
+        ply
+.endif
         iny
         cpy     #32
         bne     @loop
 
+        lda     #STAT_OK        ; publish only once the buffer is complete
+        sta     RESULT_STAT
+.ifndef NO_PRINT
         jmp     CROUT
+.else
+        rts
+.endif
 
 ; ---------------------------------------------------------------------------
 say_found:
+.ifdef NO_PRINT
+        rts
+.else
         jsr     print_str
         .byte   "A2NIX CARD IN SLOT ", $00
         lda     slot_x
@@ -206,6 +244,7 @@ say_found:
         ora     #$B0            ; ASCII digit with the high bit set
         jsr     COUT
         jmp     CROUT
+.endif
 
 ; ---------------------------------------------------------------------------
 ; print_str -- print the inline $00-terminated string following the JSR, then
@@ -223,8 +262,12 @@ print_str:
 @loop:
         lda     (src_ptr),y
         beq     @done
+.ifndef NO_PRINT
+        phy                     ; COUT preserves neither X nor Y
         ora     #$80
         jsr     COUT
+        ply
+.endif
         iny
         bne     @loop
 @done:

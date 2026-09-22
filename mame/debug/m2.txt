@@ -1,0 +1,30 @@
+# MAME debugger script for milestone M2.
+#
+# Loads the headless demo straight into memory, runs it, and dumps the result
+# buffer. No OS, no disk image, no boot -- which is deliberate: M2 is a statement
+# about the CARD, and involving ProDOS would only add a dependency that can fail
+# for reasons unrelated to the thing under test.
+#
+# The demo writes its 32 ASCII characters to $0300 and a status byte to $0320
+# ($01 = ok), so this reads the answer out of memory rather than scraping the
+# text screen.
+#
+# Driven by scripts/run-m2.sh, which compares the dump against the golden vector.
+
+# Let the machine come up far enough that RAM and the slot are live.
+go 3000000
+
+# Load the raw binary at $2000 and enter it.
+load target/build/storepath_demo_headless.bin,0x2000
+pc = 0x2000
+
+# The whole job is ~110 bytes pushed plus two block compressions; a few hundred
+# thousand cycles is generous even with the 1.024 MHz slot throttle.
+go 2000000
+
+# Result: 32 characters at $0300, status at $0320.
+dump m2-result.txt,0x300,0x24,1
+
+printf "--- M2 status byte: %02X ---\n", b@0x320
+
+exit
