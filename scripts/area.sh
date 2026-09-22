@@ -9,10 +9,10 @@
 # ABC9 enabled, but the budget only needs to be right to ~10%.
 set -euo pipefail
 
-RTL="rtl/sha256_core.v rtl/sha256.v rtl/storepath.v"
+RTL="rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/a2nix_card.v"
 TOPS=("$@")
 if [ ${#TOPS[@]} -eq 0 ]; then
-    TOPS=(sha256_core sha256 storepath)
+    TOPS=(sha256_core sha256 storepath a2nix_card)
 fi
 
 # Pull the "including submodules" totals out of a yosys stat report.
@@ -22,15 +22,21 @@ count() {
         tail -1 | tr -s ' ' | cut -d' ' -f2
 }
 
-printf '%-16s %8s %8s %8s %8s\n' module LUT4 FF CCU2C PFUMX
-printf '%-16s %8s %8s %8s %8s\n' ---------------- -------- -------- -------- --------
+printf '%-16s %8s %8s %8s %8s %8s\n' module LUT4 FF CCU2C PFUMX DPR16X4
+printf '%-16s %8s %8s %8s %8s %8s\n' ---------------- -------- -------- -------- -------- --------
 
 for top in "${TOPS[@]}"; do
     log=$(yosys -p "read_verilog $RTL; synth_ecp5 -top $top -noabc9; stat" 2>&1 || true)
-    printf '%-16s %8s %8s %8s %8s\n' \
+    if [ -z "$(count "$log" LUT4)" ]; then
+        printf '%-16s %8s  (synthesis produced no stats -- check the module name)\n' \
+            "$top" "ERR"
+        continue
+    fi
+    printf '%-16s %8s %8s %8s %8s %8s\n' \
         "$top" \
         "$(count "$log" LUT4)" \
         "$(count "$log" TRELLIS_FF)" \
         "$(count "$log" CCU2C)" \
-        "$(count "$log" PFUMX)"
+        "$(count "$log" PFUMX)" \
+        "$(count "$log" TRELLIS_DPR16X4)"
 done

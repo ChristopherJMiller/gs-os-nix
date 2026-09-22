@@ -13,6 +13,7 @@
 #include "Va2nix_card.h"
 #include "verilated.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -39,6 +40,17 @@ enum : uint8_t {
     ST_BUSY = 0x80, ST_DONE = 0x40, ST_ERR = 0x20, ST_READY = 0x10,
 };
 
+// The card owns its own oscillator; the Apple II reaches it through a slot throttled
+// to 1.024 MHz. So the card advances many cycles per bus access, and modelling that
+// ratio is not a detail -- it decides how much of a compression stall the CPU ever
+// observes, and therefore what the polling actually costs.
+//
+//   50 MHz card / 1.024 MHz bus ~= 48 card cycles per $C0nX access.
+//
+// Ticking once per access (the first version of this harness) made the card look 48x
+// slower than reality and inflated every poll count accordingly.
+constexpr int CARD_CYCLES_PER_ACCESS = 48;
+
 Va2nix_card *dut = nullptr;
 uint64_t cycles = 0;
 uint64_t bus_accesses = 0;
@@ -51,6 +63,13 @@ void tick() {
     ++cycles;
 }
 
+// Let the card run out the rest of the bus period with both strobes deasserted.
+void bus_settle() {
+    dut->c0n_read  = 0;
+    dut->c0n_write = 0;
+    for (int i = 1; i < CARD_CYCLES_PER_ACCESS; ++i) tick();
+}
+
 // Mirrors MAME's read_c0nx(): sample combinationally, then clock to commit the
 // auto-increment side effect.
 uint8_t rd(uint8_t off) {
@@ -60,7 +79,7 @@ uint8_t rd(uint8_t off) {
     dut->eval();
     const uint8_t v = dut->c0n_rdata;
     tick();
-    dut->c0n_read = 0;
+    bus_settle();
     ++bus_accesses;
     return v;
 }
@@ -72,7 +91,7 @@ void wr(uint8_t off, uint8_t v) {
     dut->c0n_write = 1;
     dut->c0n_read  = 0;
     tick();
-    dut->c0n_write = 0;
+    bus_settle();
     ++bus_accesses;
 }
 
@@ -97,21 +116,40 @@ void read_pslot(int slot, uint8_t *out, int n) {
 // The documented CPU sequence, byte for byte. If this drifts from CARD-ISA.md, one of
 // the two is wrong. Returns both the raw digest (P0) and the encoded path (P3), so a
 // failure says which stage is broken.
+// Accounting for the verb-economics gate: separate the per-byte streaming cost from
+// the fixed per-call overhead, because they scale differently and only the first one
+// is what "accesses per byte" should mean.
+uint64_t acc_stream = 0, acc_fixed = 0, bytes_streamed = 0;
+
 bool hash_push(const std::vector<uint8_t> &msg,
-               std::string &digest_hex, std::string &path) {
+               std::string &digest_hex, std::string &path,
+               bool poll_per_byte = false) {
+    const uint64_t a0 = bus_accesses;
     wr(R_CMD, V_HASH_INIT);
     wr(R_CMD, V_HASH_PUSH);
+    acc_fixed += bus_accesses - a0;
 
-    for (const uint8_t b : msg) {
-        // Poll READY. Mandatory: the hasher stalls ~65 cycles per block and the bus
-        // has no back-pressure, so skipping this silently corrupts the digest.
+    // Two feeding strategies, measured against each other so the gate has real
+    // numbers rather than an estimate:
+    //   poll_per_byte - check READY before every byte (what the pre-FIFO card forced)
+    //   burst         - one READY poll licenses FIFO_BURST writes
+    constexpr size_t FIFO_BURST = 16;
+    const uint64_t s0 = bus_accesses;
+    size_t i = 0;
+    while (i < msg.size()) {
         int guard = 0;
         while (!(rd(R_CMD) & ST_READY)) {
             if (++guard > 100000) return false;
         }
-        wr(R_DATA, b);
+        const size_t burst =
+            std::min(poll_per_byte ? size_t{1} : FIFO_BURST, msg.size() - i);
+        for (size_t k = 0; k < burst; ++k) wr(R_DATA, msg[i + k]);
+        i += burst;
     }
+    acc_stream     += bus_accesses - s0;
+    bytes_streamed += msg.size();
 
+    const uint64_t f0 = bus_accesses;
     wr(R_CMD, V_HASH_FINAL);
 
     int guard = 0;
@@ -122,6 +160,7 @@ bool hash_push(const std::vector<uint8_t> &msg,
     uint8_t dig[32], pth[32];
     read_pslot(0, dig, 32);
     read_pslot(3, pth, 32);
+    acc_fixed += bus_accesses - f0;
 
     static const char *H = "0123456789abcdef";
     digest_hex.clear();
@@ -203,6 +242,34 @@ int main(int argc, char **argv) {
     expect((bad & ST_ERR) != 0, "unknown verb sets ERR");
     expect((bad & 0x0F) == 0x01, "unknown verb reports BADVERB ($01)");
 
+    // --- The FIFO must absorb an unpolled burst without error ---
+    // At the real clock ratio the card drains ~24 bytes per bus access, so a CPU
+    // writing back-to-back cannot outrun it and the FIFO never fills. That is the
+    // point of the FIFO, so the property to assert is the ABSENCE of overrun across
+    // a burst that crosses several block boundaries. (The E_OVERRUN guard stays in
+    // the RTL as defence in depth; it is unreachable at this ratio, and would only
+    // matter on a much slower card clock.)
+    wr(R_CMD, V_HASH_INIT);
+    wr(R_CMD, V_HASH_PUSH);
+    bool stayed_ready = true;
+    for (int i = 0; i < 200; ++i) {
+        wr(R_DATA, 0x41);
+        if (rd(R_CMD) & ST_ERR) { stayed_ready = false; break; }
+    }
+    expect(stayed_ready, "FIFO absorbs a 200-byte unpolled burst without OVERRUN");
+
+    // A fresh HASH_INIT must abandon that partial message completely. Without this,
+    // `init` was a no-op mid-message and the bytes above leaked into the next digest.
+    wr(R_CMD, V_HASH_INIT);
+    std::string d_empty, p_empty;
+    if (hash_push({}, d_empty, p_empty)) {
+        expect(d_empty == "e3b0c44298fc1c149afbf4c8996fb924"
+                          "27ae41e4649b934ca495991b7852b855",
+               "HASH_INIT abandons a partial message");
+    } else {
+        expect(false, "empty message after a partial one completes");
+    }
+
     // --- Store-path parity through the real verb sequence ---
     std::ifstream in(vec_path);
     if (!in) {
@@ -264,16 +331,49 @@ int main(int argc, char **argv) {
         }
     }
 
+    std::printf("\n%d SHA vectors + %d store-path vectors via the card ISA, %d failures\n",
+                n_sha, n_sp, fails);
+
+    // --- Verb economics (DECISIONS.md D5) ---
+    // NB: this drives the model, so it must run before final()/delete.
+    // Re-run the store-path vectors with per-byte polling to measure what the input
+    // FIFO actually buys, rather than asserting a number.
+    const uint64_t burst_stream = acc_stream, burst_bytes = bytes_streamed;
+    const uint64_t burst_fixed = acc_fixed;
+    const int      burst_calls = n_sha + n_sp + 1;
+    // Snapshot before the comparison pass so the end-to-end figure reflects the real
+    // (burst) strategy only.
+    const uint64_t sp_accesses = bus_accesses;
+
+    acc_stream = 0; bytes_streamed = 0;
+    in.clear();
+    in.seekg(0);
+    while (std::getline(in, line)) {
+        if (line.rfind("SP ", 0) != 0) continue;
+        std::istringstream ls2(line);
+        std::string k2, fp_hex, want, full;
+        ls2 >> k2 >> fp_hex >> want >> full;
+        std::string d, p;
+        hash_push(unhex(fp_hex), d, p, /*poll_per_byte=*/true);
+    }
+
+    std::printf("\n--- verb economics: HASH_PUSH (card %d cycles per bus access) ---\n",
+                CARD_CYCLES_PER_ACCESS);
+    std::printf("  streaming, 16-byte bursts : %.2f accesses/byte\n",
+                static_cast<double>(burst_stream) / static_cast<double>(burst_bytes));
+    std::printf("  streaming, poll per byte  : %.2f accesses/byte\n",
+                static_cast<double>(acc_stream) / static_cast<double>(bytes_streamed));
+    std::printf("  fixed overhead per call   : %.1f accesses"
+                " (verbs + reading P0 and P3)\n",
+                static_cast<double>(burst_fixed) / static_cast<double>(burst_calls));
+    if (total_bytes)
+        std::printf("  end-to-end per store path : %.2f accesses/byte\n",
+                    static_cast<double>(sp_accesses) / static_cast<double>(total_bytes));
+    std::printf("  card cycles simulated     : %llu\n",
+                static_cast<unsigned long long>(cycles));
+
     dut->final();
     delete dut;
-
-    std::printf("\n%d SHA vectors + %d store-path vectors via the card ISA, %d failures\n", n_sha, n_sp, fails);
-    std::printf("bus accesses: %llu total, %llu cycles\n",
-                static_cast<unsigned long long>(bus_accesses),
-                static_cast<unsigned long long>(cycles));
-    if (total_bytes)
-        std::printf("cost: %.1f bus accesses per fingerprint byte\n",
-                    static_cast<double>(bus_accesses) / static_cast<double>(total_bytes));
 
     if (fails == 0 && n_sp > 0)
         std::printf("L2 CARD PASS: register map and verb dispatch match CARD-ISA.md\n");

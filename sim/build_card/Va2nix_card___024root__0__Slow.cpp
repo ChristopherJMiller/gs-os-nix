@@ -229,6 +229,8 @@ VL_ATTR_COLD void Va2nix_card___024root___stl_sequent__TOP__0(Va2nix_card___024r
                                                   << 0x0000000aU) 
                                                  | (vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__a 
                                                     >> 0x00000016U)))));
+    vlSelfRef.a2nix_card__DOT__fifo_empty = ((IData)(vlSelfRef.a2nix_card__DOT__wptr) 
+                                             == (IData)(vlSelfRef.a2nix_card__DOT__rptr));
     vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__t1 
         = ((((vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__e 
               << 0x0000001aU) | (vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__e 
@@ -253,6 +255,43 @@ VL_ATTR_COLD void Va2nix_card___024root___stl_sequent__TOP__0(Va2nix_card___024r
                                                          == 
                                                          (3U 
                                                           & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))));
+    vlSelfRef.a2nix_card__DOT__fifo_count = (0x0000003fU 
+                                             & ((IData)(vlSelfRef.a2nix_card__DOT__wptr) 
+                                                - (IData)(vlSelfRef.a2nix_card__DOT__rptr)));
+    vlSelfRef.a2nix_card__DOT__h_digest[0U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h7;
+    vlSelfRef.a2nix_card__DOT__h_digest[1U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h6;
+    vlSelfRef.a2nix_card__DOT__h_digest[2U] = (IData)(
+                                                      (((QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h4)) 
+                                                        << 0x00000020U) 
+                                                       | (QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h5))));
+    vlSelfRef.a2nix_card__DOT__h_digest[3U] = (IData)(
+                                                      ((((QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h4)) 
+                                                         << 0x00000020U) 
+                                                        | (QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h5))) 
+                                                       >> 0x00000020U));
+    vlSelfRef.a2nix_card__DOT__h_digest[4U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h3;
+    vlSelfRef.a2nix_card__DOT__h_digest[5U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h2;
+    vlSelfRef.a2nix_card__DOT__h_digest[6U] = (IData)(
+                                                      (((QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h0)) 
+                                                        << 0x00000020U) 
+                                                       | (QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h1))));
+    vlSelfRef.a2nix_card__DOT__h_digest[7U] = (IData)(
+                                                      ((((QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h0)) 
+                                                         << 0x00000020U) 
+                                                        | (QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h1))) 
+                                                       >> 0x00000020U));
+    vlSelfRef.a2nix_card__DOT__fifo_drain = ((~ ((IData)(vlSelfRef.a2nix_card__DOT__h_valid) 
+                                                 | (IData)(vlSelfRef.a2nix_card__DOT__fifo_empty))) 
+                                             & (1U 
+                                                == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state)));
+    vlSelfRef.a2nix_card__DOT__u_hash__DOT__pb_v = 
+        (1U & ((4U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
+                ? ((2U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
+                    ? (~ (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
+                    : (~ ((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state) 
+                          & (0x38U == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx)))))
+                : ((IData)(vlSelfRef.a2nix_card__DOT__h_valid) 
+                   & (IData)(vlSelfRef.__VdfgRegularize_h6e95ff9d_0_13))));
     __VExpandSel_Lsb_1 = (0x000000ffU & (((IData)(0xffU) 
                                           - ((IData)(vlSelfRef.a2nix_card__DOT__pidx) 
                                              << 3U)) 
@@ -331,41 +370,13 @@ VL_ATTR_COLD void Va2nix_card___024root___stl_sequent__TOP__0(Va2nix_card___024r
                                                         << 6U)) 
                                                     | (((IData)(vlSelfRef.a2nix_card__DOT__err) 
                                                         << 5U) 
-                                                       | ((((~ (IData)(vlSelfRef.a2nix_card__DOT__h_valid)) 
-                                                            & (1U 
-                                                               == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) 
+                                                       | (((0x10U 
+                                                            <= 
+                                                            (0x0000003fU 
+                                                             & ((IData)(0x20U) 
+                                                                - (IData)(vlSelfRef.a2nix_card__DOT__fifo_count)))) 
                                                            << 4U) 
                                                           | (IData)(vlSelfRef.a2nix_card__DOT__errcode)))))))));
-    vlSelfRef.a2nix_card__DOT__h_digest[0U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h7;
-    vlSelfRef.a2nix_card__DOT__h_digest[1U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h6;
-    vlSelfRef.a2nix_card__DOT__h_digest[2U] = (IData)(
-                                                      (((QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h4)) 
-                                                        << 0x00000020U) 
-                                                       | (QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h5))));
-    vlSelfRef.a2nix_card__DOT__h_digest[3U] = (IData)(
-                                                      ((((QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h4)) 
-                                                         << 0x00000020U) 
-                                                        | (QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h5))) 
-                                                       >> 0x00000020U));
-    vlSelfRef.a2nix_card__DOT__h_digest[4U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h3;
-    vlSelfRef.a2nix_card__DOT__h_digest[5U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h2;
-    vlSelfRef.a2nix_card__DOT__h_digest[6U] = (IData)(
-                                                      (((QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h0)) 
-                                                        << 0x00000020U) 
-                                                       | (QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h1))));
-    vlSelfRef.a2nix_card__DOT__h_digest[7U] = (IData)(
-                                                      ((((QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h0)) 
-                                                         << 0x00000020U) 
-                                                        | (QData)((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h1))) 
-                                                       >> 0x00000020U));
-    vlSelfRef.a2nix_card__DOT__u_hash__DOT__pb_v = 
-        (1U & ((4U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
-                ? ((2U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
-                    ? (~ (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
-                    : (~ ((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state) 
-                          & (0x38U == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx)))))
-                : ((IData)(vlSelfRef.a2nix_card__DOT__h_valid) 
-                   & (IData)(vlSelfRef.__VdfgRegularize_h6e95ff9d_0_13))));
     if (vlSelfRef.a2nix_card__DOT__busy) {
         a2nix_card__DOT__sp_digest[0U] = vlSelfRef.a2nix_card__DOT__h_digest[0U];
         a2nix_card__DOT__sp_digest[1U] = vlSelfRef.a2nix_card__DOT__h_digest[1U];
@@ -1129,9 +1140,18 @@ VL_ATTR_COLD void Va2nix_card___024root___ctor_var_reset(Va2nix_card___024root* 
     vlSelf->a2nix_card__DOT__h_valid = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 2979734007334296888ull);
     vlSelf->a2nix_card__DOT__h_byte = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 16692655066606527497ull);
     vlSelf->a2nix_card__DOT__h_finish = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 17827477709398699914ull);
+    vlSelf->a2nix_card__DOT__finalizing = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 7425261342520987425ull);
     vlSelf->a2nix_card__DOT__h_done = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 2962285973427987331ull);
     VL_SCOPED_RAND_RESET_W(256, vlSelf->a2nix_card__DOT__h_digest, __VscopeHash, 16332362132850996325ull);
     VL_SCOPED_RAND_RESET_W(256, vlSelf->a2nix_card__DOT__sp_path, __VscopeHash, 11147478616068624782ull);
+    for (int __Vi0 = 0; __Vi0 < 32; ++__Vi0) {
+        vlSelf->a2nix_card__DOT__fifo[__Vi0] = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 17063701161590654469ull);
+    }
+    vlSelf->a2nix_card__DOT__wptr = VL_SCOPED_RAND_RESET_I(6, __VscopeHash, 15207120647794526021ull);
+    vlSelf->a2nix_card__DOT__rptr = VL_SCOPED_RAND_RESET_I(6, __VscopeHash, 9168778800436965457ull);
+    vlSelf->a2nix_card__DOT__fifo_count = VL_SCOPED_RAND_RESET_I(6, __VscopeHash, 6481871503660582012ull);
+    vlSelf->a2nix_card__DOT__fifo_empty = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 4215861405213650709ull);
+    vlSelf->a2nix_card__DOT__fifo_drain = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 5867610991756810794ull);
     vlSelf->a2nix_card__DOT__u_hash__DOT__state = VL_SCOPED_RAND_RESET_I(3, __VscopeHash, 1571757367621713113ull);
     vlSelf->a2nix_card__DOT__u_hash__DOT__ret = VL_SCOPED_RAND_RESET_I(3, __VscopeHash, 5749412545181126154ull);
     VL_SCOPED_RAND_RESET_W(512, vlSelf->a2nix_card__DOT__u_hash__DOT__blk, __VscopeHash, 8756158300460521328ull);

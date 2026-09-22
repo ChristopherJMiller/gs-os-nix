@@ -42,7 +42,13 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         CData/*0:0*/ a2nix_card__DOT__h_valid;
         CData/*7:0*/ a2nix_card__DOT__h_byte;
         CData/*0:0*/ a2nix_card__DOT__h_finish;
+        CData/*0:0*/ a2nix_card__DOT__finalizing;
         CData/*0:0*/ a2nix_card__DOT__h_done;
+        CData/*5:0*/ a2nix_card__DOT__wptr;
+        CData/*5:0*/ a2nix_card__DOT__rptr;
+        CData/*5:0*/ a2nix_card__DOT__fifo_count;
+        CData/*0:0*/ a2nix_card__DOT__fifo_empty;
+        CData/*0:0*/ a2nix_card__DOT__fifo_drain;
         CData/*2:0*/ a2nix_card__DOT__u_hash__DOT__state;
         CData/*2:0*/ a2nix_card__DOT__u_hash__DOT__ret;
         CData/*6:0*/ a2nix_card__DOT__u_hash__DOT__bidx;
@@ -74,14 +80,14 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__h3;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__h4;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__h5;
+    };
+    struct {
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__h6;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__h7;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__a;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__b;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__c;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__d;
-    };
-    struct {
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__e;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__f;
         IData/*31:0*/ a2nix_card__DOT__u_hash__DOT__u_core__DOT__g;
@@ -91,6 +97,7 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         QData/*63:0*/ a2nix_card__DOT__u_hash__DOT__total;
         VlUnpacked<IData/*31:0*/, 4> a2nix_card__DOT__areg;
         VlUnpacked<VlWide<8>/*255:0*/, 8> a2nix_card__DOT__pslot;
+        VlUnpacked<CData/*7:0*/, 32> a2nix_card__DOT__fifo;
         VlUnpacked<IData/*31:0*/, 16> a2nix_card__DOT__u_hash__DOT__u_core__DOT__w;
         VlUnpacked<QData/*63:0*/, 1> __VstlTriggered;
         VlUnpacked<QData/*63:0*/, 2> __VicoTriggered;

@@ -63,7 +63,8 @@ module a2nix_card (
     // 4 bits: STATUS b4 is READY, so the error code occupies b3..b0.
     localparam [3:0] E_NONE     = 4'h0,
                      E_BADVERB  = 4'h1,
-                     E_BUSYERR  = 4'h5;
+                     E_BUSYERR  = 4'h5,
+                     E_OVERRUN  = 4'h7;   // DATA written with the input FIFO full
 
     localparam [7:0] CARD_ID = 8'hA2;
 
@@ -91,11 +92,40 @@ module a2nix_card (
     reg        h_init, h_valid;
     reg [7:0]  h_byte;
     reg        h_finish;
+    reg        finalizing;  // HASH_FINAL requested; waiting for the FIFO to drain
 
     wire          h_ready;
     wire          h_done;
     wire [255:0]  h_digest;
     wire [255:0]  sp_path;
+
+    // ---------------------------------------------------------------- input FIFO ---
+    // Without this the CPU must poll READY before EVERY byte, measured at 13.7 bus
+    // accesses per byte -- which reduced a nominally ~300x accelerator to ~23x.
+    //
+    // Depth is set by compression latency, not block size. The slot bus delivers a
+    // byte roughly every 10 fast cycles; a full-block compression stalls the hasher
+    // for ~65, so the CPU can get at most ~7 bytes ahead. 32 entries is generous, and
+    // exposing READY as "at least 16 free" lets the CPU write 16 bytes per poll:
+    // 17 accesses per 16 bytes, or ~1.06 per byte.
+    localparam integer FIFO_DEPTH = 32;
+    localparam integer FIFO_BURST = 16;   // bytes the CPU may write after one READY
+
+    reg  [7:0] fifo [0:FIFO_DEPTH-1];
+    reg  [5:0] wptr, rptr;                // one extra bit so full != empty
+
+    wire [5:0] fifo_count = wptr - rptr;
+    wire       fifo_empty = (wptr == rptr);
+    wire       fifo_full  = (fifo_count == FIFO_DEPTH[5:0]);
+    wire [5:0] fifo_free  = FIFO_DEPTH[5:0] - fifo_count;
+    wire       fifo_ready = (fifo_free >= FIFO_BURST[5:0]);
+
+    // Hand a byte to the hasher only when nothing is already in flight. Issuing on
+    // h_ready alone repeats the block-boundary loss the CPU-side poll had: in_ready is
+    // still high during the cycle the hasher consumes the byte that fills a block, so
+    // a second byte issued then would arrive after the state had moved to compressing
+    // and be dropped. One byte per two cycles is ample -- the bus is 10x slower.
+    wire fifo_drain = !fifo_empty && h_ready && !h_valid;
 
     sha256 u_hash (
         .clk      (clk),
@@ -128,17 +158,15 @@ module a2nix_card (
     );
 
     // ---------------------------------------------------------------- read path ----
-    // b4 READY is load-bearing: the hasher stops accepting for ~65 cycles while it
-    // compresses a full block, and the bus has no back-pressure of its own, so the
-    // 65816 MUST poll this before each DATA write in push mode or bytes are dropped.
+    // b4 READY now means "the input FIFO has at least FIFO_BURST slots free", so one
+    // poll licenses a burst of FIFO_BURST DATA writes. It deliberately does NOT track
+    // the hasher's own readiness -- the FIFO absorbs compression stalls, which is the
+    // entire point (see the input FIFO note above).
     //
-    // `& ~h_valid` is essential, not defensive. A DATA write latches the byte and the
-    // hasher consumes it on the NEXT edge, so for one cycle a byte is in flight while
-    // the hasher still reports in_ready. Without masking that window, the CPU sees
-    // READY, writes the next byte, and the in-flight one is overwritten -- silently,
-    // and only on the 64-byte boundary where the block fills. Which is exactly the
-    // bug that showed up as "8 of 12 NIST vectors pass".
-    wire [7:0] status = {busy, done, err, h_ready & ~h_valid, errcode};
+    // Overrunning the FIFO raises ERR/OVERRUN rather than dropping bytes: a silently
+    // short message yields a plausible-looking but wrong digest, the worst failure
+    // mode available to a hash accelerator.
+    wire [7:0] status = {busy, done, err, fifo_ready, errcode};
 
     reg [7:0] rdata;
     always @(*) begin
@@ -168,7 +196,8 @@ module a2nix_card (
             len  <= 32'd0; lenidx <= 2'd0;
             busy <= 1'b0; done <= 1'b0; err <= 1'b0; errcode <= E_NONE;
             irq_en <= 1'b0; irq_pend <= 1'b0;
-            push_mode <= 1'b0;
+            push_mode <= 1'b0; finalizing <= 1'b0;
+            wptr <= 6'd0; rptr <= 6'd0;
             h_init <= 1'b0; h_valid <= 1'b0; h_byte <= 8'h00; h_finish <= 1'b0;
             for (i = 0; i < 4; i = i + 1) areg[i]  <= 32'd0;
             for (i = 0; i < 8; i = i + 1) pslot[i] <= 256'd0;
@@ -177,9 +206,23 @@ module a2nix_card (
             h_init  <= 1'b0;
             h_valid <= 1'b0;
 
-            // --- A verb in flight: wait for the hasher, then publish results ---
+            // --- Drain the FIFO into the hasher ---
+            if (fifo_drain) begin
+                h_valid <= 1'b1;
+                h_byte  <= fifo[rptr[4:0]];
+                rptr    <= rptr + 6'd1;
+            end
+
+            // --- A verb in flight ---
             if (busy) begin
-                if (h_done) begin
+                if (finalizing) begin
+                    // Every queued byte must reach the hasher before padding starts,
+                    // or the message is silently truncated.
+                    if (fifo_empty && !h_valid && !fifo_drain) begin
+                        h_finish   <= 1'b1;
+                        finalizing <= 1'b0;
+                    end
+                end else if (h_done) begin
                     h_finish     <= 1'b0;
                     pslot[0]     <= h_digest;
                     pslot[3]     <= sp_path;
@@ -213,12 +256,16 @@ module a2nix_card (
                                 V_HASH_INIT: begin
                                     h_init    <= 1'b1;
                                     push_mode <= 1'b0;
+                                    wptr      <= 6'd0;   // discard anything queued
+                                    rptr      <= 6'd0;
                                 end
                                 V_HASH_PUSH: push_mode <= 1'b1;
                                 V_HASH_FINAL: begin
-                                    push_mode <= 1'b0;
-                                    h_finish  <= 1'b1;
-                                    busy      <= 1'b1;
+                                    // Do NOT assert finish yet: queued bytes still
+                                    // have to reach the hasher first.
+                                    push_mode  <= 1'b0;
+                                    finalizing <= 1'b1;
+                                    busy       <= 1'b1;
                                 end
                                 V_STOREPATH: begin
                                     // Purely combinational: answer immediately.
@@ -235,13 +282,16 @@ module a2nix_card (
 
                     R_CTRL: begin
                         if (c0n_wdata[0]) begin        // RESET
-                            push_mode <= 1'b0;
-                            busy      <= 1'b0;
-                            done      <= 1'b0;
-                            err       <= 1'b0;
-                            errcode   <= E_NONE;
-                            irq_pend  <= 1'b0;
-                            h_init    <= 1'b1;
+                            push_mode  <= 1'b0;
+                            finalizing <= 1'b0;
+                            busy       <= 1'b0;
+                            done       <= 1'b0;
+                            err        <= 1'b0;
+                            errcode    <= E_NONE;
+                            irq_pend   <= 1'b0;
+                            wptr       <= 6'd0;
+                            rptr       <= 6'd0;
+                            h_init     <= 1'b1;
                         end
                         irq_en <= c0n_wdata[1];
                     end
@@ -267,11 +317,18 @@ module a2nix_card (
                     end
 
                     R_DATA: begin
-                        // In push mode the byte goes straight into the hash; otherwise
-                        // it would address card memory, which does not exist until L3.
-                        if (push_mode && h_ready) begin
-                            h_valid <= 1'b1;
-                            h_byte  <= c0n_wdata;
+                        // In push mode the byte is queued for the hasher; otherwise it
+                        // would address card memory, which does not exist until L3.
+                        if (push_mode) begin
+                            if (fifo_full) begin
+                                // Loud, not silent. A dropped byte would produce a
+                                // wrong-but-plausible digest.
+                                err     <= 1'b1;
+                                errcode <= E_OVERRUN;
+                            end else begin
+                                fifo[wptr[4:0]] <= c0n_wdata;
+                                wptr            <= wptr + 6'd1;
+                            end
                         end
                     end
 

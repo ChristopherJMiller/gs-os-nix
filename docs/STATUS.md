@@ -29,10 +29,10 @@ implementation from a tribute.
 
 ## Next actions (L2)
 
-1. **Add a 64-byte input FIFO to `a2nix_card.v`.** Measured cost is 13.7 bus accesses
-   per byte because the CPU polls READY per byte; a FIFO gets it to ~1.1 and restores
-   the 100–300x hashing claim. See the boxed note in CARD-ISA.md. Do this before the
-   MAME glue — it changes what READY means.
+1. ~~Input FIFO~~ **done.** 32 entries, READY = "≥16 slots free". Streaming is now
+   **1.07 accesses/byte** (~285× over software SHA-256) against 2.00 with per-byte
+   polling. The ~100–300× claim holds. Fixed per-call overhead (~72 accesses, mostly
+   `PPORT` readout) is now the larger cost — attack that only if it becomes hot.
 2. **`mame/a2nix.cpp`**: wrap the Verilated model in a `device_a2bus_card_interface`.
    Note the 0.289 API: `reset_from_bus()` (not `bus_reset()`) and `take_c800() const`.
    The bus model is `set inputs -> eval() -> sample -> tick()`; `card_main.cpp`'s

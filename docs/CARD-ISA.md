@@ -67,54 +67,70 @@ they read.
 (that arrives at L3), so the CPU has to hand bytes over directly. It stays useful
 after L3 for data the CPU holds in main RAM and has no reason to park on the card.
 
-> ### ⚠️ Measured economics: 13.7 bus accesses per byte
+> ### Measured economics
 >
-> `card_main.cpp` counts the real cost, and the first implementation is **far worse
-> than the design claimed**. The estimate was ~1 access/byte for a ~300x win over
-> software SHA-256. Measured: **13.7 accesses/byte**, because the CPU must poll READY
-> before every single byte and spins ~65 cycles per block while the hasher compresses.
+> `card_main.cpp` counts real bus accesses, modelling the card at **48 cycles per
+> `$C0nX` access** (a 50 MHz card against the 1.024 MHz throttled slot). That ratio is
+> not a detail: it decides how much of a compression stall the CPU ever observes.
 >
 > | | accesses/byte | ≈ cycles/byte | vs software |
 > |---|---:|---:|---:|
 > | software SHA-256 on 65816 | — | ~3125 | 1x |
-> | `HASH_PUSH`, poll-per-byte (now) | 13.7 | ~137 | **~23x** |
-> | `HASH_PUSH` + 64-byte input FIFO | ~1.1 | ~11 | ~280x |
+> | `HASH_PUSH`, poll per byte | 2.00 | ~20 | ~155x |
+> | `HASH_PUSH`, 16-byte bursts | **1.07** | ~11 | **~285x** |
 >
-> 23x is still a real win and M2 is achievable on it, but it squanders an order of
-> magnitude. **Fix: a 64-byte input FIFO** so the CPU streams a whole block at bus
-> rate and polls once per block instead of once per byte. One BRAM, and READY then
-> means "the FIFO has space" rather than "the hasher is idle".
+> So the FIFO is worth **1.87x** on the streaming phase — real, but nothing like an
+> order of magnitude, because at this clock ratio the hasher drains ~24 bytes per bus
+> access and is simply never the bottleneck. The ~100-300x hashing claim in
+> ARCHITECTURE.md holds.
 >
-> This is `checks.verb-economics` doing its job (DECISIONS.md D5). The claim in
-> ARCHITECTURE.md of a 100-300x hashing win is only true *with* the FIFO.
+> **Fixed overhead is now the thing to attack: ~72 accesses per call**, almost all of
+> it reading results back 32 bytes at a time through `PPORT`. A store path only needs
+> `P3` (33 accesses); the testbench also reads `P0` for diagnostics. End-to-end for a
+> ~91-byte fingerprint that is ~5.4 accesses/byte, dominated by readout rather than
+> hashing. Worth revisiting if store-path computation ever becomes hot.
+>
+> #### Methodology note, learned the hard way
+>
+> The first version of this harness advanced the card **one** cycle per bus access,
+> making it 48x slower than reality. That inflated poll counts to 13.7 accesses/byte
+> and produced a confident, wrong conclusion that the card was a ~23x accelerator.
+> **Any verb-economics measurement must model the clock ratio**, or it measures the
+> harness instead of the hardware.
 
 `HASH_FINAL` yields the encoded path in `P3` as well as the raw digest in `P0`,
 because `storepath.v` is purely combinational — once the digest settles, the 32
 characters cost nothing. `$14 STOREPATH` remains for folding a digest the caller
 computed some other way.
 
-### Flow control in push mode — not optional
+### Flow control in push mode
 
-The slot bus has no back-pressure, and the hasher stops accepting bytes for ~65 cycles
-while it compresses each full 64-byte block. **The 65816 must poll `STATUS` bit 4
-(READY) before every `DATA` write in push mode**, or bytes are silently dropped and
-the digest is quietly wrong — the worst possible failure mode for a hash.
-
-The expected loop is therefore:
+A 32-entry input FIFO sits between `DATA` and the hasher, so `STATUS` bit 4 (READY)
+means **"at least 16 FIFO slots are free"** — one poll licenses a burst of 16 writes:
 
 ```
-  CMD <- $10 (HASH_INIT)
+  CMD <- $10 (HASH_INIT)                 ; mandatory: abandons any partial message
   CMD <- $15 (HASH_PUSH)
-  for each byte:
-      repeat: b = STATUS  until b & $10
-      DATA <- byte
-  CMD <- $12 (HASH_FINAL)
+  while bytes remain:
+      repeat: b = STATUS  until b & $10  ; READY: >= 16 slots free
+      write up to 16 bytes to DATA
+  CMD <- $12 (HASH_FINAL)                ; drains the FIFO, then pads
   repeat: b = STATUS  until b & $40      ; DONE
   PSEL <- 3 ; read 32 bytes from PPORT   ; the store path
 ```
 
-`HASH_INIT` is required before pushing: after a `HASH_FINAL` the hasher parks in its
-done state with READY low, so pushes without a re-init would stall forever.
+Overrunning the FIFO raises `ERR`/`OVERRUN` rather than dropping bytes — a short
+message would otherwise yield a plausible-looking but wrong digest, the worst failure
+mode available to a hash accelerator. At the modelled clock ratio overrun is actually
+unreachable (the card drains ~24 bytes per bus access), so the guard is defence in
+depth for a slower card clock.
+
+`HASH_FINAL` waits for the FIFO to empty before padding; otherwise the message would
+be silently truncated by however many bytes were still queued.
+
+**`HASH_INIT` is required before pushing** and is honoured from any state — it means
+"abandon whatever you were doing". An earlier version only accepted it when idle,
+which made it a no-op mid-message and let a partial message leak into the next digest.
 
 `NARHASH` is the highest-value verb in the design: it serializes a directory tree to
 NAR *and* hashes it entirely card-side. Zero bytes cross the bus; 20 come back.
@@ -187,3 +203,4 @@ These are **not** in the ISA and must pass `checks.verb-economics` before being 
 | `$04` | `BADADDR` — address outside card memory |
 | `$05` | `BUSY` — verb issued while another was running |
 | `$06` | `BADPARAM` — malformed parameter slot |
+| `$07` | `OVERRUN` — `DATA` written in push mode with the input FIFO full |

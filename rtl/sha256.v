@@ -98,16 +98,23 @@ module sha256 (
                 total <= total + 64'd1;
 
             // --- Control ---
+            //
+            // `init` means "abandon whatever you were doing and start a new message",
+            // so it is handled ahead of the state machine and honoured from ANY state.
+            // Checking it only in S_IDLE/S_DONE made it a no-op mid-message, which let
+            // a previous partial message leak into the next digest -- caught by the
+            // card's FIFO-overrun test polluting the following empty-string vector.
+            if (init) begin
+                core_init <= 1'b1;
+                bidx      <= 7'd0;
+                total     <= 64'd0;
+                lenidx    <= 3'd0;
+                done      <= 1'b0;
+                state     <= S_ACCEPT;
+            end else
             case (state)
                 S_IDLE: begin
-                    if (init) begin
-                        core_init <= 1'b1;
-                        bidx      <= 7'd0;
-                        total     <= 64'd0;
-                        lenidx    <= 3'd0;
-                        done      <= 1'b0;
-                        state     <= S_ACCEPT;
-                    end
+                    // Waiting for `init`, handled above.
                 end
 
                 S_ACCEPT: begin
@@ -163,15 +170,8 @@ module sha256 (
                 end
 
                 S_DONE: begin
+                    // Hold `done` and the digest until `init` starts a new message.
                     done <= 1'b1;
-                    if (init) begin
-                        core_init <= 1'b1;
-                        bidx      <= 7'd0;
-                        total     <= 64'd0;
-                        lenidx    <= 3'd0;
-                        done      <= 1'b0;
-                        state     <= S_ACCEPT;
-                    end
                 end
 
                 default: state <= S_IDLE;

@@ -115,15 +115,22 @@ current as modules land, since a budget that drifts from reality is worse than n
 | Block | LUT4 | FF | Status |
 |---|---:|---:|---|
 | `sha256_core` (compression) | 1688 | 1064 | measured |
-| `sha256` (+ padding FSM) | 1738 | 1657 | measured |
+| `sha256` (+ padding FSM) | 1673 | 1657 | measured |
 | `storepath` (fold + nixbase32) | 505 | 0 | measured — purely combinational |
+| **`a2nix_card`** (whole card, incl. above) | **5766** | **3916** | measured |
 | 32-wide key CAM | ~1k | — | estimate |
 | `ALU64` | ~1.5k | — | estimate |
-| Address/verb FSMs, cache ctrl | ~3k | — | estimate |
 
-L1 lands at ~2.2k LUT4 of a 25F's ~24k, so there is comfortable headroom for L7
-stretch work. Toolchain is fully open and already packaged: `yosys`, `nextpnr`,
-`trellis`, `openfpgaloader`, `verible`.
+The whole L2 card is **5766 LUT4 of a 25F's ~24k (24%)**, leaving room for L3 onward.
+The 32-entry input FIFO mapped to 4 `TRELLIS_DPR16X4` distributed-RAM blocks rather
+than flops, which is what we want.
+
+**Known inefficiency:** of the card's 3916 flops, 2048 are the eight 256-bit
+parameter slots. Those are addressed one byte at a time and never need random access,
+so they belong in block RAM. Worth fixing if flops get tight — not before.
+
+Toolchain is fully open and already packaged: `yosys`, `nextpnr`, `trellis`,
+`openfpgaloader`, `verible`. Refresh these numbers with `just area`.
 
 ## Scope boundaries
 
