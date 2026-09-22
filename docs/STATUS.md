@@ -55,10 +55,16 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
    throw un-blackholes every thunk that was under evaluation (the VM keeps a
    force stack for exactly this), so `tryEval` twice on one failing thunk fails
    twice, as in Nix.
-4. **Slice 4: the nursery collector running during evaluation**, then promotion
-   of survivors to the card, closing the loop with L3 — 16 KB is now the binding
-   limit (two corpus tests already hit `E_NOMEM`, loudly). Promoted sets are
-   where `LOOKUP` and the CAM get measured on real programs.
+4. **Slice 4: the nursery collector, then promotion to the card** (decided with
+   Chris: straight to D6, no in-RAM detour as a destination). Steps: (a) ~~precise
+   roots~~ done — every frame keeps its objects on a root stack; (b) ~~the Cheney
+   collector at bytecode boundaries~~ done — `target/vm/gc.s`, staging in bank 1,
+   survivors block-moved back for now; `just fixtures-gc` collects at every
+   boundary and all 39 fixtures survive it, and `checks.scoreboard` runs that too;
+   (c) **promotion**: the staging area streamed to the card (`RESERVE` + one `DATA`
+   burst), roots rewritten to mature addresses, mature reads through copy
+   windows, `LOOKUP` for mature sets, and the write barrier. Then measure the CAM
+   on real programs.
 5. **Slice 5: builtins that touch the store, `import`, paths, floats.**
 6. ~~The parser decision~~ **decided: `rnix`** (D16). The generator now parses all
    of Nix and refuses by feature; `just scoreboard` prints a histogram of the

@@ -780,8 +780,11 @@ std::string fmt_value(uint32_t ptr, int depth) {
 // prints the VM's answer in Nix syntax on a `result:` line (or `error: E_NAME`), which
 // is what scripts/scoreboard.py compares with the corpus's .exp files. The result
 // contract is BYTECODE.md "Result reporting".
-int run_nbc(const char *vm_path, const char *nbc_path) {
+int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     if (!load_image(vm_path)) return 2;
+    // The VM collects at every bytecode boundary when this byte is set (gc.s),
+    // which turns every fixture into a collector test.
+    ram[0x0BF0] = gc_stress ? 1 : 0;
     {
         std::ifstream f(nbc_path, std::ios::binary);
         if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }
@@ -958,7 +961,9 @@ int main(int argc, char **argv) {
         return bench_nursery(argv[2]);
 
     if (argc >= 4 && std::string(argv[1]) == "--run-nbc")
-        return run_nbc(argv[2], argv[3]);
+        return run_nbc(argv[2], argv[3], false);
+    if (argc >= 4 && std::string(argv[1]) == "--run-nbc-gc-stress")
+        return run_nbc(argv[2], argv[3], true);
 
     if (argc >= 5 && (std::string(argv[1]) == "--bench-mul64" || std::string(argv[1]) == "--bench-mul64-native"))
         return bench_mul64(argv[2],

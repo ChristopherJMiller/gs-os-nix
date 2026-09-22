@@ -10,10 +10,7 @@
 ; INT/BOOL/NULL by value, STRING by bytes, LIST and ATTRS element-wise
 ; (recursively), functions never equal unless the same object.
 values_equal:
-        lda     p0
-        pha
-        lda     p0+2
-        pha
+        jsr     rpush_p0        ; a, a root while b is forced
         lda     p1
         sta     p0
         lda     p1+2
@@ -21,25 +18,29 @@ values_equal:
         jsr     push_p0
         jsr     force_top
         jsr     pop_p0
+        jsr     rpush_p0        ; b (forced), a root while a is forced
+        lda     rsp
+        sec
+        sbc     #8
+        tax
+        jsr     rget_x          ; a, as the collector may have moved it
+        jsr     push_p0
+        jsr     force_top
+        jsr     pop_p0
+        lda     p0
+        pha
+        lda     p0+2
+        pha                     ; a, forced (no bytecode from here on)
+        jsr     rpop_p0
         lda     p0
         sta     p1
         lda     p0+2
-        sta     p1+2
+        sta     p1+2            ; b
+        jsr     rpop_p0         ; drop a's entry
         pla
         sta     p0+2
         pla
         sta     p0
-        lda     p1
-        pha
-        lda     p1+2
-        pha
-        jsr     push_p0
-        jsr     force_top
-        jsr     pop_p0
-        pla
-        sta     p1+2
-        pla
-        sta     p1
         jsr     deref
         jsr     deref_p1
         lda     t0

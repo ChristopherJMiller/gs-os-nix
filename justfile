@@ -227,6 +227,13 @@ scoreboard *flags: build-a2min asm-vm nbc-build
 # Claim newly passing tests in tests/corpus/expected-pass.txt (the ratchet).
 scoreboard-update: (scoreboard "--update")
 
+# The collector test: every local fixture with a nursery collection at EVERY
+# bytecode boundary (a2min --run-nbc-gc-stress). Slow, and merciless.
+fixtures-gc: build-a2min asm-vm nbc-build
+    python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
+        --vm target/build/vm.bin --corpus tests/fixtures \
+        --build target/build/nbc-gc --expected tests/corpus/expected-pass.txt --gc-stress
+
 # D7: the generator has no hashing code and no fixture smuggles a store path.
 purity:
     ./scripts/fixture-purity.sh --selftest

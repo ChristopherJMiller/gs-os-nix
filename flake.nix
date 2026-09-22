@@ -148,12 +148,24 @@
             grep -q "^SCOREBOARD:" "$out"
             ./scripts/fixture-purity.sh target/build/nbc | tee -a "$out"
 
-            # The ratchet must be able to fail: a listed test that does not pass
-            # is a regression, and the run must say so and exit non-zero.
-            echo "ghost/eval-okay-never-passed" > ghost.txt
+            # The collector test: every local fixture again, with a nursery
+            # collection at every bytecode boundary. A fixture that passes
+            # normally and fails here has a root the collector cannot see.
+            python3 scripts/scoreboard.py \
+              --nbc nbc --a2min ./build/a2min --vm target/build/vm.bin \
+              --corpus tests/fixtures --build build/gc \
+              --expected tests/corpus/expected-pass.txt --gc-stress \
+              | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
+
+            # The ratchet must be able to fail: a listed test that no longer
+            # passes is a regression, and the run must say so and exit non-zero.
+            # Plant one by giving a real fixture the wrong expected value.
+            mkdir -p ghost && cp tests/fixtures/eval-okay-let-forward.* ghost/
+            echo "wrong" > ghost/eval-okay-let-forward.exp
+            echo "ghost/eval-okay-let-forward" > ghost.txt
             if python3 scripts/scoreboard.py \
                  --nbc nbc --a2min ./build/a2min --vm target/build/vm.bin \
-                 --corpus tests/fixtures --build build/ghost --expected ghost.txt \
+                 --corpus ghost --build build/ghost --expected ghost.txt \
                  > ghost.log 2>&1; then
               echo "scoreboard ratchet SURVIVED a planted regression" >&2; exit 1
             fi

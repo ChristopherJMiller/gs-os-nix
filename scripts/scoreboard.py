@@ -66,7 +66,10 @@ def main():
     ap.add_argument("--expected", required=True, help="the ratchet file")
     ap.add_argument("--update", action="store_true", help="write new passes into --expected")
     ap.add_argument("--verbose", "-v", action="store_true")
+    ap.add_argument("--gc-stress", action="store_true",
+                    help="collect the nursery at every bytecode boundary (slow; a collector test)")
     args = ap.parse_args()
+    run_mode = "--run-nbc-gc-stress" if args.gc_stress else "--run-nbc"
 
     os.makedirs(args.build, exist_ok=True)
     expected = set()
@@ -95,7 +98,7 @@ def main():
             elif rc != 0:
                 bucket, got = "error", f"generator rc={rc}: {err.strip()}"
             else:
-                rc, out, err = run([args.a2min, "--run-nbc", args.vm, base + ".nbc"])
+                rc, out, err = run([args.a2min, run_mode, args.vm, base + ".nbc"], timeout=600)
                 kind, got = vm_result(out)
                 if kind == "error":
                     bucket = "error"
@@ -112,7 +115,10 @@ def main():
 
     total = sum(len(v) for v in buckets.values())
     passing = set(buckets["pass"])
-    regressions = sorted(expected - passing)
+    # The ratchet only judges tests this run looked at (a fixtures-only run
+    # must not report the whole corpus as regressed).
+    seen = set(details)
+    regressions = sorted((expected & seen) - passing)
     new = sorted(passing - expected)
 
     # Why is the rest unsupported? The generator names the first construct it
@@ -146,10 +152,11 @@ def main():
         for n in new:
             print(f"  {n}")
         if args.update:
+            kept = (expected - seen) | passing   # entries this run did not look at stay
             with open(args.expected, "w") as f:
                 f.write("# Tests the 65816 VM passes. scripts/scoreboard.py --update maintains it;\n")
                 f.write("# checks.scoreboard fails if any of these stops passing.\n")
-                for n in sorted(passing):
+                for n in sorted(kept):
                     f.write(n + "\n")
             print(f"  written to {args.expected}")
         else:

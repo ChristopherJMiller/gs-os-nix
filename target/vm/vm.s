@@ -100,6 +100,7 @@ T_THUNK         = $08
 T_LAMBDA        = $09
 T_INDIRECT      = $0A
 T_BLACKHOLE     = $0B
+T_FORWARDED     = $0C
 
 REG_CMD         = $C080
 REG_CTRL        = $C081
@@ -149,7 +150,11 @@ hn:             .res 2          ;   p2 or kx, which its callers hold values in
 slen:           .res 2          ; string length in flight
 sav:            .res 2
 catch_n:        .res 2          ; live tryEval frames
-fstack_n:       .res 2          ; bytes used in FSTACK (2 per thunk)
+fstack_n:       .res 2          ; bytes used in FSTACK (4 per thunk)
+gc_water:       .res 2          ; nursery objects below this are pinned constants
+gfree:          .res 2          ; collector: to-space bump pointer
+gscan:          .res 2          ; collector: Cheney scan pointer
+lp:             .res 3          ; a long (24-bit) pointer for the staging bank
 
         .code
 
@@ -197,6 +202,8 @@ start:
         stz     fstack_n
 
         jsr     load
+        lda     nfree
+        sta     gc_water        ; everything the loader made is a pinned constant
         jsr     run             ; the entry chunk; RETURN brings us back here
 
         ; --- report the result: deep-forced, by pointer (BYTECODE.md) ---
@@ -542,6 +549,7 @@ fetch16:
 ; The dispatch loop. Each handler ends in `jmp run`; RETURN is `rts`, which
 ; returns to whoever called run (FORCE, or start for the entry chunk).
 run:
+        jsr     gc_maybe        ; the only place a collection can happen
         jsr     fetch8
         cmp     #OP_PRIM+1
         jcs     op_bad
@@ -1042,9 +1050,11 @@ op_jmp:
         jmp     run
 
 ; Both peek: the value stays on the stack for the compiler's POP.
+; The offset is kept on the CPU stack: forcing runs bytecode, and a collection
+; there clobbers every zero-page scratch.
 op_jmp_if_false:
         jsr     fetch16
-        sta     t2
+        pha
         jsr     force_top
         jsr     peek_p0
         jsr     deref
@@ -1053,15 +1063,17 @@ op_jmp_if_false:
         lda     (t0),y
         and     #$00FF
         bne     @no
-        lda     pc
+        pla
         clc
-        adc     t2
+        adc     pc
         sta     pc
-@no:    jmp     run
+        jmp     run
+@no:    pla
+        jmp     run
 
 op_jmp_if_true:
         jsr     fetch16
-        sta     t2
+        pha
         jsr     force_top
         jsr     peek_p0
         jsr     deref
@@ -1070,11 +1082,13 @@ op_jmp_if_true:
         lda     (t0),y
         and     #$00FF
         beq     @no
-        lda     pc
+        pla
         clc
-        adc     t2
+        adc     pc
         sta     pc
-@no:    jmp     run
+        jmp     run
+@no:    pla
+        jmp     run
 
 ; --- environments --------------------------------------------------------------
 ; ENV_NEW n: a LIST of n+1 pointers; [0] = the old env, [1..n] = null.
@@ -1656,6 +1670,7 @@ force_top:
         .include "data.s"       ; strings, lists, attribute sets
         .include "equal.s"      ; structural equality, deep force
         .include "prims.s"      ; the primop table
+        .include "gc.s"         ; the nursery collector
 
 ; ===========================================================================
 ; The shared singletons. Immutable: FORCE never touches a value, and nothing
