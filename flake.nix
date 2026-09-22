@@ -378,6 +378,8 @@
         # The RTL Verilated into a static library MAME links, and MAME with the card
         # registered as an Apple IIgs slot option (long one-off build, then cached).
         inherit (ours) verilated-card mame-a2nix;
+        # The test-only fixture generator (D7/D16): `nix run .#nbc -- in.nix -o out.nbc`.
+        inherit (ours) nbc;
         default = ours.verilated-card;
       });
 

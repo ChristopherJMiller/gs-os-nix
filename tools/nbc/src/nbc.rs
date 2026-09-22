@@ -147,12 +147,11 @@ pub fn disassemble(img: &Image) -> String {
 mod tests {
     use super::*;
     use crate::compiler::compile;
-    use crate::lexer::lex;
-    use crate::parser::parse;
+    use crate::front::parse;
 
     #[test]
     fn round_trips_and_lays_out_the_header() {
-        let chunks = compile(&parse(&lex("let x = 1 + 2; in x").unwrap()).unwrap()).unwrap();
+        let chunks = compile(&parse("let x = 1 + 2; in x").unwrap()).unwrap();
         let bytes = write(&chunks);
         assert_eq!(&bytes[0..4], b"NBC\x01");
         assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 2);
@@ -166,7 +165,7 @@ mod tests {
 
     #[test]
     fn rejects_corruption() {
-        let chunks = compile(&parse(&lex("1").unwrap()).unwrap()).unwrap();
+        let chunks = compile(&parse("1").unwrap()).unwrap();
         let mut bytes = write(&chunks);
         bytes[3] = 9;
         assert!(read(&bytes).is_err());

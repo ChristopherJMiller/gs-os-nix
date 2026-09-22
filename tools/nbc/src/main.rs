@@ -8,11 +8,11 @@
 //! tool is a fixture generator, not a runtime component: it contains no hashing
 //! and no store-path code, and checks.fixture-purity keeps it that way.
 
+mod ast;
 mod compiler;
-mod lexer;
+mod front;
 mod nbc;
 mod opcodes;
-mod parser;
 
 use std::process::ExitCode;
 
@@ -51,9 +51,7 @@ fn main() -> ExitCode {
                     return ExitCode::from(1);
                 }
             };
-            let compiled = lexer::lex(&src)
-                .and_then(|t| parser::parse(&t))
-                .and_then(|ast| compiler::compile(&ast));
+            let compiled = front::parse(&src).and_then(|ast| compiler::compile(&ast));
             match compiled {
                 Ok(chunks) => {
                     if let Err(e) = std::fs::write(output, nbc::write(&chunks)) {

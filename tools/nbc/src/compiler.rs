@@ -4,9 +4,8 @@
 //! and a variable resolves to (depth, index) where depth counts enclosing lets and
 //! index is 1-based within the let (element 0 of an environment is its parent).
 
-use crate::lexer::{unsupported, Pos, Unsupported};
+use crate::ast::{unsupported, BinOp, Expr, Pos, Unsupported};
 use crate::opcodes::*;
-use crate::parser::{BinOp, Expr};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Const {
@@ -230,11 +229,10 @@ impl Compiler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::lex;
-    use crate::parser::parse;
+    use crate::front::parse;
 
     fn c(s: &str) -> Vec<Chunk> {
-        compile(&parse(&lex(s).unwrap()).unwrap()).unwrap()
+        compile(&parse(s).unwrap()).unwrap()
     }
 
     #[test]
@@ -311,6 +309,6 @@ mod tests {
 
     #[test]
     fn unbound_names_are_refused() {
-        assert!(compile(&parse(&lex("x + 1").unwrap()).unwrap()).is_err());
+        assert!(compile(&parse("x + 1").unwrap()).is_err());
     }
 }

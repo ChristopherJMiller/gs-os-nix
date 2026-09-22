@@ -298,11 +298,18 @@ starting the subset generator in Rust means swapping the parser later without
 rewriting the compiler behind it. Asked whether to rewrite `a2min` in Rust while
 adding native mode, the answer was no for this reason.
 
-`tools/nbc` has **no dependencies**, on purpose: `checks.fixture-purity` greps its
-manifest for hashing and crypto crates (D7), and a trivial lockfile keeps the nix
-package (`nix/pkgs/nbc.nix`) trivial too. That constraint is revisited when the full
-parser arrives — and *that* choice (rnix versus growing the subset) is deliberately
-left open, to be made with Chris when the subset runs out of corpus.
+**Parser (decided with Chris, 2026-09-22): `rnix`, from the start.** Slice 1 shipped
+with a hand-written subset parser and the scoreboard read 17 / 376 with 336
+"unsupported" — refused by the *parser*, so the number measured the generator, not
+the VM. `rnix` is the whole grammar (it is what tvix uses), so from here the
+generator parses everything and refuses, by *feature*, only what the VM cannot run
+yet; the scoreboard histograms those refusals, which is how each next slice is
+chosen. The hand-written parser was ~400 lines that rnix would have replaced
+anyway, and at L5 an independent, battle-tested parser is the better differential
+oracle for the on-target compiler. The cost is a dependency tree (`rnix`, `rowan`)
+vendored through the lockfile; `checks.fixture-purity` still greps the manifest for
+hashing and crypto crates (D7), and that list is the only thing the manifest may
+grow.
 
 ---
 

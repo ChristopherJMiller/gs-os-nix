@@ -5,10 +5,13 @@ edition = "2021"
 description = "Test-only .nbc fixture generator for the gs-os-nix 65816 VM (DECISIONS.md D7)"
 license = "MIT"
 
-# No dependencies, on purpose. checks.fixture-purity greps this section: a crypto
-# or hashing crate here would mean the generator can manufacture store paths, which
-# is exactly what a test fixture must never be able to do.
+# rnix is the whole of Nix's grammar, so the scoreboard measures the VM rather than
+# a hand-written parser (DECISIONS.md D16, decided 2026-09-22). Nothing else, on
+# purpose: checks.fixture-purity greps this section, and a crypto or hashing crate
+# here would mean the generator can manufacture store paths -- exactly what a test
+# fixture must never be able to do.
 [dependencies]
+rnix = "0.14.0"
 
 [[bin]]
 name = "nbc"

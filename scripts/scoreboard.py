@@ -115,6 +115,18 @@ def main():
     regressions = sorted(expected - passing)
     new = sorted(passing - expected)
 
+    # Why is the rest unsupported? The generator names the first construct it
+    # refused; the histogram says which feature would move the most tests.
+    reasons = {}
+    for name in buckets["unsupported"]:
+        what = details[name][2]
+        what = what.split("unsupported: ", 1)[1] if "unsupported: " in what else what
+        reasons[what] = reasons.get(what, 0) + 1
+    if reasons:
+        print("\n  unsupported, by first refused construct:")
+        for what, n in sorted(reasons.items(), key=lambda kv: -kv[1])[:12]:
+            print(f"  {n:5}  {what}")
+
     print()
     for k in ("pass", "fail", "error", "unsupported", "notyetpassing"):
         print(f"  {k:<13} {len(buckets[k]):4}")

@@ -35,8 +35,13 @@ implementation from a tribute.
 ## Next actions (L4)
 
 The scoreboard reads **17 / 376**, and 336 of the rest are `unsupported` — refused
-by the slice-1 generator, not failed by the VM. So the number rises by widening the
-generator and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
+by the slice-1 lowering, not failed by the VM. Since the generator parses all of Nix
+(rnix), the refusals are by feature, and the histogram says what would move the
+number: function application 81, list 57, attribute set 48, attribute selection
+45, `with` 37, lambda 25, string 14, legacy `let` 10, `assert` 4, `//` 4, `++` 2.
+(Each test is counted once, by the first construct refused, so lists and attrsets
+hide further lambdas behind them.) The number rises by widening the lowering and
+the VM together, one slice at a time (BYTECODE.md "Slice plan"):
 
 1. **Slice 2: strings, lists, attribute sets.** `STRING` constants (with the
    context pointer from day one), `LIST`/`ATTRS` construction, `++`, `//`, `.`
@@ -47,10 +52,9 @@ generator and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
 3. **Slice 4: builtins and `import`**, paths, and the nursery collector running
    *during* evaluation (slice 1 aborts with `E_NOMEM` when 16 KB fills — loud, but
    a limit). Then promotion of survivors to the card, closing the loop with L3.
-4. **The parser decision.** The generator's hand-written subset parser is enough
-   through slice 2. Beyond that, either grow it or switch to `rnix` — a real
-   dependency, which D16 and D7 both have opinions about. **Decide with Chris
-   before starting slice 3.**
+4. ~~The parser decision~~ **decided: `rnix`** (D16). The generator now parses all
+   of Nix and refuses by feature; `just scoreboard` prints a histogram of the
+   refused constructs, so pick the next slice from the top of that list.
 5. **`eval-fail` corpus.** Vendor it once the VM's error reporting is worth scoring;
    `E_INFREC` already matches Nix for `let x = x; in x`.
 6. **Verb economics on real programs.** `a2min --run-nbc` prints cycles and slot
