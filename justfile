@@ -91,6 +91,33 @@ vectors:
 show-vectors:
     @awk '/^SP/ {print "  " $4}' {{VECTORS}}
 
+# --- 65816 target ------------------------------------------------------------
+
+# Assemble the store-path demo to a raw binary loaded at $2000.
+asm:
+    mkdir -p target/build
+    ca65 --cpu 65816 -o target/build/storepath_demo.o \
+        -l target/build/storepath_demo.lst target/tests/storepath_demo.s
+    ld65 -C target/tests/apple2.cfg -o target/build/storepath_demo.bin \
+        -m target/build/storepath_demo.map target/build/storepath_demo.o
+    @ls -l target/build/storepath_demo.bin
+
+# Verify the demo's hardcoded fingerprint still matches the golden vectors.
+check-demo-vector:
+    python3 scripts/check-demo-vector.py
+
+# --- MAME --------------------------------------------------------------------
+
+# Build MAME with the a2nix card. Long one-off; cached afterwards.
+mame-build:
+    nix build .#mame-a2nix -L
+
+# Confirm the card registered as an Apple IIgs slot option.
+mame-slots:
+    @nix build .#mame-a2nix 2>/dev/null || just mame-build
+    ./result/bin/mame -listslots apple2gs 2>/dev/null | grep -i -A1 a2nix \
+      || echo "a2nix not listed -- check the injection in nix/pkgs/mame-a2nix.nix"
+
 # --- FPGA --------------------------------------------------------------------
 
 # Synthesis smoke test for ECP5 (see DECISIONS.md D10 for why not ice40).

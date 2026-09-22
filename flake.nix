@@ -101,6 +101,23 @@
             grep -q "L2 CARD PASS" "$out"
           '';
 
+        # The 65816 side must actually assemble, and its hardcoded fingerprint must
+        # still agree with the golden vectors -- otherwise the demo would print a
+        # plausible-looking store path while asserting the wrong expected value.
+        target-asm = pkgs.runCommand "check-target-asm"
+          { nativeBuildInputs = [ pkgs.cc65 pkgs.python3 ]; }
+          ''
+            cp -r ${self}/target ${self}/tests ${self}/scripts .
+            chmod -R +w .
+            mkdir -p target/build
+            ca65 --cpu 65816 -o target/build/storepath_demo.o \
+              -l target/build/storepath_demo.lst target/tests/storepath_demo.s
+            ld65 -C target/tests/apple2.cfg -o target/build/storepath_demo.bin \
+              -m target/build/storepath_demo.map target/build/storepath_demo.o
+            python3 scripts/check-demo-vector.py | tee "$out"
+            echo "binary: $(stat -c %s target/build/storepath_demo.bin) bytes" >> "$out"
+          '';
+
         # Lint must stay clean: the RTL is the single source of truth for the MAME
         # device and the bitstream, so warnings here become bugs in two places.
         rtl-lint = pkgs.runCommand "check-rtl-lint"
@@ -131,6 +148,23 @@
                 | tee -a "$out"
             done
           '';
+      });
+
+      packages = forAll ({ pkgs, ... }: rec {
+        # The RTL, Verilated into a static library MAME can link. Keeps the RTL as
+        # the single source of truth for both MAME and a real bitstream.
+        verilated-card = pkgs.callPackage ./nix/pkgs/verilated-card.nix {
+          rtlSrc = ./rtl;
+        };
+
+        # MAME with the card registered as an Apple IIgs slot option.
+        # Long one-off build; cached afterwards.
+        mame-a2nix = pkgs.callPackage ./nix/pkgs/mame-a2nix.nix {
+          verilatedCard = verilated-card;
+          cardSrc = ./mame;
+        };
+
+        default = verilated-card;
       });
 
       apps = forAll ({ pkgs, system, ... }: {

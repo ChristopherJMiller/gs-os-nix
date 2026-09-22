@@ -33,16 +33,24 @@ implementation from a tribute.
    **1.07 accesses/byte** (~285× over software SHA-256) against 2.00 with per-byte
    polling. The ~100–300× claim holds. Fixed per-call overhead (~72 accesses, mostly
    `PPORT` readout) is now the larger cost — attack that only if it becomes hot.
-2. **`mame/a2nix.cpp`**: wrap the Verilated model in a `device_a2bus_card_interface`.
-   Note the 0.289 API: `reset_from_bus()` (not `bus_reset()`) and `take_c800() const`.
-   The bus model is `set inputs -> eval() -> sample -> tick()`; `card_main.cpp`'s
-   `rd()`/`wr()` are the reference implementation.
-3. **Patch MAME**: include the header in `src/devices/bus/a2bus/cards.cpp`, add one
-   `device.option_add("a2nix", A2BUS_A2NIX);` to `apple2gs_cards()`, and add sources
-   to `scripts/src/bus.lua`. Wire it up in `nix/pkgs/mame-a2nix.nix` via
-   `mame.overrideAttrs`.
-4. **65816 test program** (`target/` + ca65) that runs the CARD-ISA.md sequence and
-   prints a store path — then M2.
+2. ~~`mame/a2nix.cpp`~~ **written.** Shim over the Verilated model; contains no card
+   behaviour. Advances the model by *elapsed emulated time* at 50 MHz rather than a
+   fixed count per access, so the card progresses while the CPU works elsewhere.
+   Honours `side_effects_disabled()` so the debugger does not advance
+   auto-incrementing ports just by looking at them.
+3. ~~Patch MAME~~ **done and verified.** `nix/pkgs/mame-a2nix.nix` makes three
+   anchored edits (`bus.lua` file list, `cards.cpp` include, `option_add` inside
+   `apple2gs_cards()`) and *verifies each one*, so a MAME version bump fails at a
+   named anchor rather than silently producing a MAME without the card. The RTL is
+   linked as a static library via `ARCHOPTS`/`LDOPTS` (`nix/pkgs/verilated-card.nix`).
+4. ~~65816 test program~~ **written and assembling** (407 bytes).
+   `target/tests/storepath_demo.s` scans slots for ID `$A2`, runs the CARD-ISA.md
+   burst sequence, and prints the 32-character path. `checks.target-asm` keeps its
+   hardcoded fingerprint in sync with the golden vectors.
+5. **Remaining for M2:** finish the MAME build, confirm `-listslots apple2gs` lists
+   `a2nix`, then run the demo binary against it. Needs a user-supplied `apple2gs`
+   ROM. Loading via the MAME debugger is the quickest route; a ProDOS disk image
+   (AppleCommander/cadius, still unpackaged) is the tidier one.
 
 ## Resuming
 
