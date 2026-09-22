@@ -21,7 +21,8 @@
 ;
 ; Memory map, bank 0:
 ;   $0300 RESULT     $0320 status   $0321 error code   (harness contract)
-;   $0C00 CHUNK_INFO 4 bytes/chunk: code address, constant-table address
+;   $0B00 CATCH      tryEval frames        $0F00 FSTACK   thunks under evaluation
+;   $0C00 CHUNK_INFO 4 bytes/chunk: code address, constant-table address (192 chunks)
 ;   $1000 CTAB       constant pointer tables         $1800 CPU stack (grows down to $1840)
 ;   $2000 this program, 12 KB at most -- vm.cfg makes the linker refuse more,
 ;         because the first time it grew past $4000 the nursery silently
@@ -74,6 +75,11 @@ CTAB            = $1000
 CTAB_END        = $1800
 CPU_STACK_MIN   = $1840         ; FORCE refuses to nest below this
 CPU_STACK       = $1FFF
+CATCH           = $0B00         ; tryEval catch frames: sp, vsp, env, pc, ctab, fstack
+CATCH_MAX       = 16            ; ... 12 bytes each, up to $0BC0
+FSTACK          = $0F00         ; the thunks being forced, innermost last: a
+FSTACK_MAX      = 256           ; caught throw un-blackholes them ($0F00-$0FFF)
+CHUNK_MAX       = 192           ; CHUNK_INFO stops where FSTACK begins
 NURSERY         = $5000
 NURSERY_END     = $9000
 NBC_BASE        = $9000
@@ -138,6 +144,8 @@ hc:             .res 4          ; hash_t0's private scratch: it must not touch
 hn:             .res 2          ;   p2 or kx, which its callers hold values in
 slen:           .res 2          ; string length in flight
 sav:            .res 2
+catch_n:        .res 2          ; live tryEval frames
+fstack_n:       .res 2          ; bytes used in FSTACK (2 per thunk)
 
         .code
 
@@ -179,6 +187,8 @@ start:
         lda     #VSTACK
         sta     vsp
         stz     env
+        stz     catch_n
+        stz     fstack_n
 
         jsr     load
         jsr     run             ; the entry chunk; RETURN brings us back here
@@ -208,9 +218,61 @@ done:
         .a16
         .i16
 ; A (low byte) = error code. Restores the caller's stack, so it can be reached
-; from any nesting depth.
+; from any nesting depth. A catchable error -- throw or a failed assert, the
+; two Nix lets tryEval catch -- with a live catch frame unwinds to it instead
+; (BYTECODE.md "Catch frames"): every register the frame saved is restored,
+; including the CPU stack pointer, and tryEval resumes with the failure set.
 err_exit:
+        cmp     #E_THROW
+        beq     @catchable
+        cmp     #E_ASSERT
+        bne     @fatal
+@catchable:
+        ldx     catch_n
+        beq     @fatal
+        dec     catch_n
+        lda     catch_n
+        asl
+        asl
+        sta     t2
+        asl
+        clc
+        adc     t2              ; * 12
+        tax
+        lda     CATCH+2,x
+        sta     vsp
+        lda     CATCH+4,x
+        sta     env
+        lda     CATCH+6,x
+        sta     pc
+        lda     CATCH+8,x
+        sta     ctab
+        lda     CATCH+10,x
+        sta     t2              ; fstack_n at the time of the tryEval
+        lda     CATCH+0,x
+        tcs
+        ; Every thunk that was under evaluation inside the tryEval was left
+        ; BLACKHOLE by the unwind. Make them THUNKs again, so forcing one a
+        ; second time re-runs it (and re-throws), as Nix would.
+@unblack:
+        lda     fstack_n
+        cmp     t2
+        beq     @unwound
+        dec     fstack_n
+        dec     fstack_n
+        ldx     fstack_n
+        lda     FSTACK,x
+        sta     t0
         sep     #$20
+        .a8
+        lda     #T_THUNK
+        sta     (t0)
+        rep     #$20
+        .a16
+        bra     @unblack
+@unwound:
+        jmp     catch_resume
+@fatal: sep     #$20
         .a8
         sta     RESULT_ERR
         lda     #$FF
@@ -236,7 +298,7 @@ load:
         jcs     badnbc
         lda     NBC_BASE+4      ; chunk_count
         jeq     badnbc
-        cmp     #257
+        cmp     #CHUNK_MAX+1
         jcs     badnbc
         sta     nchunks
         lda     #CTAB
@@ -489,7 +551,7 @@ optable:
         .word   op_bad, op_bad, op_bad                                   ; $2D-$2F
         .word   op_env_new, op_env_set, op_env_get, op_env_pop           ; $30-$33
         .word   op_lambda, op_call                                       ; $34-$35
-        .word   op_bad, op_bad, op_bad, op_bad                           ; $36-$39
+        .word   op_with_push, op_with_get, op_try_with_get, op_tail_call ; $36-$39
         .word   op_bad, op_bad, op_bad, op_bad, op_bad, op_bad           ; $3A-$3F
         .word   op_thunk, op_force, op_return, op_prim                   ; $40-$43
 
@@ -799,6 +861,35 @@ cmp_lists:
         lda     1,s
         cmp     n1
         beq     @greater        ; b is a proper prefix of a
+        ; Nix skips equal prefixes with `==` (so pointer-equal functions pass)
+        ; and orders by `<` only at the first difference.
+        lda     5,s
+        sta     t0
+        lda     1,s
+        jsr     elem_t0
+        lda     p0
+        sta     p2
+        lda     p0+2
+        sta     p2+2
+        lda     3,s
+        sta     t0
+        lda     1,s
+        jsr     elem_t0
+        lda     p0
+        sta     p1
+        lda     p0+2
+        sta     p1+2
+        lda     p2
+        sta     p0
+        lda     p2+2
+        sta     p0+2
+        jsr     values_equal    ; runs bytecode
+        bne     @differ
+        lda     1,s
+        inc     a
+        sta     1,s
+        bra     @loop
+@differ:
         lda     5,s
         sta     t0
         lda     1,s
@@ -810,12 +901,7 @@ cmp_lists:
         jsr     elem_t0
         jsr     push_p0
         jsr     cmp_values      ; pops both; runs bytecode
-        cmp     #1
-        bne     @decided
-        lda     1,s
-        inc     a
-        sta     1,s
-        bra     @loop
+        bra     @decided
 @a_end: lda     1,s
         cmp     n1
         beq     @equal
@@ -1131,6 +1217,32 @@ op_call:
 ; function is forced IN PLACE first: forcing runs bytecode, which may clobber
 ; any zero-page scratch, so the argument stays on the stack until then.
 do_call:
+        lda     pc              ; frame
+        pha
+        lda     ctab
+        pha
+        lda     env
+        pha
+        jsr     call_enter
+        jsr     run             ; leaves the value where f was
+        pla
+        sta     env
+        pla
+        sta     ctab
+        pla
+        sta     pc
+        rts
+
+; TAIL_CALL: enter the callee in this frame, so its RETURN returns to our
+; caller and the CPU stack does not grow.
+op_tail_call:
+        jsr     call_enter
+        jmp     run
+
+; call_enter: f and its argument (on top) -> pc/ctab/env of the callee, both
+; popped. A set with a __functor attribute is called through it:
+; `s x` == `(s.__functor s) x`.
+call_enter:
         lda     #2
         jsr     slot_addr
         sta     t6
@@ -1145,7 +1257,33 @@ do_call:
         lda     (t0)
         and     #$00FF
         cmp     #T_LAMBDA
+        beq     @lambda
+        cmp     #T_ATTRS
         jne     type_err
+        lda     p1
+        pha
+        lda     p1+2
+        pha
+        lda     #str_functor
+        sta     t1
+        jsr     find_attr
+        jcc     type_err
+        lda     ix
+        jsr     attr_value      ; the functor, unforced
+        jsr     push_p0
+        lda     t0
+        sta     p0
+        lda     #$8000
+        sta     p0+2
+        jsr     push_p0         ; the set, as its own first argument
+        jsr     do_call         ; g = s.__functor s
+        pla
+        sta     p0+2
+        pla
+        sta     p0
+        jsr     push_p0         ; then g x
+        jmp     call_enter
+@lambda:
         tsc
         cmp     #CPU_STACK_MIN
         jcc     nomem
@@ -1170,12 +1308,6 @@ do_call:
         lda     p1+2
         ldy     #10
         sta     (obj),y
-        lda     pc              ; frame
-        pha
-        lda     ctab
-        pha
-        lda     env
-        pha
         ldy     #4
         lda     (t0),y
         sta     pc
@@ -1184,14 +1316,103 @@ do_call:
         sta     ctab
         lda     obj
         sta     env
-        jsr     run             ; leaves the value where f was
-        pla
-        sta     env
-        pla
-        sta     ctab
-        pla
-        sta     pc
         rts
+
+; --- with ------------------------------------------------------------------------------
+; WITH_PUSH: the set (unforced) becomes an environment with the with mark.
+op_with_push:
+        jsr     pop_p0
+        lda     p0
+        sta     p1
+        lda     p0+2
+        sta     p1+2
+        lda     #12
+        jsr     alloc
+        lda     #(T_LIST | (2 << 8))
+        sta     (obj)
+        lda     #$4000          ; aux bit 22: a with environment
+        ldy     #2
+        sta     (obj),y
+        ldy     #4
+        lda     env
+        sta     (obj),y
+        beq     @z
+        lda     #$8000
+@z:     iny
+        iny
+        sta     (obj),y
+        ldy     #8
+        lda     p1
+        sta     (obj),y
+        iny
+        iny
+        lda     p1+2
+        sta     (obj),y
+        lda     obj
+        sta     env
+        jmp     run
+
+; WITH_GET / TRY_WITH_GET: k -> v. Walk the environment chain; at each with
+; environment force its set and look k up. Frame: cur 1,s  key 3,s  strict 5,s.
+op_with_get:
+        lda     #1
+        bra     with_get
+op_try_with_get:
+        lda     #0
+with_get:
+        pha
+        jsr     force_pop_t0
+        jsr     need_string
+        lda     t0
+        pha
+        lda     env
+        pha
+@walk:  lda     1,s
+        beq     @miss
+        sta     t0
+        ldy     #2
+        lda     (t0),y
+        and     #$4000
+        beq     @next
+        ldy     #8
+        lda     (t0),y
+        sta     p0
+        iny
+        iny
+        lda     (t0),y
+        sta     p0+2
+        jsr     push_p0
+        jsr     force_top       ; runs bytecode; the frame is on the CPU stack
+        jsr     pop_p0
+        jsr     deref
+        jsr     need_attrs
+        lda     3,s
+        sta     t1
+        jsr     find_attr
+        bcc     @next
+        lda     ix
+        jsr     attr_value
+        pla
+        pla
+        pla
+        jsr     push_p0
+        jmp     run
+@next:  lda     1,s
+        sta     t0
+        ldy     #4
+        lda     (t0),y
+        sta     1,s
+        bra     @walk
+@miss:  pla
+        pla
+        pla                     ; the strict flag
+        bne     @novar
+        stz     p0
+        stz     p0+2
+        jsr     push_p0
+        jmp     run
+@novar: lda     #E_NOVAR
+        jmp     err_exit
 
 ; Force the value on top of the stack, in place. On return the top is a value.
 force_top:
@@ -1229,6 +1450,14 @@ force_top:
         sta     (t0)
         rep     #$20
         .a16
+        ldx     fstack_n        ; remember it, for a caught throw to un-blackhole
+        cpx     #FSTACK_MAX
+        jcs     @deep
+        lda     t0
+        sta     FSTACK,x
+        inx
+        inx
+        stx     fstack_n
         lda     pc
         pha
         lda     ctab
@@ -1247,6 +1476,8 @@ force_top:
         lda     (t0),y
         sta     env
         jsr     run             ; leaves the thunk's value above the thunk pointer
+        dec     fstack_n
+        dec     fstack_n
         pla
         sta     t0
         pla

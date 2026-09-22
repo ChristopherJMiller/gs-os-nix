@@ -11,8 +11,8 @@
 ; clobbers every zero-page scratch variable.
 ; ---------------------------------------------------------------------------
 
-NUMBUF          = $0B80         ; 8-byte magnitude for decimal conversion
-DIGITS          = $0B90         ; up to 20 digits and a sign
+NUMBUF          = $0BC0         ; 8-byte magnitude for decimal conversion
+DIGITS          = $0BD0         ; up to 20 digits and a sign (past the catch frames)
 
 op_prim:
         jsr     fetch8
@@ -36,6 +36,7 @@ primtable:
         .word   prim_bitand, prim_bitor, prim_bitxor                       ; $26-$28
         .word   prim_listtoattrs, prim_intersectattrs, prim_removeattrs    ; $29-$2B
         .word   prim_partition, prim_basenameof, prim_dirof                ; $2C-$2E
+        .word   prim_tryeval                                              ; $2F
 
 ; --- shared -------------------------------------------------------------------------
 index_err:
@@ -739,18 +740,28 @@ prim_attrvalues:
         jsr     push_p0
         jmp     run
 
-; hasAttr name set / getAttr name set
-prim_hasattr:
+; hasAttr name set / getAttr name set. Nix forces the NAME first, so a
+; throwing name is caught before a non-set second argument is a type error.
+force_name_then_set:
+        lda     #2
+        jsr     slot_addr
+        sta     t6
+        jsr     force_slot      ; the name, in place
         jsr     force_pop_t0
         jsr     need_attrs
         lda     t0
         pha
-        jsr     force_pop_t0
+        jsr     pop_p0
+        jsr     deref
         jsr     need_string
         lda     t0
         sta     t1
         pla
         sta     t0
+        rts
+
+prim_hasattr:
+        jsr     force_name_then_set
         jsr     find_attr
         bcc     @no
         lda     #obj_true
@@ -761,16 +772,7 @@ prim_hasattr:
         jmp     run
 
 prim_getattr:
-        jsr     force_pop_t0
-        jsr     need_attrs
-        lda     t0
-        pha
-        jsr     force_pop_t0
-        jsr     need_string
-        lda     t0
-        sta     t1
-        pla
-        sta     t0
+        jsr     force_name_then_set
         jsr     find_attr
         bcc     @missing
         lda     ix
@@ -1459,8 +1461,15 @@ prim_substring:
 index_err2:
         jmp     index_err
 
-; toString
+; toString. A list is its elements' strings joined by spaces (Nix's coercion),
+; so a throwing element propagates -- catchably -- through it.
 prim_tostring:
+        jsr     tostring_top
+        jmp     run
+
+; tostring_top: the value on top of the stack is replaced by its STRING form.
+; Runs bytecode (forces; recurses into lists).
+tostring_top:
         jsr     force_pop_t0
         lda     (t0)
         and     #$00FF
@@ -1472,9 +1481,66 @@ prim_tostring:
         beq     @bool
         cmp     #T_NULL
         beq     @empty
+        cmp     #T_LIST
+        beq     @list
         jmp     type_err
-@same:  jsr     push_p0
-        jmp     run
+@same:  jmp     push_p0
+@list:  ; map tostring over the elements into a fresh list, then join with " "
+        jsr     aux_t0
+        sta     n0
+        jsr     list_alloc      ; the converted elements (obj)
+        lda     t0
+        pha                     ; source 5,s
+        lda     obj
+        pha                     ; mapped 3,s
+        lda     #0
+        pha                     ; i 1,s
+@ll:    lda     5,s
+        sta     t0
+        jsr     aux_t0
+        cmp     1,s
+        beq     @joined
+        lda     1,s
+        jsr     elem_t0
+        jsr     push_p0
+        jsr     tostring_top    ; recursion, frame-based
+        jsr     pop_p0
+        lda     3,s
+        sta     obj
+        lda     1,s
+        jsr     set_elem_obj
+        lda     1,s
+        inc     a
+        sta     1,s
+        bra     @ll
+@joined:
+        pla
+        pla
+        sta     obj
+        pla
+        lda     #str_space
+        jsr     push_static     ; sep
+        jsr     push_obj_run_nojmp
+        jmp     concat_strings_sep_top
+@bool:  ldy     #4
+        lda     (t0),y
+        and     #$00FF
+        beq     @empty
+        lda     #str_one
+        jmp     push_static
+@empty: lda     #0
+        jsr     str_alloc
+        jmp     push_p0
+@int:   jsr     int_to_str
+        jmp     push_p0
+
+; push_obj_run_nojmp: push the object at obj (young) without dispatching.
+push_obj_run_nojmp:
+        lda     obj
+        sta     p0
+        lda     #$8000
+        sta     p0+2
+        jmp     push_p0
 @bool:  ldy     #4
         lda     (t0),y
         and     #$00FF
@@ -1643,6 +1709,12 @@ pow10:  .dword  $89E80000, $8AC72304    ; 10^19
 
 ; concatStringsSep sep list. Frame: written 1,s  i 3,s  n 5,s  list 7,s  sep 9,s
 prim_concatstringssep:          ; sep list, list on top
+        jsr     concat_strings_sep_top
+        jmp     run
+
+; concat_strings_sep_top: as above, but returns with the result on the stack
+; (toString's list case shares it).
+concat_strings_sep_top:
         jsr     force_two       ; t0 = sep, t1 = list
         jsr     need_string
         lda     (t1)
@@ -1762,7 +1834,7 @@ prim_concatstringssep:          ; sep list, list on top
         clc
         adc     #10
         tcs
-        jmp     push_obj_run    ; (elem_t0 above clobbered p0)
+        jmp     push_obj_run_nojmp  ; (elem_t0 above clobbered p0); returns
 
 ; baseNameOf / dirOf on STRINGs, with Nix's edge cases.
 prim_basenameof:
@@ -1872,6 +1944,87 @@ prim_dirof:
 @dot:   lda     #str_dot
         jsr     push_static
         jmp     run
+
+; --- tryEval: catch frames (BYTECODE.md) --------------------------------------------
+; The argument is on top, unforced. Save a frame, force it; the error exit
+; unwinds here (catch_resume) on throw/assert with everything restored.
+prim_tryeval:
+        lda     catch_n
+        cmp     #CATCH_MAX
+        jcs     nomem
+        asl
+        asl
+        sta     t2
+        asl
+        clc
+        adc     t2              ; * 12
+        tax
+        tsc
+        sta     CATCH+0,x
+        lda     vsp
+        sta     CATCH+2,x
+        lda     env
+        sta     CATCH+4,x
+        lda     pc
+        sta     CATCH+6,x
+        lda     ctab
+        sta     CATCH+8,x
+        lda     fstack_n
+        sta     CATCH+10,x
+        inc     catch_n
+        jsr     force_top
+        dec     catch_n
+        jsr     pop_p0          ; the value
+        lda     p0
+        sta     p2
+        lda     p0+2
+        sta     p2+2
+        lda     #obj_true
+        sta     sav
+        bra     tryeval_build
+catch_resume:
+        jsr     pop_p0          ; the argument's slot
+        lda     #obj_false
+        sta     sav
+        sta     p2
+        lda     #$8000
+        sta     p2+2
+; { success = <sav>; value = <p2>; }
+tryeval_build:
+        lda     p2
+        pha
+        lda     p2+2
+        pha
+        lda     #2
+        jsr     attrs_alloc
+        lda     #2
+        sta     n0
+        lda     #str_success
+        sta     t0
+        jsr     hash_t0
+        lda     #str_success
+        sta     p1
+        lda     #$8000
+        sta     p1+2
+        lda     sav
+        sta     p2
+        lda     #$8000
+        sta     p2+2
+        stz     ix
+        jsr     attrs_set_entry
+        lda     #str_value
+        sta     t0
+        jsr     hash_t0
+        lda     #str_value
+        sta     p1
+        pla
+        sta     p2+2
+        pla
+        sta     p2
+        lda     #1
+        sta     ix
+        jsr     attrs_set_entry
+        jmp     push_obj_run
 
 ; --- errors and forcing --------------------------------------------------------------
 prim_throw:
@@ -2036,3 +2189,6 @@ static_str str_name,    "name"
 static_str str_value,   "value"
 static_str str_right,   "right"
 static_str str_wrong,   "wrong"
+static_str str_success, "success"
+static_str str_functor, "__functor"
+static_str str_space,   " "

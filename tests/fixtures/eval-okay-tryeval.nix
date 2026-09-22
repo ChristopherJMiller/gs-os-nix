@@ -1,0 +1,1 @@
+[ (builtins.tryEval (throw "x")) (builtins.tryEval 1) (builtins.tryEval (assert false; 2)) ((builtins.tryEval (let l = [ (throw "inner") ]; in builtins.head l)).success) (builtins.tryEval (builtins.tryEval (throw "n"))) ]

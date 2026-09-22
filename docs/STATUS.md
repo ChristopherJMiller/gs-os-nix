@@ -8,7 +8,7 @@
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
 | **L2** | Card in a machine: register map, verilate, a2bus device, patched mame | **done — M2 achieved** (gated by the ROM-free harness; MAME glue written, needs a romset) |
 | **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, collector, CPU nursery | **done** — card side (memory engine, `DATA`/`TAG`, `ALLOC`/`RESERVE`, `FOLLOW`, `HASH_STREAM`, `LOOKUP`, `ALU64`, `MARK`/`COMPACT`) and the CPU-side nursery (`target/heap/nursery.s`: bump alloc, Cheney in RAM, one-burst promotion). D6 measured: `just bench-nursery` |
-| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — slice 1 done, scoreboard live.** `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **134 / 397 pass** (103 tvix + 31 local fixtures), 0 fail, 7 error, 233 unsupported by the lowering, 23 notyetpassing. Slice 2b landed: strings (interpolation, indented strings, `+`, ordering), lists (`++`, ordering), attribute sets (`.`, `or`, `?`, `//`, `inherit`, quoted names), deep force with cycle detection, C++ Nix's function-equality rule, and 47 primops as synthesised lambdas `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it |
+| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — slice 1 done, scoreboard live.** `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
 | **L6** | `NARHASH`, ATerm, `derivation` primop, string context | not started |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | not started |
@@ -34,26 +34,27 @@ implementation from a tribute.
 
 ## Next actions (L4)
 
-The scoreboard reads **134 / 397**, and 233 of the rest are `unsupported` —
+The scoreboard reads **246 / 405**, and 133 of the rest are `unsupported` —
 refused by the lowering, not failed by the VM. Since the generator parses all of
 Nix (rnix), the refusals are by feature, and the histogram says what would move
-the number: `builtins.tryEval` 51, `with` 43, float literal 22, path literal 18,
-formals 17, attribute paths in sets (`a.b = 1;`) 15, `rec` 14, legacy `let` 11,
-dynamic attribute names 8, `toJSON`/`fromJSON` 7. (Each test is counted once, by
-the first construct refused.) The 7 `error`s are honest gaps: `__functor` sets
-called as functions (3), `eval-okay-tail-call-1` (needs `TAIL_CALL` and the
-collector), `substring` coercing an int, and two tests that exhaust the 16 KB
-nursery building long strings. The number rises by widening the lowering and the
-VM together, one slice at a time (BYTECODE.md "Slice plan"):
+the number: path literal 35, float literal 23, `builtins` used as a value 10,
+dynamic attribute names 10, `toJSON`/`fromJSON`/`toXML` 13, then a long tail of
+single primops (`catAttrs`, `functionArgs`, `mapAttrs`, `splitVersion`,
+`hashString`, …). The 3 `error`s: two tests exhaust the 16 KB nursery (one
+building a long string, `eval-okay-tail-call-1` allocating 100 000 call
+environments — tail calls no longer grow the CPU stack, but every call still
+allocates), and `substring` coercing an int. The number rises by widening the
+lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
 
 1. ~~Slice 2a: lambdas, application, `assert`~~ **done** — 17 → 37.
 2. ~~Slice 2b: strings, lists, attribute sets, primops~~ **done** — 37 → 134.
    Selection on young sets is a CPU-side hash scan; the card's `LOOKUP` waits for
    promotion (slice 4), and *that* is where the CAM gets measured on real code.
-3. **Slice 3: `tryEval`/`throw` catch frames, `with`, `rec`, formals, attribute
-   paths, `TAIL_CALL`.** `tryEval` alone gates 51 tests: the error exit must
-   unwind the value stack, the CPU stack and the environment to a catch frame
-   and produce `{ success = false; value = false; }`.
+3. ~~Slice 3: `tryEval` catch frames, `with`, formals, `rec`, attribute paths,
+   legacy `let`, `__functor`, `TAIL_CALL`~~ **done** — 134 → 246. Catching a
+   throw un-blackholes every thunk that was under evaluation (the VM keeps a
+   force stack for exactly this), so `tryEval` twice on one failing thunk fails
+   twice, as in Nix.
 4. **Slice 4: the nursery collector running during evaluation**, then promotion
    of survivors to the card, closing the loop with L3 — 16 KB is now the binding
    limit (two corpus tests already hit `E_NOMEM`, loudly). Promoted sets are

@@ -42,6 +42,10 @@ OP_ENV_GET      = $32
 OP_ENV_POP      = $33
 OP_LAMBDA       = $34
 OP_CALL         = $35
+OP_WITH_PUSH    = $36
+OP_WITH_GET     = $37
+OP_TRY_WITH_GET = $38
+OP_TAIL_CALL    = $39
 
 OP_THUNK        = $40
 OP_FORCE        = $41
@@ -97,7 +101,8 @@ PRIM_REMOVEATTRS        = $2B ; 2
 PRIM_PARTITION          = $2C ; 2
 PRIM_BASENAMEOF         = $2D ; 1
 PRIM_DIROF              = $2E ; 1
-PRIM_COUNT              = $2F
+PRIM_TRYEVAL            = $2F ; 1
+PRIM_COUNT              = $30
 
 ; Constant kinds are heap tags (docs/HEAP.md).
 K_INT           = $01
@@ -116,3 +121,4 @@ E_THROW         = $09
 E_ABORT         = $0A
 E_NOATTR        = $0B
 E_INDEX         = $0C
+E_NOVAR         = $0D

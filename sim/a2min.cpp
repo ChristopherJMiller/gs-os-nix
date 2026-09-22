@@ -688,6 +688,7 @@ int selftest(const char *bin_path) {
 // this walks the object graph in RAM and prints it the way `nix-instantiate --eval
 // --strict` would, which is what the corpus's .exp files contain.
 uint32_t ram32(uint32_t a) {
+    if (a + 3 >= RAM_BYTES) return 0;   // a corrupt pointer must not take the harness down
     return static_cast<uint32_t>(ram[a]) | (static_cast<uint32_t>(ram[a + 1]) << 8) |
            (static_cast<uint32_t>(ram[a + 2]) << 16) | (static_cast<uint32_t>(ram[a + 3]) << 24);
 }
@@ -720,17 +721,22 @@ bool is_nix_identifier(const std::string &s) {
 }
 
 std::string nix_string_bytes(uint32_t addr) {
-    const uint32_t len = ram32(addr) >> 8;
+    const uint32_t len = (ram32(addr) >> 8) & 0x3FFFFF;
+    if (addr + 4 + len > RAM_BYTES) return "<OOB>";
     return std::string(reinterpret_cast<const char *>(&ram[addr + 4]), len);
 }
 
+// Printing happens after errors too, when a container may still carry the VM's
+// transient marks in aux bits 22-23 (HEAP.md) -- mask them, and never index
+// past RAM on a corrupt pointer.
 std::string fmt_value(uint32_t ptr, int depth) {
     if (depth > 64) return "<DEEP>";
     if (ptr == 0) return "<NULLPTR>";
     if (!(ptr & 0x80000000u)) return "<MATURE>";
     const uint32_t a = ptr & 0xFFFF;
     const uint8_t tag = ram[a];
-    const uint32_t aux = ram32(a) >> 8;
+    const uint32_t aux = (ram32(a) >> 8) & 0x3FFFFF;
+    if (a + 4 + 12 * aux >= RAM_BYTES) return "<OOB>";
     switch (tag) {
         case TAG_INT: {
             uint64_t u = 0;
@@ -804,7 +810,7 @@ int run_nbc(const char *vm_path, const char *nbc_path) {
         static const char *names[] = { "E_NONE?", "E_BADOP", "E_TYPE", "E_DIVZERO",
                                        "E_INFREC", "E_NOMEM", "E_BADNBC", "E_NOCARD",
                                        "E_ASSERT", "E_THROW", "E_ABORT", "E_NOATTR",
-                                       "E_INDEX" };
+                                       "E_INDEX", "E_NOVAR" };
         const uint8_t code = ram[RESULT_STAT + 1];
         const char *name = code < sizeof(names) / sizeof(names[0]) ? names[code] : "E_?";
         std::printf("  last PCs:");

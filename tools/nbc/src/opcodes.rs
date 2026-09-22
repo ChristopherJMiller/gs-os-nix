@@ -42,6 +42,10 @@ pub const OP_ENV_GET: u8 = 0x32;
 pub const OP_ENV_POP: u8 = 0x33;
 pub const OP_LAMBDA: u8 = 0x34;
 pub const OP_CALL: u8 = 0x35;
+pub const OP_WITH_PUSH: u8 = 0x36;
+pub const OP_WITH_GET: u8 = 0x37;
+pub const OP_TRY_WITH_GET: u8 = 0x38;
+pub const OP_TAIL_CALL: u8 = 0x39;
 
 pub const OP_THUNK: u8 = 0x40;
 pub const OP_FORCE: u8 = 0x41;
@@ -103,6 +107,7 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("partition", 0x2C, 2),
     ("baseNameOf", 0x2D, 1),
     ("dirOf", 0x2E, 1),
+    ("tryEval", 0x2F, 1),
 ];
 
 /// The builtins Nix also exposes unqualified.
@@ -157,6 +162,10 @@ pub fn describe(op: u8) -> Option<(&'static str, usize)> {
         OP_ENV_POP => ("ENV_POP", 0),
         OP_LAMBDA => ("LAMBDA", 2),
         OP_CALL => ("CALL", 0),
+        OP_WITH_PUSH => ("WITH_PUSH", 0),
+        OP_WITH_GET => ("WITH_GET", 0),
+        OP_TRY_WITH_GET => ("TRY_WITH_GET", 0),
+        OP_TAIL_CALL => ("TAIL_CALL", 0),
         OP_THUNK => ("THUNK", 2),
         OP_FORCE => ("FORCE", 0),
         OP_RETURN => ("RETURN", 0),

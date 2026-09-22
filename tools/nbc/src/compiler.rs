@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{unsupported, BinOp, Expr, Pos, StrPart, Unsupported};
+use crate::ast::{unsupported, BinOp, Expr, Param, Pos, StrPart, Unsupported};
 use crate::opcodes::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,11 +22,21 @@ pub struct Chunk {
     pub code: Vec<u8>,
 }
 
+/// One environment object at runtime: a let's bindings, a lambda's parameter,
+/// or a `with` (no names; identifiers fall through to it at runtime).
+struct Scope {
+    names: Vec<String>,
+    with: bool,
+}
+
 pub struct Compiler {
     pub chunks: Vec<Chunk>,
-    scopes: Vec<Vec<String>>,
+    scopes: Vec<Scope>,
     /// Synthesised primop lambdas, one per program: Nix name -> chunk index.
     builtins: HashMap<String, usize>,
+    /// Position of the last CALL emitted into each chunk, for the tail-call
+    /// peephole in `emit_return`.
+    last_call: HashMap<usize, usize>,
 }
 
 /// What a name resolved to.
@@ -37,14 +47,26 @@ enum Binding {
     Literal(u8),
     /// An unqualified global primop such as `map` or `toString`.
     Global(&'static str),
+    /// Not lexically bound, but a `with` is in scope: looked up at runtime, with
+    /// the named global as the fallback if there is one.
+    With(Option<&'static str>),
 }
 
 pub fn compile(program: &Expr) -> Result<Vec<Chunk>, Unsupported> {
-    let mut c = Compiler { chunks: vec![Chunk::default()], scopes: Vec::new(), builtins: HashMap::new() };
+    let mut c = Compiler {
+        chunks: vec![Chunk::default()],
+        scopes: Vec::new(),
+        builtins: HashMap::new(),
+        last_call: HashMap::new(),
+    };
     c.strict(program, 0)?;
-    c.emit(0, OP_RETURN);
+    c.emit_return(0);
     Ok(c.chunks)
 }
+
+/// The name the desugared formals bind the whole argument set to when the
+/// source gives none. Not a valid Nix identifier, so it cannot collide.
+const FORMALS_ARG: &str = "@args";
 
 fn nowhere() -> Pos {
     Pos { line: 0, col: 0 }
@@ -53,6 +75,15 @@ fn nowhere() -> Pos {
 impl Compiler {
     fn emit(&mut self, chunk: usize, b: u8) {
         self.chunks[chunk].code.push(b);
+    }
+    /// RETURN, turning a CALL immediately before it into a TAIL_CALL: nothing
+    /// can land between the two, so that call is in tail position.
+    fn emit_return(&mut self, chunk: usize) {
+        let len = self.chunks[chunk].code.len();
+        if len > 0 && self.last_call.get(&chunk) == Some(&(len - 1)) {
+            self.chunks[chunk].code[len - 1] = OP_TAIL_CALL;
+        }
+        self.emit(chunk, OP_RETURN);
     }
     fn emit_u16(&mut self, chunk: usize, v: u16) {
         self.chunks[chunk].code.extend_from_slice(&v.to_le_bytes());
@@ -96,28 +127,55 @@ impl Compiler {
         u16::try_from(n).map_err(|_| Unsupported { pos: nowhere(), what: format!("more than 65535 {what}") })
     }
 
-    /// Resolves `name`, ignoring the innermost `skip` scopes.
+    /// Resolves `name`, ignoring the innermost `skip` scopes. Lexical bindings
+    /// first, then the literals, then -- if a `with` is in scope -- a runtime
+    /// lookup with the global of that name (if any) as the fallback, then the
+    /// globals themselves.
     fn resolve_from(&self, name: &str, skip: usize, pos: Pos) -> Result<Binding, Unsupported> {
         for (depth, scope) in self.scopes.iter().rev().enumerate().skip(skip) {
-            if let Some(i) = scope.iter().position(|n| n == name) {
+            if let Some(i) = scope.names.iter().position(|n| n == name) {
                 return Ok(Binding::Env(depth as u16, (i + 1) as u16));
             }
         }
         match name {
-            "true" => Ok(Binding::Literal(OP_TRUE)),
-            "false" => Ok(Binding::Literal(OP_FALSE)),
-            "null" => Ok(Binding::Literal(OP_NULL)),
-            _ => match GLOBALS.iter().find(|g| **g == name) {
-                Some(g) => Ok(Binding::Global(g)),
-                None => unsupported(pos, format!("unbound variable `{name}`")),
-            },
+            "true" => return Ok(Binding::Literal(OP_TRUE)),
+            "false" => return Ok(Binding::Literal(OP_FALSE)),
+            "null" => return Ok(Binding::Literal(OP_NULL)),
+            _ => {}
+        }
+        let global = GLOBALS.iter().find(|g| **g == name).copied();
+        if self.scopes.iter().rev().skip(skip).any(|s| s.with) {
+            return Ok(Binding::With(global));
+        }
+        match global {
+            Some(g) => Ok(Binding::Global(g)),
+            None => unsupported(pos, format!("unbound variable `{name}`")),
         }
     }
     fn resolve(&self, name: &str, pos: Pos) -> Result<Binding, Unsupported> {
         self.resolve_from(name, 0, pos)
     }
     fn is_shadowed(&self, name: &str) -> bool {
-        self.scopes.iter().any(|s| s.iter().any(|n| n == name))
+        self.scopes.iter().any(|s| s.with || s.names.iter().any(|n| n == name))
+    }
+
+    /// A runtime `with` lookup of `name`, leaving the value unforced on the
+    /// stack; `global` is what a miss falls back to.
+    fn emit_with_get(&mut self, name: &str, global: Option<&'static str>, pos: Pos, chunk: usize) -> Result<(), Unsupported> {
+        self.emit_const(chunk, Const::Str(name.to_string()))?;
+        match global {
+            None => self.emit(chunk, OP_WITH_GET),
+            Some(g) => {
+                self.emit(chunk, OP_TRY_WITH_GET);
+                let miss = self.emit_jump(chunk, OP_JMP_IF_NOTFOUND);
+                let end = self.emit_jump(chunk, OP_JMP);
+                self.patch_jump(chunk, miss)?;
+                self.emit(chunk, OP_POP);
+                self.emit_builtin(g, pos, chunk)?;
+                self.patch_jump(chunk, end)?;
+            }
+        }
+        Ok(())
     }
 
     /// `builtins.NAME` with `builtins` unshadowed, or a global: the primop's
@@ -141,13 +199,13 @@ impl Compiler {
                 }
                 self.emit(inner, OP_PRIM);
                 self.emit(inner, id);
-                self.emit(inner, OP_RETURN);
+                self.emit_return(inner);
                 for _ in 1..arity {
                     let outer = self.chunks.len();
                     self.chunks.push(Chunk::default());
                     self.emit(outer, OP_LAMBDA);
                     self.emit_u16(outer, inner as u16);
-                    self.emit(outer, OP_RETURN);
+                    self.emit_return(outer);
                     inner = outer;
                 }
                 self.builtins.insert(name.to_string(), inner);
@@ -172,6 +230,10 @@ impl Compiler {
                     self.emit_u16(chunk, i);
                     self.emit(chunk, OP_FORCE);
                 }
+                Binding::With(g) => {
+                    self.emit_with_get(name, g, *pos, chunk)?;
+                    self.emit(chunk, OP_FORCE);
+                }
             },
             Expr::Inherit(name, pos) => match self.resolve_from(name, 1, *pos)? {
                 Binding::Literal(op) => self.emit(chunk, op),
@@ -182,7 +244,21 @@ impl Compiler {
                     self.emit_u16(chunk, i);
                     self.emit(chunk, OP_FORCE);
                 }
+                Binding::With(g) => {
+                    self.emit_with_get(name, g, *pos, chunk)?;
+                    self.emit(chunk, OP_FORCE);
+                }
             },
+            Expr::With(set, body) => {
+                // The set is forced only when an identifier needs it: `with
+                // (abort "x"); 42` is 42.
+                self.lazy(set, chunk)?;
+                self.emit(chunk, OP_WITH_PUSH);
+                self.scopes.push(Scope { names: Vec::new(), with: true });
+                self.strict(body, chunk)?;
+                self.emit(chunk, OP_ENV_POP);
+                self.scopes.pop();
+            }
             Expr::Neg(a) => {
                 self.strict(a, chunk)?;
                 self.emit(chunk, OP_NEG);
@@ -246,7 +322,7 @@ impl Compiler {
             }
             Expr::Let(binds, body) => {
                 let n = Self::count(binds.len(), "bindings in one let")?;
-                self.scopes.push(binds.iter().map(|(n, _, _)| n.clone()).collect());
+                self.scopes.push(Scope { names: binds.iter().map(|(n, _, _)| n.clone()).collect(), with: false });
                 self.emit(chunk, OP_ENV_NEW);
                 self.emit_u16(chunk, n);
                 for (i, (_, _, init)) in binds.iter().enumerate() {
@@ -258,18 +334,49 @@ impl Compiler {
                 self.emit(chunk, OP_ENV_POP);
                 self.scopes.pop();
             }
-            Expr::Lambda(param, _, body) => {
+            Expr::Lambda(Param::Ident(param), _, body) => {
                 // The body runs in a fresh environment whose element 1 is the
                 // argument and whose parent is the closure's environment -- the
                 // same shape as a one-binding let, so the scope chain is the same.
                 self.chunks.push(Chunk::default());
                 let body_chunk = self.chunks.len() - 1;
-                self.scopes.push(vec![param.clone()]);
+                self.scopes.push(Scope { names: vec![param.clone()], with: false });
                 self.strict(body, body_chunk)?;
-                self.emit(body_chunk, OP_RETURN);
+                self.emit_return(body_chunk);
                 self.scopes.pop();
                 self.emit(chunk, OP_LAMBDA);
                 self.emit_u16(chunk, body_chunk as u16);
+            }
+            Expr::Lambda(Param::Formals { entries, bind, .. }, pos, body) => {
+                // { a, b ? d } @ s: body  ==  s: let a = s.a; b = s.b or d; in body
+                // Lazy, defaults may refer to other formals. The closed-formals
+                // check ("unexpected argument") is not performed.
+                let arg = bind.clone().unwrap_or_else(|| FORMALS_ARG.to_string());
+                let binds = entries
+                    .iter()
+                    .map(|(f, fpos, default)| {
+                        let sel = Expr::Select(
+                            Box::new(Expr::Var(arg.clone(), *fpos)),
+                            vec![f.clone()],
+                            default.clone().map(Box::new),
+                        );
+                        (f.clone(), *fpos, sel)
+                    })
+                    .collect();
+                // Nix forces the argument set before anything else, so a
+                // throwing argument fails the call even if no formal is used.
+                let force_arg = Expr::Var(arg.clone(), *pos);
+                let desugared = Expr::Lambda(
+                    Param::Ident(arg),
+                    *pos,
+                    Box::new(Expr::Seq(Box::new(force_arg), Box::new(Expr::Let(binds, body.clone())))),
+                );
+                self.strict(&desugared, chunk)?;
+            }
+            Expr::Seq(a, b) => {
+                self.strict(a, chunk)?;
+                self.emit(chunk, OP_POP);
+                self.strict(b, chunk)?;
             }
             Expr::Apply(f, arg) => {
                 self.strict(f, chunk)?;
@@ -277,6 +384,7 @@ impl Compiler {
                 // anything else becomes a thunk (tvix's rule).
                 self.lazy(arg, chunk)?;
                 self.emit(chunk, OP_CALL);
+                self.last_call.insert(chunk, self.chunks[chunk].code.len() - 1);
             }
             Expr::Assert(cond, body) => {
                 self.strict(cond, chunk)?;
@@ -407,6 +515,8 @@ impl Compiler {
                     self.emit_u16(chunk, i);
                     return Ok(());
                 }
+                // A with-lookup forces the with set, so it stays deferred.
+                Binding::With(_) => return self.lazy_thunk(e, chunk),
             },
             Expr::Select(base, path, None) => {
                 if let (Expr::Var(b, pos), [name]) = (&**base, path.as_slice()) {
@@ -417,13 +527,7 @@ impl Compiler {
             }
             _ => {}
         }
-        self.chunks.push(Chunk::default());
-        let body = self.chunks.len() - 1;
-        self.strict(e, body)?;
-        self.emit(body, OP_RETURN);
-        self.emit(chunk, OP_THUNK);
-        self.emit_u16(chunk, body as u16);
-        Ok(())
+        self.lazy_thunk(e, chunk)
     }
 
     /// Compiles a `let` binding's initialiser: like `lazy`, except that a bare
@@ -450,6 +554,7 @@ impl Compiler {
                     self.emit_u16(chunk, i);
                     return Ok(());
                 }
+                Binding::With(_) => return self.lazy_thunk(init, chunk),
             },
             _ => self.lazy(init, chunk),
         }
@@ -459,7 +564,7 @@ impl Compiler {
         self.chunks.push(Chunk::default());
         let body = self.chunks.len() - 1;
         self.strict(e, body)?;
-        self.emit(body, OP_RETURN);
+        self.emit_return(body);
         self.emit(chunk, OP_THUNK);
         self.emit_u16(chunk, body as u16);
         Ok(())
@@ -620,5 +725,34 @@ mod tests {
         // shadowed builtins is an ordinary variable; unknown primops are refused by name
         assert!(c("let builtins = { length = 1; }; in builtins.length").iter().all(|k| !k.code.contains(&OP_PRIM)));
         assert_eq!(compile(&parse("builtins.nope").unwrap()).unwrap_err().what, "builtins.nope");
+    }
+
+    #[test]
+    fn with_formals_and_tail_calls() {
+        // an identifier no let binds, under a with, is a runtime lookup; a
+        // lexical binding wins over it; a global is the fallback
+        let ch = c("let x = 1; in with { y = 2; }; x + y");
+        assert_eq!(
+            ch[0].code,
+            vec![
+                OP_ENV_NEW, 1, 0, OP_CONST, 0, 0, OP_ENV_SET, 1, 0,
+                OP_THUNK, 1, 0, OP_WITH_PUSH,              // the set stays lazy
+                OP_ENV_GET, 1, 0, 1, 0, OP_FORCE,          // x: depth 1, past the with env
+                OP_CONST, 1, 0, OP_WITH_GET, OP_FORCE,     // y
+                OP_ADD, OP_ENV_POP, OP_ENV_POP, OP_RETURN,
+            ]
+        );
+        assert_eq!(ch[1].code, vec![OP_CONST, 0, 0, OP_CONST, 1, 0, OP_ATTRS, 1, 0, OP_RETURN]);
+        let ch = c("with { }; map");
+        assert!(ch[0].code.contains(&OP_TRY_WITH_GET) && ch[0].code.contains(&OP_JMP_IF_NOTFOUND));
+        // formals desugar to a let over selections; the default uses `or`
+        let ch = c("({ a, b ? a + 1 } @ s: b) { a = 1; }");
+        assert!(ch.iter().any(|k| k.code.contains(&OP_TRY_SELECT)));
+        assert!(ch.iter().any(|k| k.code.contains(&OP_SELECT)));
+        // a call right before RETURN is a tail call; one inside `then` is not
+        let ch = c("let f = n: if n == 0 then 0 else f (n - 1); in f 3");
+        let body = ch.iter().find(|k| k.code.contains(&OP_TAIL_CALL)).expect("tail call emitted");
+        assert_eq!(body.code[body.code.len() - 2..], [OP_TAIL_CALL, OP_RETURN]);
+        assert_eq!(ch[0].code[ch[0].code.len() - 3..], [OP_CALL, OP_ENV_POP, OP_RETURN]);
     }
 }

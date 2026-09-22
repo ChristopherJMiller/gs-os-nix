@@ -11,7 +11,7 @@
 //! wrong-but-plausible answer, which is the failure mode this project guards
 //! against hardest.
 
-use crate::ast::{unsupported, BinOp, Expr, Pos, StrPart, Unsupported};
+use crate::ast::{unsupported, BinOp, Expr, Param, Pos, StrPart, Unsupported};
 use rnix::ast::{self, AstNode, BinOpKind, HasEntry, LiteralKind, UnaryOpKind};
 
 pub fn parse(src: &str) -> Result<Expr, Unsupported> {
@@ -71,6 +71,43 @@ impl<'a> Lower<'a> {
         path.attrs().map(|a| self.static_attr(&a)).collect()
     }
 
+    /// `rec { a = 1; b = a; }`  ==  `let a = 1; b = a; in { inherit a b; }`.
+    /// `inherit x;` inside it reads the scope outside, as in a let.
+    fn rec_set(&self, node: &impl HasEntry, what: &str) -> Result<Expr, Unsupported> {
+        let binds = self.bindings(node, what, true)?;
+        let set = binds
+            .iter()
+            .map(|(n, pos, _)| (n.clone(), *pos, Expr::Var(n.clone(), *pos)))
+            .collect();
+        Ok(Expr::Let(binds, Box::new(Expr::AttrSet(set))))
+    }
+
+    /// Adds `name = value` to a binding list, merging attribute-set literals so
+    /// that `a.b = 1; a.c = 2;` and `a = { b = 1; }; a.c = 2;` both become
+    /// `a = { b = 1; c = 2; }`. Anything else landing twice is refused.
+    fn insert_binding(
+        binds: &mut Vec<(String, Pos, Expr)>,
+        name: String,
+        pos: Pos,
+        value: Expr,
+        what: &str,
+    ) -> Result<(), Unsupported> {
+        if let Some(existing) = binds.iter_mut().find(|(n, _, _)| *n == name) {
+            match (&mut existing.2, value) {
+                (Expr::AttrSet(old), Expr::AttrSet(new)) => {
+                    for (n, p, v) in new {
+                        Self::insert_binding(old, n, p, v, what)?;
+                    }
+                    Ok(())
+                }
+                _ => unsupported(pos, format!("`{name}` bound twice in one {what}")),
+            }
+        } else {
+            binds.push((name, pos, value));
+            Ok(())
+        }
+    }
+
     /// The bindings of a `let` or an attribute set: `name = value;`, `inherit
     /// a b;` and `inherit (e) a b;`. Nested paths (`a.b = 1;`) are not in this
     /// slice. In a `let`, `inherit a;` refers to the scope OUTSIDE the let.
@@ -82,21 +119,20 @@ impl<'a> Lower<'a> {
     ) -> Result<Vec<(String, Pos, Expr)>, Unsupported> {
         let mut binds: Vec<(String, Pos, Expr)> = Vec::new();
         let mut push = |name: String, pos: Pos, e: Expr| -> Result<(), Unsupported> {
-            if binds.iter().any(|(n, _, _)| *n == name) {
-                return unsupported(pos, format!("`{name}` bound twice in one {what}"));
-            }
-            binds.push((name, pos, e));
-            Ok(())
+            Self::insert_binding(&mut binds, name, pos, e, what)
         };
         for entry in node.attrpath_values() {
             let Some(path) = entry.attrpath() else { return self.refuse(&entry, "binding without a name") };
-            let attrs: Vec<ast::Attr> = path.attrs().collect();
-            let name = match attrs.as_slice() {
-                [one] => self.static_attr(one)?,
-                _ => return unsupported(self.pos(&path), format!("attribute path in {what}")),
-            };
+            let names = self.static_path(&path)?;
             let Some(value) = entry.value() else { return self.refuse(&entry, "binding without a value") };
-            push(name, self.pos(&path), self.expr(&value)?)?;
+            let pos = self.pos(&path);
+            // a.b.c = v  ==  a = { b = { c = v; }; }, merged with its siblings
+            let mut value = self.expr(&value)?;
+            let (first, rest) = names.split_first().expect("non-empty attrpath");
+            for n in rest.iter().rev() {
+                value = Expr::AttrSet(vec![(n.clone(), pos, value)]);
+            }
+            push(first.clone(), pos, value)?;
         }
         for inh in node.inherits() {
             let from = match inh.from() {
@@ -210,7 +246,7 @@ impl<'a> Lower<'a> {
             }
             ast::Expr::AttrSet(s) => {
                 if s.rec_token().is_some() {
-                    return self.refuse(s, "rec attribute set");
+                    return self.rec_set(s, "attribute set");
                 }
                 Ok(Expr::AttrSet(self.bindings(s, "attribute set", false)?))
             }
@@ -260,11 +296,41 @@ impl<'a> Lower<'a> {
                             Some(tok) => tok.text().to_string(),
                             None => return self.refuse(&p, "identifier `or` as parameter"),
                         };
-                        Ok(Expr::Lambda(name, self.pos(&p), Box::new(self.expr(&body)?)))
+                        Ok(Expr::Lambda(Param::Ident(name), self.pos(&p), Box::new(self.expr(&body)?)))
                     }
-                    Some(ast::Param::Pattern(p)) => self.refuse(&p, "formals pattern"),
+                    Some(ast::Param::Pattern(p)) => {
+                        let mut entries = Vec::new();
+                        for e in p.pat_entries() {
+                            let name = match e.ident().and_then(|i| i.ident_token()) {
+                                Some(tok) => tok.text().to_string(),
+                                None => return self.refuse(&e, "identifier `or` as formal"),
+                            };
+                            let default = match e.default() {
+                                Some(d) => Some(self.expr(&d)?),
+                                None => None,
+                            };
+                            entries.push((name, self.pos(&e), default));
+                        }
+                        let bind = match p.pat_bind().and_then(|b| b.ident()).and_then(|i| i.ident_token()) {
+                            Some(tok) => Some(tok.text().to_string()),
+                            None => None,
+                        };
+                        let formals = Param::Formals { entries, ellipsis: p.ellipsis_token().is_some(), bind };
+                        Ok(Expr::Lambda(formals, self.pos(&p), Box::new(self.expr(&body)?)))
+                    }
                     None => self.refuse(lam, "lambda without a parameter"),
                 }
+            }
+            ast::Expr::With(w) => {
+                let (Some(ns), Some(body)) = (w.namespace(), w.body()) else {
+                    return self.refuse(w, "incomplete with");
+                };
+                Ok(Expr::With(Box::new(self.expr(&ns)?), Box::new(self.expr(&body)?)))
+            }
+            ast::Expr::LegacyLet(l) => {
+                // let { a = 1; body = a; }  ==  (rec { a = 1; body = a; }).body
+                let set = self.rec_set(l, "let")?;
+                Ok(Expr::Select(Box::new(set), vec!["body".into()], None))
             }
             ast::Expr::Apply(app) => {
                 let (Some(f), Some(a)) = (app.lambda(), app.argument()) else {
@@ -280,8 +346,6 @@ impl<'a> Lower<'a> {
             }
             // Everything below is real Nix the VM cannot run yet. Named, so the
             // scoreboard can say which feature would move the most tests.
-            ast::Expr::With(n) => self.refuse(n, "with"),
-            ast::Expr::LegacyLet(n) => self.refuse(n, "legacy let"),
             ast::Expr::PathAbs(n) => self.refuse(n, "path literal"),
             ast::Expr::PathRel(n) => self.refuse(n, "path literal"),
             ast::Expr::PathHome(n) => self.refuse(n, "path literal"),
@@ -323,7 +387,8 @@ mod tests {
                 bs.into_iter().map(|(n, _, e)| (n, Pos { line: 1, col: 0 }, strip(e))).collect(),
                 Box::new(strip(*body)),
             ),
-            Expr::Lambda(n, _, b) => Expr::Lambda(n, Pos { line: 1, col: 0 }, Box::new(strip(*b))),
+            Expr::Lambda(n, _, b) => Expr::Lambda(strip_param(n), Pos { line: 1, col: 0 }, Box::new(strip(*b))),
+            Expr::With(e, b) => Expr::With(Box::new(strip(*e)), Box::new(strip(*b))),
             Expr::Apply(f, a) => Expr::Apply(Box::new(strip(*f)), Box::new(strip(*a))),
             Expr::Assert(c, b) => Expr::Assert(Box::new(strip(*c)), Box::new(strip(*b))),
             Expr::Str(parts) => Expr::Str(
@@ -346,8 +411,22 @@ mod tests {
             Expr::Update(a, b) => Expr::Update(Box::new(strip(*a)), Box::new(strip(*b))),
             Expr::Concat(a, b) => Expr::Concat(Box::new(strip(*a)), Box::new(strip(*b))),
             Expr::Inherit(n, _) => Expr::Inherit(n, Pos { line: 1, col: 0 }),
+            Expr::Seq(a, b) => Expr::Seq(Box::new(strip(*a)), Box::new(strip(*b))),
             e => e,
         }
+    }
+    fn strip_param(p: Param) -> Param {
+        match p {
+            Param::Formals { entries, ellipsis, bind } => Param::Formals {
+                entries: entries.into_iter().map(|(n, _, d)| (n, Pos { line: 1, col: 0 }, d.map(strip))).collect(),
+                ellipsis,
+                bind,
+            },
+            p => p,
+        }
+    }
+    fn ident(s: &str) -> Param {
+        Param::Ident(s.into())
     }
 
     // These pin down that the lowering preserves Nix's precedence as rnix parses
@@ -390,15 +469,10 @@ mod tests {
     #[test]
     fn refuses_by_feature_name() {
         let cases = [
-            ("{ a, b }: a", "formals pattern"),
-            ("rec { a = 1; }", "rec attribute set"),
             ("{ ${a} = 1; }", "dynamic attribute name"),
             ("{ \"${a}\" = 1; }", "dynamic attribute name"),
-            ("with a; b", "with"),
             ("./p", "path literal"),
             ("1.5", "float literal"),
-            ("let a.b = 1; in a", "attribute path in let"),
-            ("{ a.b = 1; }", "attribute path in attribute set"),
             ("let x = 1; x = 2; in x", "`x` bound twice in one let"),
             ("{ a = 1; inherit a; }", "`a` bound twice in one attribute set"),
         ];
@@ -412,7 +486,7 @@ mod tests {
 
     #[test]
     fn positions_are_line_and_column() {
-        let err = parse("let\n  x = 1;\n  in with x; x").unwrap_err();
+        let err = parse("let\n  x = 1;\n  in ./x").unwrap_err();
         assert_eq!(err.pos, Pos { line: 3, col: 6 });
     }
 
@@ -458,15 +532,68 @@ mod tests {
         assert_eq!(
             p("x: y: x + y"),
             Expr::Lambda(
-                "x".into(),
+                ident("x"),
                 Pos { line: 1, col: 0 },
                 Box::new(Expr::Lambda(
-                    "y".into(),
+                    ident("y"),
                     Pos { line: 1, col: 0 },
                     Box::new(Expr::Bin(BinOp::Add, var("x"), var("y")))
                 ))
             )
         );
         assert_eq!(p("assert true; 1"), Expr::Assert(var("true"), int(1)));
+        // formals
+        assert_eq!(
+            p("{ a, b ? 1, ... } @ s: a"),
+            Expr::Lambda(
+                Param::Formals {
+                    entries: vec![("a".into(), Pos { line: 1, col: 0 }, None), ("b".into(), Pos { line: 1, col: 0 }, Some(Expr::Int(1)))],
+                    ellipsis: true,
+                    bind: Some("s".into()),
+                },
+                Pos { line: 1, col: 0 },
+                var("a")
+            )
+        );
+    }
+
+    #[test]
+    fn desugars_rec_legacy_let_and_attr_paths() {
+        assert_eq!(
+            p("rec { a = 1; b = a; }"),
+            Expr::Let(
+                vec![("a".into(), Pos { line: 1, col: 0 }, Expr::Int(1)), ("b".into(), Pos { line: 1, col: 0 }, *var("a"))],
+                Box::new(Expr::AttrSet(vec![
+                    ("a".into(), Pos { line: 1, col: 0 }, *var("a")),
+                    ("b".into(), Pos { line: 1, col: 0 }, *var("b")),
+                ]))
+            )
+        );
+        assert_eq!(
+            p("let { body = 1; }"),
+            Expr::Select(
+                Box::new(Expr::Let(
+                    vec![("body".into(), Pos { line: 1, col: 0 }, Expr::Int(1))],
+                    Box::new(Expr::AttrSet(vec![("body".into(), Pos { line: 1, col: 0 }, *var("body"))]))
+                )),
+                vec!["body".into()],
+                None
+            )
+        );
+        assert_eq!(
+            p("{ a.b = 1; a.c = 2; a = { d = 3; }; }"),
+            Expr::AttrSet(vec![(
+                "a".into(),
+                Pos { line: 1, col: 0 },
+                Expr::AttrSet(vec![
+                    ("b".into(), Pos { line: 1, col: 0 }, Expr::Int(1)),
+                    ("c".into(), Pos { line: 1, col: 0 }, Expr::Int(2)),
+                    ("d".into(), Pos { line: 1, col: 0 }, Expr::Int(3)),
+                ])
+            )])
+        );
+        assert_eq!(p("with a; b"), Expr::With(var("a"), var("b")));
+        assert!(parse("{ a.b = 1; a = 2; }").is_err());
+        assert!(parse("{ a.b = 1; a.b = 2; }").is_err());
     }
 }

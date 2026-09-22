@@ -67,8 +67,11 @@ pub enum Expr {
     Implies(Box<Expr>, Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Let(Vec<(String, Pos, Expr)>, Box<Expr>),
-    /// `param: body`. Formals (`{ a, b }:`) are not in this slice.
-    Lambda(String, Pos, Box<Expr>),
+    /// `param: body`. Formals are desugared by the compiler (BYTECODE.md
+    /// "Desugarings").
+    Lambda(Param, Pos, Box<Expr>),
+    /// `with e; body`.
+    With(Box<Expr>, Box<Expr>),
     /// `f arg`.
     Apply(Box<Expr>, Box<Expr>),
     /// `assert cond; body`.
@@ -90,10 +93,20 @@ pub enum Expr {
     Concat(Box<Expr>, Box<Expr>),
     /// `inherit x;` as a let binding: `x` from the scope OUTSIDE the let.
     Inherit(String, Pos),
+    /// Compiler-internal: evaluate `a` for effect (force it), then `b`.
+    /// Formals force their argument set on entry, as Nix does.
+    Seq(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StrPart {
     Lit(String),
     Interp(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Param {
+    Ident(String),
+    /// `{ a, b ? default, ... } @ bind`
+    Formals { entries: Vec<(String, Pos, Option<Expr>)>, ellipsis: bool, bind: Option<String> },
 }

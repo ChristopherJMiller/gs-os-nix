@@ -160,6 +160,39 @@ instruction even if it was a thunk before (in-place update, see below).
 | `$2B` | `UPDATE` | | `a b → a//b` | forces both; merges by name, `b` wins |
 | `$2C` | `INTERPOLATE` | `u16 n` | `p1 … pn → str` | forces the `n` parts; each must be a `STRING` in this slice (Nix coerces paths and `__toString` sets too — later); concatenates. String context is the union — carried from day one as the context pointer, currently always null |
 | `$43` | `PRIM` | `u8 id` | `a1 … ak → v` | run primop `id` (table below) on its `k` arguments, which are on the stack unforced; the primop forces what it needs |
+| `$36` | `WITH_PUSH` | | `s →` | `env ← LIST(2)` with `[0] = old env`, `[1] = s` (unforced), and the **with mark** (bit 22 of `aux`) set. A `with` scope is an environment like any other, so thunks capture it and `ENV_GET` depths count it |
+| `$37` | `WITH_GET` | | `k → v` | walk the environment chain; at each marked environment force `[1]` (must be `ATTRS`) and look `k` up; the first hit is pushed unforced. None → `E_NOVAR` |
+| `$38` | `TRY_WITH_GET` | | `k → v \| ∅` | as `WITH_GET`, but a miss pushes ∅ — the compiler uses it when a global (`map`, `toString`, …) is the fallback |
+| `$39` | `TAIL_CALL` | | `f a → ` | `CALL` without a frame: sets `pc`/`ctab`/`env` to the callee and continues, so the callee's `RETURN` returns to *this* chunk's caller. Emitted for a `CALL` immediately before `RETURN` |
+
+### Catch frames: `tryEval` and `throw`
+
+`builtins.tryEval e` is primop `$2F` (arity 1, argument unforced). It records a
+**catch frame** — the CPU stack pointer, `vsp`, `env`, `pc`, `ctab` — on a small
+catch stack in RAM, then forces its argument. If the force returns, the frame is
+popped and `{ success = true; value = v; }` is built. If anywhere inside a
+*catchable* error is raised — `E_THROW` or `E_ASSERT`, the two Nix lets `tryEval`
+catch; not `abort`, not type or missing-attribute errors, which propagate as in
+Nix — the error exit sees a non-empty catch stack, pops the frame, restores the
+four registers and the CPU stack, and resumes in `tryEval` with
+`{ success = false; value = false; }`. Thunks that were being forced when the
+error unwound would be left `BLACKHOLE`; the VM keeps a **force stack** of the
+thunks under evaluation, the frame records its depth, and the unwind turns every
+entry above it back into a `THUNK` — so forcing a failed thunk again re-runs it
+and throws again, which is Nix's observable behaviour
+(`eval-okay-tryeval-thunk-twice`).
+
+### Desugarings the generator performs
+
+Nix has several forms that are other forms in disguise; the lowering rewrites
+them so the VM and the compiler never see them:
+
+| Form | Becomes |
+|---|---|
+| `rec { a = 1; b = a; }` | `let a = 1; b = a; in { inherit a b; }` |
+| `let { a = 1; body = a; }` (legacy) | `(rec { a = 1; body = a; }).body` |
+| `{ a.b = 1; a.c = 2; }` | `{ a = { b = 1; c = 2; }; }` — paths are merged at compile time; a path that lands on a non-literal is refused |
+| `{ a, b ? d, ... } @ s: body` | `s: let a = s.a; b = s.b or d; in body` — formals are lazy, defaults may refer to other formals, `@` names the whole set. (The "unexpected argument" check on closed formals is **not** yet performed.) |
 
 `ADD` is polymorphic at runtime: two `INT`s add, two `STRING`s concatenate (context
 union), anything else is `E_TYPE`. `EQ` compares `STRING`s by bytes, `LIST`s
@@ -227,6 +260,7 @@ primop would move the most tests.
 | `$2C` | `partition` | 2 | `f list` → `{ right; wrong; }` |
 | `$2D` | `baseNameOf` | 1 | last path component of a `STRING` |
 | `$2E` | `dirOf` | 1 | everything before it; `"."` if none |
+| `$2F` | `tryEval` | 1 | see "Catch frames" |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`
 diffs the primop table too).
@@ -242,8 +276,7 @@ b = "x"; }` (names sorted, quoted when not identifiers), strings with Nix's
 escapes (`\"`, `\\`, `\n`, `\r`, `\t`, `\${`), `<LAMBDA>` for functions.
 
 Every gap in the numbering is deliberate room for the next slice (`$06`–`$0F`
-constants, `$15` string ops, `$2D`–`$2F` more attrs/list ops, `$36`–`$3F` `with`,
-formals and `TAIL_CALL`, `$44`+ `tryEval`).
+constants, `$15` string ops, `$2D`–`$2F` more attrs/list ops, `$3A`–`$3F`, `$44`+).
 
 ### `FORCE`, blackholing, in-place update
 
@@ -363,7 +396,8 @@ Error codes: `E_BADOP $01`, `E_TYPE $02`, `E_DIVZERO $03`, `E_INFREC $04`,
 (malformed image, or a slot read before it was set — a generator bug), `E_NOCARD
 $07` (`MUL`/`DIV` with no card in any slot), `E_ASSERT $08`, `E_THROW $09`,
 `E_ABORT $0A`, `E_NOATTR $0B` (selecting a missing attribute), `E_INDEX $0C`
-(`head []`, `elemAt` out of range, negative `substring` start). The harness (`a2min --run-nbc`) prints the value in
+(`head []`, `elemAt` out of range, negative `substring` start), `E_NOVAR $0D`
+(an identifier no `with` set supplies). The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.
 
@@ -382,9 +416,11 @@ Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corp
    that call back into Nix keep their state on the CPU stack; and the VM binary
    is linker-capped at 12 KB because the first time it grew into the nursery the
    `true`/`false` singletons were silently overwritten.
-3. `with`, `rec`, formals, inline caches, and **`TAIL_CALL`**: a `CALL` that is the
-   last instruction before `RETURN` reuses the frame instead of nesting. Without
-   it `eval-okay-tail-call-1` (100 000 calls) exhausts the call stack — and without
-   slice 4 it exhausts the nursery, so it needs both.
+3. **`tryEval` catch frames, `with`, formals, `rec`, attribute paths, legacy
+   `let`, `__functor`, `TAIL_CALL`.** Done. A caught throw un-blackholes the
+   thunks it unwound through (the VM keeps a stack of thunks under evaluation
+   for this), so a failed thunk forced again throws again, as in Nix.
+   `eval-okay-tail-call-1` (100 000 calls) no longer grows the CPU stack but
+   still allocates an environment per call, so it waits for slice 4.
 4. Builtins that touch the store, `import`, paths; the nursery collector runs
    during evaluation.
