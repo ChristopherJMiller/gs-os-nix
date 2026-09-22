@@ -149,6 +149,37 @@
             grep -q "M2 PASS" "$out"
           '';
 
+        # Regressions for the silent-corruption bug class. Every bug found in this
+        # card produced a plausible-looking wrong answer rather than a failure, so
+        # each one gets a permanent named test (sim/regress_main.cpp).
+        regress = pkgs.runCommandCC "check-regress"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests .
+            chmod -R +w .
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o regress \
+              rtl/a2nix_card.v sim/regress_main.cpp
+            ./build/regress tests/vectors/l1.txt | tee "$out"
+            grep -q "REGRESS PASS" "$out"
+          '';
+
+        # Prove the regression suite can actually FAIL, by reintroducing each fixed
+        # bug and asserting it is caught. Without this, the suite above could rot into
+        # decoration -- which already happened once: R4's first two mutations both
+        # SURVIVED, because the FIFO had made the original hazard unreachable.
+        mutation = pkgs.runCommandCC "check-mutation"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            ./scripts/mutation-test.sh | tee "$out"
+            grep -q "MUTATION PASS" "$out"
+          '';
+
         # The 65816 side must actually assemble, and its hardcoded fingerprint must
         # still agree with the golden vectors -- otherwise the demo would print a
         # plausible-looking store path while asserting the wrong expected value.

@@ -79,8 +79,25 @@ test-card: build-card
 economics: build-card
     @./{{CARD_DIR}}/card_test {{VECTORS}} | grep -E "bus accesses|cost:"
 
-# Everything: L1 and L2 testbenches.
-test-all: test test-card
+# --- Regressions -------------------------------------------------------------
+
+# Run the silent-corruption regression suite. Each test names the bug it guards.
+regress:
+    verilator --cc --exe --build -j 0 \
+        -Irtl --top-module a2nix_card \
+        -Wall -Wno-DECLFILENAME \
+        --Mdir sim/build_regress -o regress \
+        rtl/a2nix_card.v sim/regress_main.cpp
+    ./sim/build_regress/regress {{VECTORS}}
+
+# Prove the regression suite can fail: reintroduce each fixed bug, expect a catch.
+# Run this whenever you add a regression test -- a test that cannot fail is worse
+# than no test.
+mutation:
+    ./scripts/mutation-test.sh
+
+# Everything: L1, L2, regressions, M2.
+test-all: test test-card regress m2
 
 # Regenerate golden vectors from the REAL nix on this host.
 # Aborts if the reference model disagrees with nix, so parity can't silently rot.

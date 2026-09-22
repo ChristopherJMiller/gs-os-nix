@@ -69,6 +69,11 @@ implementation from a tribute.
 
 ## Standing gates
 
+- **`checks.regress` + `checks.mutation`** — every silent-corruption bug found gets a
+  permanent named test, *and* the mutation runner reintroduces each bug to prove the
+  test can fail. See DECISIONS.md **D14**: R4's first two mutations both survived, so
+  this is not a formality.
+
 - **`checks.verb-economics`** — every verb's measured MAME cycle cost vs. its 65816
   equivalent. A verb that doesn't pay for its bus crossing gets deleted.
 - **`checks.fixture-purity`** — no `.nbc` fixture contains a store path or hash; no

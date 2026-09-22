@@ -199,3 +199,42 @@ pointer-chasing workloads **associativity matters more than policy precision**.
 
 The store region needs no policy discussion at all — it is immutable and
 content-addressed, so it is a pure read cache with no invalidation or dirty bits.
+
+---
+
+## D14 — Regression tests must be mutation-tested
+
+Every bug found in this card so far shared a shape: it produced a **plausible-looking
+wrong answer** rather than a failure. A byte-reversed digest is still 32 hex bytes; a
+truncated message still hashes; a rotated `LEN` still streams; an `ALLOC` header whose
+tag byte survived still looked almost right. For a hash accelerator that is the worst
+available failure mode, because the caller cannot notice.
+
+So each one gets a permanent named test in `sim/regress_main.cpp` with its mechanism
+recorded — and, more importantly, **`scripts/mutation-test.sh` reintroduces each bug
+and asserts the test catches it.** A regression test that cannot distinguish a working
+card from a broken one produces confidence without evidence.
+
+This is not hypothetical. It fired immediately:
+
+- R4's first mutation (*"READY reports only the hasher's state"*) **SURVIVED**. That was
+  the original bug, but the input FIFO had since decoupled the CPU from the hasher and
+  made it structurally impossible.
+- R4's second mutation (*"the drain issues a byte while one is in flight"*) **also
+  survived**. That hazard is genuinely present in the RTL but **unreachable at this
+  clock ratio**: the bus delivers a byte every ~48 card cycles while the drain consumes
+  one every 2, so the FIFO is essentially never non-empty across a block boundary.
+- R4's *test* was also weak: it compared `HASH_PUSH` against `HASH_STREAM` and treated
+  agreement as success. Both paths share the FIFO drain, so a drain bug corrupts them
+  identically and they still agree. **Two wrong answers that match are not evidence.**
+  It now checks both paths against absolute vectors.
+
+Two consequences worth keeping:
+
+1. **The 32-entry FIFO is heavily over-provisioned** for a 1.024 MHz slot, so the whole
+   overflow/double-issue hazard class is currently unreachable. Those guards stay as
+   defence in depth — they would matter on a slower card clock or a faster bus — but
+   they cannot be mutation-tested today, and pretending otherwise would recreate the
+   decorative-test problem.
+2. **A non-matching mutation pattern is a failure, not a skip.** An inert mutation would
+   report "caught" forever while testing nothing.
