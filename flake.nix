@@ -6,17 +6,34 @@
   outputs = { self, nixpkgs }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
-      forAll = f: nixpkgs.lib.genAttrs systems (system: f {
-        inherit system;
-        pkgs = nixpkgs.legacyPackages.${system};
+
+      # Our own packages, built once per system and shared by devShells, packages
+      # and checks so nothing drifts between them.
+      ourPackagesFor = pkgs: nixpkgs.lib.makeScope pkgs.newScope (self': {
+        applecommander = self'.callPackage ./nix/pkgs/applecommander.nix { };
+        cadius = self'.callPackage ./nix/pkgs/cadius.nix { };
+        verilated-card = self'.callPackage ./nix/pkgs/verilated-card.nix {
+          rtlSrc = ./rtl;
+        };
+        mame-a2nix = self'.callPackage ./nix/pkgs/mame-a2nix.nix {
+          verilatedCard = self'.verilated-card;
+          cardSrc = ./mame;
+        };
       });
+
+      forAll = f: nixpkgs.lib.genAttrs systems (system:
+        let pkgs = nixpkgs.legacyPackages.${system};
+        in f {
+          inherit system pkgs;
+          ours = ourPackagesFor pkgs;
+        });
 
       # Every RTL module, in dependency order.
       rtlSources = "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/a2nix_card.v";
       rtlTops = [ "sha256_core" "sha256" "storepath" "a2nix_card" ];
     in
     {
-      devShells = forAll ({ pkgs, ... }: {
+      devShells = forAll ({ pkgs, ours, ... }: {
         default = pkgs.mkShell {
           name = "gs-os-nix";
 
@@ -40,7 +57,11 @@
             cc65                 # ca65 --cpu 65816; the C compiler is 6502-only
 
             # --- Emulation ---
-            mame                 # patched variant will live in nix/pkgs at L2
+            mame                 # stock; `nix build .#mame-a2nix` adds the card
+
+            # --- Apple II disk images (packaged here; absent from nixpkgs) ---
+            ours.applecommander  # `ac`
+            ours.cadius
 
             # --- Build glue ---
             just                 # see ./justfile for the task list
@@ -150,21 +171,13 @@
           '';
       });
 
-      packages = forAll ({ pkgs, ... }: rec {
-        # The RTL, Verilated into a static library MAME can link. Keeps the RTL as
-        # the single source of truth for both MAME and a real bitstream.
-        verilated-card = pkgs.callPackage ./nix/pkgs/verilated-card.nix {
-          rtlSrc = ./rtl;
-        };
-
-        # MAME with the card registered as an Apple IIgs slot option.
-        # Long one-off build; cached afterwards.
-        mame-a2nix = pkgs.callPackage ./nix/pkgs/mame-a2nix.nix {
-          verilatedCard = verilated-card;
-          cardSrc = ./mame;
-        };
-
-        default = verilated-card;
+      packages = forAll ({ ours, ... }: {
+        # Apple II disk tooling, neither of which is in nixpkgs.
+        inherit (ours) applecommander cadius;
+        # The RTL Verilated into a static library MAME links, and MAME with the card
+        # registered as an Apple IIgs slot option (long one-off build, then cached).
+        inherit (ours) verilated-card mame-a2nix;
+        default = ours.verilated-card;
       });
 
       apps = forAll ({ pkgs, system, ... }: {
