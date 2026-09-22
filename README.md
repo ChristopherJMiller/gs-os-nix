@@ -13,6 +13,7 @@ hashes **byte-identically to upstream Nix**, evaluating real Nix natively.
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The machine: what runs where, and why |
 | [docs/CARD-ISA.md](docs/CARD-ISA.md) | **Normative** card interface — register map and verbs |
+| [docs/HEAP.md](docs/HEAP.md) | **Normative** heap object layout and tags |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Why it's built this way, and what was rejected |
 | [docs/REFERENCES.md](docs/REFERENCES.md) | Verified facts with citations — don't re-derive these |
 | [docs/RUNNING.md](docs/RUNNING.md) | Getting code onto the emulated IIgs |

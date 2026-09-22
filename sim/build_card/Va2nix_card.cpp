@@ -19,8 +19,12 @@ Va2nix_card::Va2nix_card(VerilatedContext* _vcontextp__, const char* _vcname__)
     , c0n_rdata{vlSymsp->TOP.c0n_rdata}
     , c8_rdata{vlSymsp->TOP.c8_rdata}
     , take_c800{vlSymsp->TOP.take_c800}
+    , mem_we{vlSymsp->TOP.mem_we}
+    , mem_wdata{vlSymsp->TOP.mem_wdata}
+    , mem_rdata{vlSymsp->TOP.mem_rdata}
     , irq{vlSymsp->TOP.irq}
     , c8_addr{vlSymsp->TOP.c8_addr}
+    , mem_addr{vlSymsp->TOP.mem_addr}
     , rootp{&(vlSymsp->TOP)}
 {
     // Register model with the context

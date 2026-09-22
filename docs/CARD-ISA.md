@@ -18,7 +18,7 @@ bytes through a port that auto-increments.
 |---|---|---|---|
 | `$C0n0` | `CMD` | W | Write a verb opcode; execution begins immediately |
 | `$C0n0` | `STATUS` | R | `b7` BUSY, `b6` DONE, `b5` ERR, `b4` **READY**, `b3..b0` error code |
-| `$C0n1` | `CTRL` | W | `b0` RESET, `b1` IRQ_EN, `b2` ABORT |
+| `$C0n1` | `CTRL` | W | `b0` RESET, `b1` IRQ_EN, `b2` ABORT, `b3` **RESET_PORTS** |
 | `$C0n1` | `ID` | R | `$A2` magic, then version via `PPORT` |
 | `$C0n2` | `ASEL` | W | Select address register `A0..A3`; resets its byte index |
 | `$C0n3` | `APORT` | RW | Sequential bytes of selected address register (LSB first, 4 bytes); auto-increments byte index |
@@ -47,6 +47,29 @@ Getting this backwards yields a byte-reversed digest — which still *looks* lik
 plausible hash, so it is worth stating explicitly. `tb`/`card_main.cpp` assert both
 orders.
 
+### Rewinding a port index — `CTRL` bit 3
+
+`APORT` and `PPORT` rewind whenever `ASEL`/`PSEL` is written. **`LEN` has no select
+register**, so before this existed, a caller that read a *partial* `LEN` left its index
+rotated permanently, and every later 4-byte write landed shifted — silently, with the
+card streaming a wrong length. `CTRL` bit 3 rewinds `aidx`, `pidx` and `lenidx`
+together.
+
+**Write `CTRL <- $08` before setting `LEN`** unless you are certain the index is at
+zero. The cost is one bus access.
+
+### `DATA` and `TAG` read the same byte
+
+Both return the byte at the selected address register; only the side effect differs.
+`DATA` advances the register (and prefetches the next byte, which is what makes
+sequential heap walking cheap); `TAG` does not. So `TAG` answers "what type is the
+object `A_n` points at?" without disturbing the pointer — exactly what type dispatch
+wants.
+
+Reads answer immediately because the card keeps the byte at `areg[asel]` prefetched,
+re-issuing whenever `ASEL` is written, the last `APORT` byte lands, or `DATA` is
+accessed.
+
 ## Verbs
 
 Written to `CMD`. All set BUSY, then DONE or ERR. Operands are named by the register
@@ -58,7 +81,7 @@ they read.
 |---|---|---|---|---|
 | `$10` | `HASH_INIT` | — | resets streaming hash state | L1 |
 | `$15` | `HASH_PUSH` | enters push mode; writes to `DATA` are absorbed | — | L1 |
-| `$11` | `HASH_STREAM` | `A0` = start, `LEN` = bytes | absorbs card-resident bytes | L3 |
+| `$11` | `HASH_STREAM` | `A0` = start, `LEN` = bytes | absorbs card-resident bytes | **L3** |
 | `$12` | `HASH_FINAL` | — | `P0` = digest, **`P3` = 32-char nixbase32** | L1 |
 | `$13` | `NARHASH` | `A0` = tree root node | `P0` = digest of the NAR serialization | L6 |
 | `$14` | `STOREPATH` | `P0` = digest supplied by the caller | `P3` = 32-char nixbase32 | L1 |
@@ -78,6 +101,13 @@ after L3 for data the CPU holds in main RAM and has no reason to park on the car
 > | software SHA-256 on 65816 | — | ~3125 | 1x |
 > | `HASH_PUSH`, poll per byte | 2.00 | ~20 | ~155x |
 > | `HASH_PUSH`, 16-byte bursts | **1.07** | ~11 | **~285x** |
+> | `HASH_STREAM`, 108 bytes | **0.51** | ~5 | **~600x** |
+>
+> `HASH_STREAM` costs a **fixed ~55 accesses regardless of length** — only the
+> pointer, the count and the verb cross the bus, never the data. So its advantage
+> grows with message size: 0.51 accesses/byte at 108 bytes, ~0.05 at 1 KB. This is the
+> principle `NARHASH` takes to its conclusion, and the reason the heap lives on the
+> card at all.
 >
 > So the FIFO is worth **1.87x** on the streaming phase — real, but nothing like an
 > order of magnitude, because at this clock ratio the hasher drains ~24 bytes per bus

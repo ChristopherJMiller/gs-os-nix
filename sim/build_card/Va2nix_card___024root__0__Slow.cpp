@@ -16,6 +16,7 @@ VL_ATTR_COLD void Va2nix_card___024root___eval_static(Va2nix_card___024root* vlS
     vlSelfRef.__Vtrigprevexpr___TOP__c0n_write__0 = vlSelfRef.c0n_write;
     vlSelfRef.__Vtrigprevexpr___TOP__c0n_wdata__0 = vlSelfRef.c0n_wdata;
     vlSelfRef.__Vtrigprevexpr___TOP__c8_addr__0 = vlSelfRef.c8_addr;
+    vlSelfRef.__Vtrigprevexpr___TOP__mem_rdata__0 = vlSelfRef.mem_rdata;
     vlSelfRef.__Vtrigprevexpr___TOP__clk__1 = vlSelfRef.clk;
 }
 
@@ -316,37 +317,39 @@ VL_ATTR_COLD void Va2nix_card___024root___stl_sequent__TOP__0(Va2nix_card___024r
                                                                   ((IData)(vlSelfRef.c0n_addr) 
                                                                    >> 2U)))))))
                                            : ((4U & (IData)(vlSelfRef.c0n_addr))
-                                               ? ((3U 
-                                                   == 
-                                                   (3U 
-                                                    & (IData)(vlSelfRef.c0n_addr)))
+                                               ? ((2U 
+                                                   & (IData)(vlSelfRef.c0n_addr))
                                                    ? 
-                                                  (((0U 
-                                                     == 
-                                                     (0x0000001fU 
-                                                      & __VExpandSel_Lsb_1))
-                                                     ? 0U
-                                                     : 
-                                                    (vlSelfRef.a2nix_card__DOT__pslot
-                                                     [vlSelfRef.a2nix_card__DOT__psel]
-                                                     [
-                                                     (((IData)(7U) 
-                                                       + __VExpandSel_Lsb_1) 
-                                                      >> 5U)] 
-                                                     << 
-                                                     ((IData)(0x00000020U) 
-                                                      - 
+                                                  ((1U 
+                                                    & (IData)(vlSelfRef.c0n_addr))
+                                                    ? 
+                                                   (((0U 
+                                                      == 
                                                       (0x0000001fU 
-                                                       & __VExpandSel_Lsb_1)))) 
-                                                   | (vlSelfRef.a2nix_card__DOT__pslot
+                                                       & __VExpandSel_Lsb_1))
+                                                      ? 0U
+                                                      : 
+                                                     (vlSelfRef.a2nix_card__DOT__pslot
                                                       [vlSelfRef.a2nix_card__DOT__psel]
                                                       [
-                                                      (__VExpandSel_Lsb_1 
+                                                      (((IData)(7U) 
+                                                        + __VExpandSel_Lsb_1) 
                                                        >> 5U)] 
-                                                      >> 
-                                                      (0x0000001fU 
-                                                       & __VExpandSel_Lsb_1)))
-                                                   : 0U)
+                                                      << 
+                                                      ((IData)(0x00000020U) 
+                                                       - 
+                                                       (0x0000001fU 
+                                                        & __VExpandSel_Lsb_1)))) 
+                                                    | (vlSelfRef.a2nix_card__DOT__pslot
+                                                       [vlSelfRef.a2nix_card__DOT__psel]
+                                                       [
+                                                       (__VExpandSel_Lsb_1 
+                                                        >> 5U)] 
+                                                       >> 
+                                                       (0x0000001fU 
+                                                        & __VExpandSel_Lsb_1)))
+                                                    : 0U)
+                                                   : (IData)(vlSelfRef.a2nix_card__DOT__data_latch))
                                                : ((2U 
                                                    & (IData)(vlSelfRef.c0n_addr))
                                                    ? 
@@ -1079,6 +1082,9 @@ VL_ATTR_COLD void Va2nix_card___024root___dump_triggers__ico(const VlUnpacked<QD
     if ((1U & (IData)((triggers[0U] >> 6U)))) {
         VL_DBG_MSGS("         '" + tag + "' region trigger index 6 is active: @( c8_addr)\n");
     }
+    if ((1U & (IData)((triggers[0U] >> 7U)))) {
+        VL_DBG_MSGS("         '" + tag + "' region trigger index 7 is active: @( mem_rdata)\n");
+    }
     if ((1U & (IData)(triggers[1U]))) {
         VL_DBG_MSGS("         '" + tag + "' region trigger index 64 is active: Internal 'ico' trigger - first iteration\n");
     }
@@ -1116,6 +1122,10 @@ VL_ATTR_COLD void Va2nix_card___024root___ctor_var_reset(Va2nix_card___024root* 
     vlSelf->c8_addr = VL_SCOPED_RAND_RESET_I(11, __VscopeHash, 6382339021077338351ull);
     vlSelf->c8_rdata = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 12409039179787095635ull);
     vlSelf->take_c800 = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 10306784107109258875ull);
+    vlSelf->mem_addr = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 326597072690670135ull);
+    vlSelf->mem_we = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 15973559030946811212ull);
+    vlSelf->mem_wdata = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 5431754401481461448ull);
+    vlSelf->mem_rdata = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 9659133473039683418ull);
     vlSelf->irq = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 14145092342636110857ull);
     for (int __Vi0 = 0; __Vi0 < 4; ++__Vi0) {
         vlSelf->a2nix_card__DOT__areg[__Vi0] = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 722635887473999200ull);
@@ -1152,6 +1162,20 @@ VL_ATTR_COLD void Va2nix_card___024root___ctor_var_reset(Va2nix_card___024root* 
     vlSelf->a2nix_card__DOT__fifo_count = VL_SCOPED_RAND_RESET_I(6, __VscopeHash, 6481871503660582012ull);
     vlSelf->a2nix_card__DOT__fifo_empty = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 4215861405213650709ull);
     vlSelf->a2nix_card__DOT__fifo_drain = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 5867610991756810794ull);
+    vlSelf->a2nix_card__DOT__mstate = VL_SCOPED_RAND_RESET_I(4, __VscopeHash, 2084767621829822972ull);
+    vlSelf->a2nix_card__DOT__mret = VL_SCOPED_RAND_RESET_I(4, __VscopeHash, 12055193555070904377ull);
+    vlSelf->a2nix_card__DOT__mcur = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 10819052988648462457ull);
+    vlSelf->a2nix_card__DOT__mbyte = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 15072977329513243586ull);
+    vlSelf->a2nix_card__DOT__mbidx = VL_SCOPED_RAND_RESET_I(3, __VscopeHash, 17598984797989340187ull);
+    vlSelf->a2nix_card__DOT__mptr = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 16025977384862192419ull);
+    vlSelf->a2nix_card__DOT__mcount = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 15279627756342156948ull);
+    vlSelf->a2nix_card__DOT__hops = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 6643956462292493133ull);
+    vlSelf->a2nix_card__DOT__alloc_ptr = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 4236271661694546670ull);
+    vlSelf->a2nix_card__DOT__dw_pend = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 14778925377945967390ull);
+    vlSelf->a2nix_card__DOT__dw_addr = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 5971258641019123219ull);
+    vlSelf->a2nix_card__DOT__dw_data = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 11264155566543341475ull);
+    vlSelf->a2nix_card__DOT__pf_req = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 13632761836387374742ull);
+    vlSelf->a2nix_card__DOT__data_latch = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 3518607952763635550ull);
     vlSelf->a2nix_card__DOT__u_hash__DOT__state = VL_SCOPED_RAND_RESET_I(3, __VscopeHash, 1571757367621713113ull);
     vlSelf->a2nix_card__DOT__u_hash__DOT__ret = VL_SCOPED_RAND_RESET_I(3, __VscopeHash, 5749412545181126154ull);
     VL_SCOPED_RAND_RESET_W(512, vlSelf->a2nix_card__DOT__u_hash__DOT__blk, __VscopeHash, 8756158300460521328ull);
@@ -1199,6 +1223,7 @@ VL_ATTR_COLD void Va2nix_card___024root___ctor_var_reset(Va2nix_card___024root* 
     vlSelf->__Vtrigprevexpr___TOP__c0n_write__0 = 0;
     vlSelf->__Vtrigprevexpr___TOP__c0n_wdata__0 = 0;
     vlSelf->__Vtrigprevexpr___TOP__c8_addr__0 = 0;
+    vlSelf->__Vtrigprevexpr___TOP__mem_rdata__0 = 0;
     vlSelf->__VicoDidInit = 0;
     for (int __Vi0 = 0; __Vi0 < 1; ++__Vi0) {
         vlSelf->__VactTriggered[__Vi0] = 0;

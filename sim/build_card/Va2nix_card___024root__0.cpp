@@ -28,15 +28,18 @@ bool Va2nix_card___024root___eval_ico(Va2nix_card___024root* vlSelf, CData/*0:0*
     {
         // Inlined CFunc: _eval_triggers_vec__ico
         vlSelfRef.__VicoTriggered[0U] = (QData)((IData)(
-                                                        (((((IData)(vlSelfRef.c8_addr) 
-                                                            != (IData)(vlSelfRef.__Vtrigprevexpr___TOP__c8_addr__0)) 
-                                                           << 6U) 
-                                                          | ((((IData)(vlSelfRef.c0n_wdata) 
-                                                               != (IData)(vlSelfRef.__Vtrigprevexpr___TOP__c0n_wdata__0)) 
-                                                              << 5U) 
-                                                             | (((IData)(vlSelfRef.c0n_write) 
-                                                                 != (IData)(vlSelfRef.__Vtrigprevexpr___TOP__c0n_write__0)) 
-                                                                << 4U))) 
+                                                        (((((((IData)(vlSelfRef.mem_rdata) 
+                                                              != (IData)(vlSelfRef.__Vtrigprevexpr___TOP__mem_rdata__0)) 
+                                                             << 3U) 
+                                                            | (((IData)(vlSelfRef.c8_addr) 
+                                                                != (IData)(vlSelfRef.__Vtrigprevexpr___TOP__c8_addr__0)) 
+                                                               << 2U)) 
+                                                           | ((((IData)(vlSelfRef.c0n_wdata) 
+                                                                != (IData)(vlSelfRef.__Vtrigprevexpr___TOP__c0n_wdata__0)) 
+                                                               << 1U) 
+                                                              | ((IData)(vlSelfRef.c0n_write) 
+                                                                 != (IData)(vlSelfRef.__Vtrigprevexpr___TOP__c0n_write__0)))) 
+                                                          << 4U) 
                                                          | (((((IData)(vlSelfRef.c0n_read) 
                                                                != (IData)(vlSelfRef.__Vtrigprevexpr___TOP__c0n_read__0)) 
                                                               << 3U) 
@@ -60,6 +63,8 @@ bool Va2nix_card___024root___eval_ico(Va2nix_card___024root* vlSelf, CData/*0:0*
             = vlSelfRef.c0n_wdata;
         vlSelfRef.__Vtrigprevexpr___TOP__c8_addr__0 
             = vlSelfRef.c8_addr;
+        vlSelfRef.__Vtrigprevexpr___TOP__mem_rdata__0 
+            = vlSelfRef.mem_rdata;
         if (VL_UNLIKELY(((1U & (~ (IData)(vlSelfRef.__VicoDidInit)))))) {
             vlSelfRef.__VicoDidInit = 1U;
             vlSelfRef.__VicoTriggered[0U] = (1ULL | vlSelfRef.__VicoTriggered[0U]);
@@ -71,6 +76,8 @@ bool Va2nix_card___024root___eval_ico(Va2nix_card___024root* vlSelf, CData/*0:0*
             vlSelfRef.__VicoTriggered[0U] = (0x0000000000000020ULL 
                                              | vlSelfRef.__VicoTriggered[0U]);
             vlSelfRef.__VicoTriggered[0U] = (0x0000000000000040ULL 
+                                             | vlSelfRef.__VicoTriggered[0U]);
+            vlSelfRef.__VicoTriggered[0U] = (0x0000000000000080ULL 
                                              | vlSelfRef.__VicoTriggered[0U]);
         }
     }
@@ -115,37 +122,39 @@ bool Va2nix_card___024root___eval_ico(Va2nix_card___024root* vlSelf, CData/*0:0*
                                                : ((4U 
                                                    & (IData)(vlSelfRef.c0n_addr))
                                                    ? 
-                                                  ((3U 
-                                                    == 
-                                                    (3U 
-                                                     & (IData)(vlSelfRef.c0n_addr)))
+                                                  ((2U 
+                                                    & (IData)(vlSelfRef.c0n_addr))
                                                     ? 
-                                                   (((0U 
-                                                      == 
-                                                      (0x0000001fU 
-                                                       & __Vinline_0__eval_body__ico___Vinline_0__ico_sequent__TOP__0___VExpandSel_Lsb_1))
-                                                      ? 0U
-                                                      : 
-                                                     (vlSelfRef.a2nix_card__DOT__pslot
-                                                      [vlSelfRef.a2nix_card__DOT__psel]
-                                                      [
-                                                      (((IData)(7U) 
-                                                        + __Vinline_0__eval_body__ico___Vinline_0__ico_sequent__TOP__0___VExpandSel_Lsb_1) 
-                                                       >> 5U)] 
-                                                      << 
-                                                      ((IData)(0x00000020U) 
-                                                       - 
+                                                   ((1U 
+                                                     & (IData)(vlSelfRef.c0n_addr))
+                                                     ? 
+                                                    (((0U 
+                                                       == 
                                                        (0x0000001fU 
-                                                        & __Vinline_0__eval_body__ico___Vinline_0__ico_sequent__TOP__0___VExpandSel_Lsb_1)))) 
-                                                    | (vlSelfRef.a2nix_card__DOT__pslot
+                                                        & __Vinline_0__eval_body__ico___Vinline_0__ico_sequent__TOP__0___VExpandSel_Lsb_1))
+                                                       ? 0U
+                                                       : 
+                                                      (vlSelfRef.a2nix_card__DOT__pslot
                                                        [vlSelfRef.a2nix_card__DOT__psel]
                                                        [
-                                                       (__Vinline_0__eval_body__ico___Vinline_0__ico_sequent__TOP__0___VExpandSel_Lsb_1 
+                                                       (((IData)(7U) 
+                                                         + __Vinline_0__eval_body__ico___Vinline_0__ico_sequent__TOP__0___VExpandSel_Lsb_1) 
                                                         >> 5U)] 
-                                                       >> 
-                                                       (0x0000001fU 
-                                                        & __Vinline_0__eval_body__ico___Vinline_0__ico_sequent__TOP__0___VExpandSel_Lsb_1)))
-                                                    : 0U)
+                                                       << 
+                                                       ((IData)(0x00000020U) 
+                                                        - 
+                                                        (0x0000001fU 
+                                                         & __Vinline_0__eval_body__ico___Vinline_0__ico_sequent__TOP__0___VExpandSel_Lsb_1)))) 
+                                                     | (vlSelfRef.a2nix_card__DOT__pslot
+                                                        [vlSelfRef.a2nix_card__DOT__psel]
+                                                        [
+                                                        (__Vinline_0__eval_body__ico___Vinline_0__ico_sequent__TOP__0___VExpandSel_Lsb_1 
+                                                         >> 5U)] 
+                                                        >> 
+                                                        (0x0000001fU 
+                                                         & __Vinline_0__eval_body__ico___Vinline_0__ico_sequent__TOP__0___VExpandSel_Lsb_1)))
+                                                     : 0U)
+                                                    : (IData)(vlSelfRef.a2nix_card__DOT__data_latch))
                                                    : 
                                                   ((2U 
                                                     & (IData)(vlSelfRef.c0n_addr))
@@ -330,8 +339,30 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
     __VdfgRegularize_h6e95ff9d_0_10 = 0;
     CData/*7:0*/ __VdfgRegularize_h6e95ff9d_0_11;
     __VdfgRegularize_h6e95ff9d_0_11 = 0;
+    CData/*0:0*/ __Vdly__a2nix_card__DOT__h_init;
+    __Vdly__a2nix_card__DOT__h_init = 0;
+    CData/*3:0*/ __Vdly__a2nix_card__DOT__mstate;
+    __Vdly__a2nix_card__DOT__mstate = 0;
+    IData/*31:0*/ __Vdly__a2nix_card__DOT__mptr;
+    __Vdly__a2nix_card__DOT__mptr = 0;
+    CData/*2:0*/ __Vdly__a2nix_card__DOT__mbidx;
+    __Vdly__a2nix_card__DOT__mbidx = 0;
+    IData/*31:0*/ __Vdly__a2nix_card__DOT__mcur;
+    __Vdly__a2nix_card__DOT__mcur = 0;
+    CData/*3:0*/ __Vdly__a2nix_card__DOT__mret;
+    __Vdly__a2nix_card__DOT__mret = 0;
     CData/*0:0*/ __Vdly__a2nix_card__DOT__busy;
     __Vdly__a2nix_card__DOT__busy = 0;
+    CData/*0:0*/ __Vdly__a2nix_card__DOT__pf_req;
+    __Vdly__a2nix_card__DOT__pf_req = 0;
+    IData/*31:0*/ __Vdly__a2nix_card__DOT__mcount;
+    __Vdly__a2nix_card__DOT__mcount = 0;
+    CData/*5:0*/ __Vdly__a2nix_card__DOT__wptr;
+    __Vdly__a2nix_card__DOT__wptr = 0;
+    CData/*0:0*/ __Vdly__a2nix_card__DOT__h_finish;
+    __Vdly__a2nix_card__DOT__h_finish = 0;
+    IData/*31:0*/ __Vdly__a2nix_card__DOT__len;
+    __Vdly__a2nix_card__DOT__len = 0;
     CData/*1:0*/ __Vdly__a2nix_card__DOT__lenidx;
     __Vdly__a2nix_card__DOT__lenidx = 0;
     CData/*4:0*/ __Vdly__a2nix_card__DOT__pidx;
@@ -342,8 +373,6 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
     __Vdly__a2nix_card__DOT__u_hash__DOT__bidx = 0;
     CData/*2:0*/ __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx;
     __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx = 0;
-    CData/*0:0*/ __Vdly__a2nix_card__DOT__h_done;
-    __Vdly__a2nix_card__DOT__h_done = 0;
     CData/*2:0*/ __Vdly__a2nix_card__DOT__u_hash__DOT__state;
     __Vdly__a2nix_card__DOT__u_hash__DOT__state = 0;
     CData/*2:0*/ __Vdly__a2nix_card__DOT__u_hash__DOT__ret;
@@ -384,6 +413,16 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
     __Vdly__a2nix_card__DOT__u_hash__DOT__u_core__DOT__f = 0;
     IData/*31:0*/ __Vdly__a2nix_card__DOT__u_hash__DOT__u_core__DOT__g;
     __Vdly__a2nix_card__DOT__u_hash__DOT__u_core__DOT__g = 0;
+    IData/*31:0*/ __VdlyVal__a2nix_card__DOT__areg__v0;
+    __VdlyVal__a2nix_card__DOT__areg__v0 = 0;
+    CData/*0:0*/ __VdlySet__a2nix_card__DOT__areg__v0;
+    __VdlySet__a2nix_card__DOT__areg__v0 = 0;
+    CData/*7:0*/ __VdlyVal__a2nix_card__DOT__fifo__v0;
+    __VdlyVal__a2nix_card__DOT__fifo__v0 = 0;
+    CData/*4:0*/ __VdlyDim0__a2nix_card__DOT__fifo__v0;
+    __VdlyDim0__a2nix_card__DOT__fifo__v0 = 0;
+    CData/*0:0*/ __VdlySet__a2nix_card__DOT__fifo__v0;
+    __VdlySet__a2nix_card__DOT__fifo__v0 = 0;
     VlWide<8>/*255:0*/ __VdlyVal__a2nix_card__DOT__pslot__v0;
     VL_ZERO_W(256, __VdlyVal__a2nix_card__DOT__pslot__v0);
     CData/*0:0*/ __VdlySet__a2nix_card__DOT__pslot__v0;
@@ -400,26 +439,44 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
     __VdlyDim0__a2nix_card__DOT__pslot__v2 = 0;
     CData/*0:0*/ __VdlySet__a2nix_card__DOT__pslot__v2;
     __VdlySet__a2nix_card__DOT__pslot__v2 = 0;
-    CData/*7:0*/ __VdlyVal__a2nix_card__DOT__fifo__v0;
-    __VdlyVal__a2nix_card__DOT__fifo__v0 = 0;
-    CData/*4:0*/ __VdlyDim0__a2nix_card__DOT__fifo__v0;
-    __VdlyDim0__a2nix_card__DOT__fifo__v0 = 0;
-    CData/*0:0*/ __VdlySet__a2nix_card__DOT__fifo__v0;
-    __VdlySet__a2nix_card__DOT__fifo__v0 = 0;
-    CData/*7:0*/ __VdlyVal__a2nix_card__DOT__areg__v0;
-    __VdlyVal__a2nix_card__DOT__areg__v0 = 0;
-    CData/*4:0*/ __VdlyLsb__a2nix_card__DOT__areg__v0;
-    __VdlyLsb__a2nix_card__DOT__areg__v0 = 0;
-    CData/*1:0*/ __VdlyDim0__a2nix_card__DOT__areg__v0;
-    __VdlyDim0__a2nix_card__DOT__areg__v0 = 0;
-    CData/*0:0*/ __VdlySet__a2nix_card__DOT__areg__v0;
-    __VdlySet__a2nix_card__DOT__areg__v0 = 0;
+    CData/*7:0*/ __VdlyVal__a2nix_card__DOT__fifo__v1;
+    __VdlyVal__a2nix_card__DOT__fifo__v1 = 0;
+    CData/*4:0*/ __VdlyDim0__a2nix_card__DOT__fifo__v1;
+    __VdlyDim0__a2nix_card__DOT__fifo__v1 = 0;
+    CData/*0:0*/ __VdlySet__a2nix_card__DOT__fifo__v1;
+    __VdlySet__a2nix_card__DOT__fifo__v1 = 0;
+    IData/*31:0*/ __VdlyVal__a2nix_card__DOT__areg__v1;
+    __VdlyVal__a2nix_card__DOT__areg__v1 = 0;
+    CData/*1:0*/ __VdlyDim0__a2nix_card__DOT__areg__v1;
+    __VdlyDim0__a2nix_card__DOT__areg__v1 = 0;
+    CData/*0:0*/ __VdlySet__a2nix_card__DOT__areg__v1;
+    __VdlySet__a2nix_card__DOT__areg__v1 = 0;
+    CData/*7:0*/ __VdlyVal__a2nix_card__DOT__areg__v2;
+    __VdlyVal__a2nix_card__DOT__areg__v2 = 0;
+    CData/*4:0*/ __VdlyLsb__a2nix_card__DOT__areg__v2;
+    __VdlyLsb__a2nix_card__DOT__areg__v2 = 0;
+    CData/*1:0*/ __VdlyDim0__a2nix_card__DOT__areg__v2;
+    __VdlyDim0__a2nix_card__DOT__areg__v2 = 0;
+    CData/*0:0*/ __VdlySet__a2nix_card__DOT__areg__v2;
+    __VdlySet__a2nix_card__DOT__areg__v2 = 0;
+    IData/*31:0*/ __VdlyVal__a2nix_card__DOT__areg__v3;
+    __VdlyVal__a2nix_card__DOT__areg__v3 = 0;
+    CData/*0:0*/ __VdlySet__a2nix_card__DOT__areg__v3;
+    __VdlySet__a2nix_card__DOT__areg__v3 = 0;
     VlWide<8>/*255:0*/ __VdlyVal__a2nix_card__DOT__pslot__v3;
     VL_ZERO_W(256, __VdlyVal__a2nix_card__DOT__pslot__v3);
     CData/*0:0*/ __VdlySet__a2nix_card__DOT__pslot__v3;
     __VdlySet__a2nix_card__DOT__pslot__v3 = 0;
-    CData/*0:0*/ __VdlySet__a2nix_card__DOT__areg__v1;
-    __VdlySet__a2nix_card__DOT__areg__v1 = 0;
+    IData/*31:0*/ __VdlyVal__a2nix_card__DOT__areg__v4;
+    __VdlyVal__a2nix_card__DOT__areg__v4 = 0;
+    CData/*1:0*/ __VdlyDim0__a2nix_card__DOT__areg__v4;
+    __VdlyDim0__a2nix_card__DOT__areg__v4 = 0;
+    CData/*0:0*/ __VdlySet__a2nix_card__DOT__areg__v4;
+    __VdlySet__a2nix_card__DOT__areg__v4 = 0;
+    CData/*0:0*/ __VdlySet__a2nix_card__DOT__areg__v5;
+    __VdlySet__a2nix_card__DOT__areg__v5 = 0;
+    CData/*0:0*/ __VdlySet__a2nix_card__DOT__areg__v6;
+    __VdlySet__a2nix_card__DOT__areg__v6 = 0;
     IData/*31:0*/ __VdlyVal__a2nix_card__DOT__u_hash__DOT__u_core__DOT__w__v0;
     __VdlyVal__a2nix_card__DOT__u_hash__DOT__u_core__DOT__w__v0 = 0;
     CData/*0:0*/ __VdlySet__a2nix_card__DOT__u_hash__DOT__u_core__DOT__w__v0;
@@ -501,7 +558,7 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
     IData/*31:0*/ __VdlyVal__a2nix_card__DOT__u_hash__DOT__u_core__DOT__w__v31;
     __VdlyVal__a2nix_card__DOT__u_hash__DOT__u_core__DOT__w__v31 = 0;
     CData/*31:0*/ __VExpandSel_Lsb_1;
-    IData/*31:0*/ __VExpandSel_Lsb_2;
+    CData/*31:0*/ __VExpandSel_Lsb_2;
     IData/*31:0*/ __VExpandSel_Lsb_3;
     IData/*31:0*/ __VExpandSel_Lsb_4;
     IData/*31:0*/ __VExpandSel_Lsb_5;
@@ -517,12 +574,33 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
     IData/*31:0*/ __VExpandSel_Lsb_15;
     IData/*31:0*/ __VExpandSel_Lsb_16;
     IData/*31:0*/ __VExpandSel_Lsb_17;
+    IData/*31:0*/ __VExpandSel_Lsb_18;
     // Body
+    __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx = vlSelfRef.a2nix_card__DOT__u_hash__DOT__lenidx;
+    __Vdly__a2nix_card__DOT__u_hash__DOT__ret = vlSelfRef.a2nix_card__DOT__u_hash__DOT__ret;
+    __Vdly__a2nix_card__DOT__u_hash__DOT__bidx = vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx;
+    __Vdly__a2nix_card__DOT__u_hash__DOT__state = vlSelfRef.a2nix_card__DOT__u_hash__DOT__state;
+    __Vdly__a2nix_card__DOT__h_init = vlSelfRef.a2nix_card__DOT__h_init;
+    __Vdly__a2nix_card__DOT__mstate = vlSelfRef.a2nix_card__DOT__mstate;
+    __Vdly__a2nix_card__DOT__mptr = vlSelfRef.a2nix_card__DOT__mptr;
+    __Vdly__a2nix_card__DOT__mbidx = vlSelfRef.a2nix_card__DOT__mbidx;
+    __Vdly__a2nix_card__DOT__mcur = vlSelfRef.a2nix_card__DOT__mcur;
+    __Vdly__a2nix_card__DOT__mret = vlSelfRef.a2nix_card__DOT__mret;
+    __Vdly__a2nix_card__DOT__pf_req = vlSelfRef.a2nix_card__DOT__pf_req;
+    __Vdly__a2nix_card__DOT__mcount = vlSelfRef.a2nix_card__DOT__mcount;
+    __Vdly__a2nix_card__DOT__h_finish = vlSelfRef.a2nix_card__DOT__h_finish;
     __VdlySet__a2nix_card__DOT__fifo__v0 = 0U;
+    __VdlySet__a2nix_card__DOT__fifo__v1 = 0U;
+    __Vdly__a2nix_card__DOT__len = vlSelfRef.a2nix_card__DOT__len;
     __Vdly__a2nix_card__DOT__lenidx = vlSelfRef.a2nix_card__DOT__lenidx;
     __Vdly__a2nix_card__DOT__pidx = vlSelfRef.a2nix_card__DOT__pidx;
     __Vdly__a2nix_card__DOT__aidx = vlSelfRef.a2nix_card__DOT__aidx;
+    __Vdly__a2nix_card__DOT__wptr = vlSelfRef.a2nix_card__DOT__wptr;
     __VdlySet__a2nix_card__DOT__areg__v0 = 0U;
+    __VdlySet__a2nix_card__DOT__areg__v1 = 0U;
+    __VdlySet__a2nix_card__DOT__areg__v2 = 0U;
+    __VdlySet__a2nix_card__DOT__areg__v3 = 0U;
+    __VdlySet__a2nix_card__DOT__areg__v4 = 0U;
     __Vdly__a2nix_card__DOT__u_hash__DOT__blk[0U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__blk[0U];
     __Vdly__a2nix_card__DOT__u_hash__DOT__blk[1U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__blk[1U];
     __Vdly__a2nix_card__DOT__u_hash__DOT__blk[2U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__blk[2U];
@@ -550,12 +628,8 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
     __VdlySet__a2nix_card__DOT__pslot__v1 = 0U;
     __VdlySet__a2nix_card__DOT__pslot__v2 = 0U;
     __VdlySet__a2nix_card__DOT__pslot__v3 = 0U;
-    __VdlySet__a2nix_card__DOT__areg__v1 = 0U;
-    __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx = vlSelfRef.a2nix_card__DOT__u_hash__DOT__lenidx;
-    __Vdly__a2nix_card__DOT__h_done = vlSelfRef.a2nix_card__DOT__h_done;
-    __Vdly__a2nix_card__DOT__u_hash__DOT__ret = vlSelfRef.a2nix_card__DOT__u_hash__DOT__ret;
-    __Vdly__a2nix_card__DOT__u_hash__DOT__bidx = vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx;
-    __Vdly__a2nix_card__DOT__u_hash__DOT__state = vlSelfRef.a2nix_card__DOT__u_hash__DOT__state;
+    __VdlySet__a2nix_card__DOT__areg__v5 = 0U;
+    __VdlySet__a2nix_card__DOT__areg__v6 = 0U;
     __Vdly__a2nix_card__DOT__u_hash__DOT__core_busy 
         = vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_busy;
     __Vdly__a2nix_card__DOT__u_hash__DOT__u_core__DOT__d 
@@ -866,75 +940,162 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                 = (vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__t1 
                    + vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__t2);
         }
-        vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_init = 0U;
-        vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_start = 0U;
-        if (((1U == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state)) 
-             & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__pb_v))) {
-            vlSelfRef.a2nix_card__DOT__u_hash__DOT__total 
-                = (1ULL + vlSelfRef.a2nix_card__DOT__u_hash__DOT__total);
-        }
-        if (vlSelfRef.a2nix_card__DOT__h_init) {
-            vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_init = 1U;
-            __Vdly__a2nix_card__DOT__u_hash__DOT__bidx = 0U;
-            vlSelfRef.a2nix_card__DOT__u_hash__DOT__total = 0ULL;
-            __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx = 0U;
-            __Vdly__a2nix_card__DOT__h_done = 0U;
-            __Vdly__a2nix_card__DOT__u_hash__DOT__state = 1U;
-        } else if ((4U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
-            if ((2U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
-                if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
-                    __Vdly__a2nix_card__DOT__h_done = 1U;
-                } else if ((7U == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__lenidx))) {
-                    __Vdly__a2nix_card__DOT__u_hash__DOT__ret = 7U;
-                    __Vdly__a2nix_card__DOT__u_hash__DOT__state = 2U;
+        __Vdly__a2nix_card__DOT__h_init = 0U;
+        vlSelfRef.mem_we = 0U;
+        if ((8U & (IData)(vlSelfRef.a2nix_card__DOT__mstate))) {
+            if ((4U & (IData)(vlSelfRef.a2nix_card__DOT__mstate))) {
+                __Vdly__a2nix_card__DOT__mstate = 0U;
+            } else if ((2U & (IData)(vlSelfRef.a2nix_card__DOT__mstate))) {
+                __Vdly__a2nix_card__DOT__mstate = 0U;
+            } else if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__mstate))) {
+                __Vdly__a2nix_card__DOT__mptr = (((~ 
+                                                   ((IData)(0x000000ffU) 
+                                                    << 
+                                                    (0x0000001fU 
+                                                     & ((IData)(vlSelfRef.a2nix_card__DOT__mbidx) 
+                                                        << 3U)))) 
+                                                  & __Vdly__a2nix_card__DOT__mptr) 
+                                                 | (0x00000000ffffffffULL 
+                                                    & ((IData)(vlSelfRef.a2nix_card__DOT__mbyte) 
+                                                       << 
+                                                       (0x0000001fU 
+                                                        & ((IData)(vlSelfRef.a2nix_card__DOT__mbidx) 
+                                                           << 3U)))));
+                __Vdly__a2nix_card__DOT__mstate = 8U;
+                __Vdly__a2nix_card__DOT__mbidx = (7U 
+                                                  & ((IData)(1U) 
+                                                     + (IData)(vlSelfRef.a2nix_card__DOT__mbidx)));
+            } else if ((4U == (IData)(vlSelfRef.a2nix_card__DOT__mbidx))) {
+                __Vdly__a2nix_card__DOT__mcur = vlSelfRef.a2nix_card__DOT__mptr;
+                __Vdly__a2nix_card__DOT__mstate = 6U;
+            } else {
+                vlSelfRef.mem_addr = ((IData)(4U) + 
+                                      (vlSelfRef.a2nix_card__DOT__mcur 
+                                       + (IData)(vlSelfRef.a2nix_card__DOT__mbidx)));
+                __Vdly__a2nix_card__DOT__mret = 9U;
+                __Vdly__a2nix_card__DOT__mstate = 1U;
+            }
+        } else if ((4U & (IData)(vlSelfRef.a2nix_card__DOT__mstate))) {
+            if ((2U & (IData)(vlSelfRef.a2nix_card__DOT__mstate))) {
+                if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__mstate))) {
+                    if ((0x0aU != (IData)(vlSelfRef.a2nix_card__DOT__mbyte))) {
+                        __VdlyVal__a2nix_card__DOT__areg__v0 
+                            = vlSelfRef.a2nix_card__DOT__mcur;
+                        __VdlySet__a2nix_card__DOT__areg__v0 = 1U;
+                        __Vdly__a2nix_card__DOT__busy = 0U;
+                        vlSelfRef.a2nix_card__DOT__done = 1U;
+                        __Vdly__a2nix_card__DOT__mstate = 0U;
+                        __Vdly__a2nix_card__DOT__pf_req = 1U;
+                    } else if ((0x40U <= (IData)(vlSelfRef.a2nix_card__DOT__hops))) {
+                        __Vdly__a2nix_card__DOT__busy = 0U;
+                        vlSelfRef.a2nix_card__DOT__err = 1U;
+                        vlSelfRef.a2nix_card__DOT__errcode = 4U;
+                        __Vdly__a2nix_card__DOT__mstate = 0U;
+                    } else {
+                        __Vdly__a2nix_card__DOT__mbidx = 0U;
+                        vlSelfRef.a2nix_card__DOT__hops 
+                            = (0x000000ffU & ((IData)(1U) 
+                                              + (IData)(vlSelfRef.a2nix_card__DOT__hops)));
+                        __Vdly__a2nix_card__DOT__mptr = 0U;
+                        __Vdly__a2nix_card__DOT__mstate = 8U;
+                    }
                 } else {
-                    __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx 
-                        = (7U & ((IData)(1U) + (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__lenidx)));
+                    vlSelfRef.mem_addr = vlSelfRef.a2nix_card__DOT__mcur;
+                    __Vdly__a2nix_card__DOT__mret = 7U;
+                    __Vdly__a2nix_card__DOT__mstate = 1U;
                 }
-            } else if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
-                if ((0x38U == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx))) {
-                    __Vdly__a2nix_card__DOT__u_hash__DOT__state = 6U;
-                } else if (vlSelfRef.a2nix_card__DOT__u_hash__DOT__blk_full) {
-                    __Vdly__a2nix_card__DOT__u_hash__DOT__ret = 5U;
-                    __Vdly__a2nix_card__DOT__u_hash__DOT__state = 2U;
+            } else if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__mstate))) {
+                vlSelfRef.mem_addr = (vlSelfRef.a2nix_card__DOT__mcur 
+                                      + (IData)(vlSelfRef.a2nix_card__DOT__mbidx));
+                vlSelfRef.mem_we = 1U;
+                __VExpandSel_Lsb_1 = (0x000000ffU & 
+                                      (((IData)(0xffU) 
+                                        - ((IData)(vlSelfRef.a2nix_card__DOT__mbidx) 
+                                           << 3U)) 
+                                       - (IData)(7U)));
+                vlSelfRef.mem_wdata = (0x000000ffU 
+                                       & (((0U == (0x0000001fU 
+                                                   & __VExpandSel_Lsb_1))
+                                            ? 0U : 
+                                           (vlSelfRef.a2nix_card__DOT__pslot[0U]
+                                            [(((IData)(7U) 
+                                               + __VExpandSel_Lsb_1) 
+                                              >> 5U)] 
+                                            << ((IData)(0x00000020U) 
+                                                - (0x0000001fU 
+                                                   & __VExpandSel_Lsb_1)))) 
+                                          | (vlSelfRef.a2nix_card__DOT__pslot[0U]
+                                             [(__VExpandSel_Lsb_1 
+                                               >> 5U)] 
+                                             >> (0x0000001fU 
+                                                 & __VExpandSel_Lsb_1))));
+                if ((3U == (IData)(vlSelfRef.a2nix_card__DOT__mbidx))) {
+                    __Vdly__a2nix_card__DOT__busy = 0U;
+                    vlSelfRef.a2nix_card__DOT__done = 1U;
+                    __Vdly__a2nix_card__DOT__mstate = 0U;
+                    __Vdly__a2nix_card__DOT__pf_req = 1U;
+                } else {
+                    __Vdly__a2nix_card__DOT__mbidx 
+                        = (7U & ((IData)(1U) + (IData)(vlSelfRef.a2nix_card__DOT__mbidx)));
                 }
-            } else if (vlSelfRef.a2nix_card__DOT__u_hash__DOT__blk_full) {
-                __Vdly__a2nix_card__DOT__u_hash__DOT__ret = 5U;
-                __Vdly__a2nix_card__DOT__u_hash__DOT__state = 2U;
             } else {
-                __Vdly__a2nix_card__DOT__u_hash__DOT__state = 5U;
+                __Vdly__a2nix_card__DOT__mcur = ((IData)(1U) 
+                                                 + vlSelfRef.a2nix_card__DOT__mcur);
+                __Vdly__a2nix_card__DOT__mcount = (vlSelfRef.a2nix_card__DOT__mcount 
+                                                   - (IData)(1U));
+                __VdlyVal__a2nix_card__DOT__fifo__v0 
+                    = vlSelfRef.a2nix_card__DOT__mbyte;
+                __VdlyDim0__a2nix_card__DOT__fifo__v0 
+                    = (0x0000001fU & (IData)(vlSelfRef.a2nix_card__DOT__wptr));
+                __VdlySet__a2nix_card__DOT__fifo__v0 = 1U;
+                __Vdly__a2nix_card__DOT__mstate = 3U;
+                __Vdly__a2nix_card__DOT__wptr = (0x0000003fU 
+                                                 & ((IData)(1U) 
+                                                    + (IData)(vlSelfRef.a2nix_card__DOT__wptr)));
             }
-        } else if ((2U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
-            if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
-                if ((1U & (~ (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_busy)))) {
-                    __Vdly__a2nix_card__DOT__u_hash__DOT__state 
-                        = vlSelfRef.a2nix_card__DOT__u_hash__DOT__ret;
+        } else if ((2U & (IData)(vlSelfRef.a2nix_card__DOT__mstate))) {
+            if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__mstate))) {
+                if ((0U == vlSelfRef.a2nix_card__DOT__mcount)) {
+                    __Vdly__a2nix_card__DOT__busy = 0U;
+                    vlSelfRef.a2nix_card__DOT__done = 1U;
+                    __Vdly__a2nix_card__DOT__mstate = 0U;
+                    __Vdly__a2nix_card__DOT__pf_req = 1U;
+                } else if ((0x20U != (IData)(vlSelfRef.a2nix_card__DOT__fifo_count))) {
+                    vlSelfRef.mem_addr = vlSelfRef.a2nix_card__DOT__mcur;
+                    __Vdly__a2nix_card__DOT__mret = 4U;
+                    __Vdly__a2nix_card__DOT__mstate = 1U;
                 }
-            } else if (vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_busy) {
-                __Vdly__a2nix_card__DOT__u_hash__DOT__state = 3U;
             } else {
-                vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_start = 1U;
+                vlSelfRef.a2nix_card__DOT__data_latch 
+                    = vlSelfRef.a2nix_card__DOT__mbyte;
+                __Vdly__a2nix_card__DOT__mstate = 0U;
             }
-        } else if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
-            if (vlSelfRef.a2nix_card__DOT__u_hash__DOT__blk_full) {
-                __Vdly__a2nix_card__DOT__u_hash__DOT__ret = 1U;
-                __Vdly__a2nix_card__DOT__u_hash__DOT__state = 2U;
-            } else if (((IData)(vlSelfRef.a2nix_card__DOT__h_finish) 
-                        & (~ (IData)(vlSelfRef.a2nix_card__DOT__h_valid)))) {
-                __Vdly__a2nix_card__DOT__u_hash__DOT__state = 4U;
-            }
+        } else if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__mstate))) {
+            vlSelfRef.a2nix_card__DOT__mbyte = vlSelfRef.mem_rdata;
+            __Vdly__a2nix_card__DOT__mstate = vlSelfRef.a2nix_card__DOT__mret;
+        } else if (vlSelfRef.a2nix_card__DOT__dw_pend) {
+            vlSelfRef.mem_addr = vlSelfRef.a2nix_card__DOT__dw_addr;
+            vlSelfRef.mem_wdata = vlSelfRef.a2nix_card__DOT__dw_data;
+            vlSelfRef.mem_we = 1U;
+            vlSelfRef.a2nix_card__DOT__dw_pend = 0U;
+        } else if (vlSelfRef.a2nix_card__DOT__pf_req) {
+            vlSelfRef.mem_addr = vlSelfRef.a2nix_card__DOT__areg
+                [vlSelfRef.a2nix_card__DOT__asel];
+            __Vdly__a2nix_card__DOT__mret = 2U;
+            __Vdly__a2nix_card__DOT__mstate = 1U;
+            __Vdly__a2nix_card__DOT__pf_req = 0U;
         }
-        vlSelfRef.a2nix_card__DOT__h_init = 0U;
         if (vlSelfRef.a2nix_card__DOT__busy) {
             if (vlSelfRef.a2nix_card__DOT__finalizing) {
                 if ((((IData)(vlSelfRef.a2nix_card__DOT__fifo_empty) 
                       & (~ (IData)(vlSelfRef.a2nix_card__DOT__h_valid))) 
                      & (~ (IData)(vlSelfRef.a2nix_card__DOT__fifo_drain)))) {
-                    vlSelfRef.a2nix_card__DOT__h_finish = 1U;
+                    __Vdly__a2nix_card__DOT__h_finish = 1U;
                     vlSelfRef.a2nix_card__DOT__finalizing = 0U;
                 }
-            } else if (vlSelfRef.a2nix_card__DOT__h_done) {
-                vlSelfRef.a2nix_card__DOT__h_finish = 0U;
+            } else if (((IData)(vlSelfRef.a2nix_card__DOT__h_finish) 
+                        & (IData)(vlSelfRef.a2nix_card__DOT__h_done))) {
+                __Vdly__a2nix_card__DOT__h_finish = 0U;
                 __VdlyVal__a2nix_card__DOT__pslot__v0[0U] 
                     = vlSelfRef.a2nix_card__DOT__h_digest[0U];
                 __VdlyVal__a2nix_card__DOT__pslot__v0[1U] 
@@ -1006,12 +1167,12 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                         if ((1U & (IData)(vlSelfRef.c0n_addr))) {
                             vlSelfRef.a2nix_card__DOT__irq_pend = 0U;
                         } else {
-                            vlSelfRef.a2nix_card__DOT__len 
+                            __Vdly__a2nix_card__DOT__len 
                                 = (((~ ((IData)(0x000000ffU) 
                                         << (0x0000001fU 
                                             & ((IData)(vlSelfRef.a2nix_card__DOT__lenidx) 
                                                << 3U)))) 
-                                    & vlSelfRef.a2nix_card__DOT__len) 
+                                    & __Vdly__a2nix_card__DOT__len) 
                                    | (0x00000000ffffffffULL 
                                       & ((IData)(vlSelfRef.c0n_wdata) 
                                          << (0x0000001fU 
@@ -1048,35 +1209,53 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                             vlSelfRef.a2nix_card__DOT__err = 1U;
                             vlSelfRef.a2nix_card__DOT__errcode = 7U;
                         } else {
-                            __VdlyVal__a2nix_card__DOT__fifo__v0 
+                            __VdlyVal__a2nix_card__DOT__fifo__v1 
                                 = vlSelfRef.c0n_wdata;
-                            __VdlyDim0__a2nix_card__DOT__fifo__v0 
+                            __VdlyDim0__a2nix_card__DOT__fifo__v1 
                                 = (0x0000001fU & (IData)(vlSelfRef.a2nix_card__DOT__wptr));
-                            __VdlySet__a2nix_card__DOT__fifo__v0 = 1U;
-                            vlSelfRef.a2nix_card__DOT__wptr 
+                            __VdlySet__a2nix_card__DOT__fifo__v1 = 1U;
+                            __Vdly__a2nix_card__DOT__wptr 
                                 = (0x0000003fU & ((IData)(1U) 
                                                   + (IData)(vlSelfRef.a2nix_card__DOT__wptr)));
                         }
+                    } else {
+                        vlSelfRef.a2nix_card__DOT__dw_pend = 1U;
+                        vlSelfRef.a2nix_card__DOT__dw_addr 
+                            = vlSelfRef.a2nix_card__DOT__areg
+                            [vlSelfRef.a2nix_card__DOT__asel];
+                        vlSelfRef.a2nix_card__DOT__dw_data 
+                            = vlSelfRef.c0n_wdata;
+                        __Vdly__a2nix_card__DOT__pf_req = 1U;
+                        __VdlyVal__a2nix_card__DOT__areg__v1 
+                            = ((IData)(1U) + vlSelfRef.a2nix_card__DOT__areg
+                               [vlSelfRef.a2nix_card__DOT__asel]);
+                        __VdlyDim0__a2nix_card__DOT__areg__v1 
+                            = vlSelfRef.a2nix_card__DOT__asel;
+                        __VdlySet__a2nix_card__DOT__areg__v1 = 1U;
                     }
                 }
             } else if ((2U & (IData)(vlSelfRef.c0n_addr))) {
                 if ((1U & (IData)(vlSelfRef.c0n_addr))) {
-                    __VdlyVal__a2nix_card__DOT__areg__v0 
+                    __VdlyVal__a2nix_card__DOT__areg__v2 
                         = vlSelfRef.c0n_wdata;
-                    __VdlyLsb__a2nix_card__DOT__areg__v0 
+                    __VdlyLsb__a2nix_card__DOT__areg__v2 
                         = (0x0000001fU & ((IData)(vlSelfRef.a2nix_card__DOT__aidx) 
                                           << 3U));
-                    __VdlyDim0__a2nix_card__DOT__areg__v0 
+                    __VdlyDim0__a2nix_card__DOT__areg__v2 
                         = vlSelfRef.a2nix_card__DOT__asel;
-                    __VdlySet__a2nix_card__DOT__areg__v0 = 1U;
+                    __VdlySet__a2nix_card__DOT__areg__v2 = 1U;
                     __Vdly__a2nix_card__DOT__aidx = 
                         (3U & ((IData)(1U) + (IData)(vlSelfRef.a2nix_card__DOT__aidx)));
+                    if ((3U == (IData)(vlSelfRef.a2nix_card__DOT__aidx))) {
+                        __Vdly__a2nix_card__DOT__pf_req = 1U;
+                    }
                 } else {
                     __Vdly__a2nix_card__DOT__aidx = 0U;
+                    __Vdly__a2nix_card__DOT__pf_req = 1U;
                 }
             } else if ((1U & (IData)(vlSelfRef.c0n_addr))) {
                 if ((1U & (IData)(vlSelfRef.c0n_wdata))) {
-                    vlSelfRef.a2nix_card__DOT__wptr = 0U;
+                    __Vdly__a2nix_card__DOT__wptr = 0U;
                     vlSelfRef.a2nix_card__DOT__rptr = 0U;
                     vlSelfRef.a2nix_card__DOT__push_mode = 0U;
                     vlSelfRef.a2nix_card__DOT__finalizing = 0U;
@@ -1085,7 +1264,12 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                     vlSelfRef.a2nix_card__DOT__err = 0U;
                     vlSelfRef.a2nix_card__DOT__errcode = 0U;
                     vlSelfRef.a2nix_card__DOT__irq_pend = 0U;
-                    vlSelfRef.a2nix_card__DOT__h_init = 1U;
+                    __Vdly__a2nix_card__DOT__h_init = 1U;
+                }
+                if ((8U & (IData)(vlSelfRef.c0n_wdata))) {
+                    __Vdly__a2nix_card__DOT__pidx = 0U;
+                    __Vdly__a2nix_card__DOT__lenidx = 0U;
+                    __Vdly__a2nix_card__DOT__aidx = 0U;
                 }
             } else if (vlSelfRef.a2nix_card__DOT__busy) {
                 vlSelfRef.a2nix_card__DOT__err = 1U;
@@ -1094,60 +1278,138 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                 vlSelfRef.a2nix_card__DOT__done = 0U;
                 vlSelfRef.a2nix_card__DOT__err = 0U;
                 vlSelfRef.a2nix_card__DOT__errcode = 0U;
-                if ((0U != (IData)(vlSelfRef.c0n_wdata))) {
-                    if ((1U == (IData)(vlSelfRef.c0n_wdata))) {
-                        __Vdly__a2nix_card__DOT__aidx = 0U;
-                        __Vdly__a2nix_card__DOT__pidx = 0U;
-                        __Vdly__a2nix_card__DOT__lenidx = 0U;
-                        vlSelfRef.a2nix_card__DOT__push_mode = 0U;
-                        vlSelfRef.a2nix_card__DOT__h_init = 1U;
-                        vlSelfRef.a2nix_card__DOT__irq_pend = 0U;
-                    } else if ((0x10U == (IData)(vlSelfRef.c0n_wdata))) {
-                        vlSelfRef.a2nix_card__DOT__wptr = 0U;
-                        vlSelfRef.a2nix_card__DOT__rptr = 0U;
-                        vlSelfRef.a2nix_card__DOT__h_init = 1U;
-                        vlSelfRef.a2nix_card__DOT__push_mode = 0U;
-                    } else if ((0x15U == (IData)(vlSelfRef.c0n_wdata))) {
-                        vlSelfRef.a2nix_card__DOT__push_mode = 1U;
-                    } else if ((0x12U == (IData)(vlSelfRef.c0n_wdata))) {
-                        vlSelfRef.a2nix_card__DOT__push_mode = 0U;
-                        vlSelfRef.a2nix_card__DOT__finalizing = 1U;
-                        __Vdly__a2nix_card__DOT__busy = 1U;
-                    } else if ((0x14U == (IData)(vlSelfRef.c0n_wdata))) {
-                        __VdlyVal__a2nix_card__DOT__pslot__v3[0U] 
-                            = vlSelfRef.a2nix_card__DOT__sp_path[0U];
-                        __VdlyVal__a2nix_card__DOT__pslot__v3[1U] 
-                            = vlSelfRef.a2nix_card__DOT__sp_path[1U];
-                        __VdlyVal__a2nix_card__DOT__pslot__v3[2U] 
-                            = vlSelfRef.a2nix_card__DOT__sp_path[2U];
-                        __VdlyVal__a2nix_card__DOT__pslot__v3[3U] 
-                            = vlSelfRef.a2nix_card__DOT__sp_path[3U];
-                        __VdlyVal__a2nix_card__DOT__pslot__v3[4U] 
-                            = vlSelfRef.a2nix_card__DOT__sp_path[4U];
-                        __VdlyVal__a2nix_card__DOT__pslot__v3[5U] 
-                            = vlSelfRef.a2nix_card__DOT__sp_path[5U];
-                        __VdlyVal__a2nix_card__DOT__pslot__v3[6U] 
-                            = vlSelfRef.a2nix_card__DOT__sp_path[6U];
-                        __VdlyVal__a2nix_card__DOT__pslot__v3[7U] 
-                            = vlSelfRef.a2nix_card__DOT__sp_path[7U];
-                        __VdlySet__a2nix_card__DOT__pslot__v3 = 1U;
-                        vlSelfRef.a2nix_card__DOT__done = 1U;
-                    } else {
-                        vlSelfRef.a2nix_card__DOT__err = 1U;
-                        vlSelfRef.a2nix_card__DOT__errcode = 1U;
+                if (((((((((0U == (IData)(vlSelfRef.c0n_wdata)) 
+                           | (1U == (IData)(vlSelfRef.c0n_wdata))) 
+                          | (0x10U == (IData)(vlSelfRef.c0n_wdata))) 
+                         | (0x15U == (IData)(vlSelfRef.c0n_wdata))) 
+                        | (0x11U == (IData)(vlSelfRef.c0n_wdata))) 
+                       | (0x20U == (IData)(vlSelfRef.c0n_wdata))) 
+                      | (0x21U == (IData)(vlSelfRef.c0n_wdata))) 
+                     | (0x12U == (IData)(vlSelfRef.c0n_wdata)))) {
+                    if ((0U != (IData)(vlSelfRef.c0n_wdata))) {
+                        if ((1U == (IData)(vlSelfRef.c0n_wdata))) {
+                            __Vdly__a2nix_card__DOT__pidx = 0U;
+                            __Vdly__a2nix_card__DOT__lenidx = 0U;
+                            vlSelfRef.a2nix_card__DOT__push_mode = 0U;
+                            __Vdly__a2nix_card__DOT__h_init = 1U;
+                            __Vdly__a2nix_card__DOT__aidx = 0U;
+                            vlSelfRef.a2nix_card__DOT__irq_pend = 0U;
+                        } else if ((0x10U == (IData)(vlSelfRef.c0n_wdata))) {
+                            __Vdly__a2nix_card__DOT__wptr = 0U;
+                            vlSelfRef.a2nix_card__DOT__rptr = 0U;
+                            __Vdly__a2nix_card__DOT__h_init = 1U;
+                            vlSelfRef.a2nix_card__DOT__push_mode = 0U;
+                        } else if ((0x15U == (IData)(vlSelfRef.c0n_wdata))) {
+                            vlSelfRef.a2nix_card__DOT__push_mode = 1U;
+                        } else if ((0x11U == (IData)(vlSelfRef.c0n_wdata))) {
+                            __Vdly__a2nix_card__DOT__mcount 
+                                = vlSelfRef.a2nix_card__DOT__len;
+                            vlSelfRef.a2nix_card__DOT__push_mode = 0U;
+                            __Vdly__a2nix_card__DOT__mcur 
+                                = vlSelfRef.a2nix_card__DOT__areg[0U];
+                            __Vdly__a2nix_card__DOT__busy = 1U;
+                            __Vdly__a2nix_card__DOT__mstate = 3U;
+                        } else if ((0x20U == (IData)(vlSelfRef.c0n_wdata))) {
+                            if ((0x00100000U < ((IData)(4U) 
+                                                + (vlSelfRef.a2nix_card__DOT__alloc_ptr 
+                                                   + 
+                                                   (0xfffffffcU 
+                                                    & ((IData)(3U) 
+                                                       + vlSelfRef.a2nix_card__DOT__len)))))) {
+                                vlSelfRef.a2nix_card__DOT__err = 1U;
+                                vlSelfRef.a2nix_card__DOT__errcode = 3U;
+                            } else {
+                                __Vdly__a2nix_card__DOT__mbidx = 0U;
+                                __VdlyVal__a2nix_card__DOT__areg__v3 
+                                    = vlSelfRef.a2nix_card__DOT__alloc_ptr;
+                                __VdlySet__a2nix_card__DOT__areg__v3 = 1U;
+                                __Vdly__a2nix_card__DOT__busy = 1U;
+                                __Vdly__a2nix_card__DOT__mstate = 5U;
+                                __Vdly__a2nix_card__DOT__mcur 
+                                    = vlSelfRef.a2nix_card__DOT__alloc_ptr;
+                                vlSelfRef.a2nix_card__DOT__alloc_ptr 
+                                    = ((IData)(4U) 
+                                       + (vlSelfRef.a2nix_card__DOT__alloc_ptr 
+                                          + (0xfffffffcU 
+                                             & ((IData)(3U) 
+                                                + vlSelfRef.a2nix_card__DOT__len))));
+                            }
+                        } else if ((0x21U == (IData)(vlSelfRef.c0n_wdata))) {
+                            vlSelfRef.a2nix_card__DOT__hops = 0U;
+                            __Vdly__a2nix_card__DOT__mcur 
+                                = vlSelfRef.a2nix_card__DOT__areg[0U];
+                            __Vdly__a2nix_card__DOT__busy = 1U;
+                            __Vdly__a2nix_card__DOT__mstate = 6U;
+                        } else {
+                            vlSelfRef.a2nix_card__DOT__push_mode = 0U;
+                            vlSelfRef.a2nix_card__DOT__finalizing = 1U;
+                            __Vdly__a2nix_card__DOT__busy = 1U;
+                        }
                     }
+                } else if ((0x14U == (IData)(vlSelfRef.c0n_wdata))) {
+                    __VdlyVal__a2nix_card__DOT__pslot__v3[0U] 
+                        = vlSelfRef.a2nix_card__DOT__sp_path[0U];
+                    __VdlyVal__a2nix_card__DOT__pslot__v3[1U] 
+                        = vlSelfRef.a2nix_card__DOT__sp_path[1U];
+                    __VdlyVal__a2nix_card__DOT__pslot__v3[2U] 
+                        = vlSelfRef.a2nix_card__DOT__sp_path[2U];
+                    __VdlyVal__a2nix_card__DOT__pslot__v3[3U] 
+                        = vlSelfRef.a2nix_card__DOT__sp_path[3U];
+                    __VdlyVal__a2nix_card__DOT__pslot__v3[4U] 
+                        = vlSelfRef.a2nix_card__DOT__sp_path[4U];
+                    __VdlyVal__a2nix_card__DOT__pslot__v3[5U] 
+                        = vlSelfRef.a2nix_card__DOT__sp_path[5U];
+                    __VdlyVal__a2nix_card__DOT__pslot__v3[6U] 
+                        = vlSelfRef.a2nix_card__DOT__sp_path[6U];
+                    __VdlyVal__a2nix_card__DOT__pslot__v3[7U] 
+                        = vlSelfRef.a2nix_card__DOT__sp_path[7U];
+                    __VdlySet__a2nix_card__DOT__pslot__v3 = 1U;
+                    vlSelfRef.a2nix_card__DOT__done = 1U;
+                } else {
+                    vlSelfRef.a2nix_card__DOT__err = 1U;
+                    vlSelfRef.a2nix_card__DOT__errcode = 1U;
                 }
             }
-            if ((1U & (~ ((IData)(vlSelfRef.c0n_addr) 
-                          >> 3U)))) {
-                if ((4U & (IData)(vlSelfRef.c0n_addr))) {
-                    if ((2U & (IData)(vlSelfRef.c0n_addr))) {
+        }
+        if (vlSelfRef.c0n_read) {
+            if ((8U & (IData)(vlSelfRef.c0n_addr))) {
+                if ((1U & (~ ((IData)(vlSelfRef.c0n_addr) 
+                              >> 2U)))) {
+                    if ((1U & (~ ((IData)(vlSelfRef.c0n_addr) 
+                                  >> 1U)))) {
                         if ((1U & (~ (IData)(vlSelfRef.c0n_addr)))) {
-                            vlSelfRef.a2nix_card__DOT__psel 
-                                = (7U & (IData)(vlSelfRef.c0n_wdata));
+                            __Vdly__a2nix_card__DOT__lenidx 
+                                = (3U & ((IData)(1U) 
+                                         + (IData)(vlSelfRef.a2nix_card__DOT__lenidx)));
                         }
                     }
                 }
+            } else if ((4U & (IData)(vlSelfRef.c0n_addr))) {
+                if ((2U & (IData)(vlSelfRef.c0n_addr))) {
+                    if ((1U & (IData)(vlSelfRef.c0n_addr))) {
+                        __Vdly__a2nix_card__DOT__pidx 
+                            = (0x0000001fU & ((IData)(1U) 
+                                              + (IData)(vlSelfRef.a2nix_card__DOT__pidx)));
+                    }
+                } else if ((1U & (~ (IData)(vlSelfRef.c0n_addr)))) {
+                    __VdlyVal__a2nix_card__DOT__areg__v4 
+                        = ((IData)(1U) + vlSelfRef.a2nix_card__DOT__areg
+                           [vlSelfRef.a2nix_card__DOT__asel]);
+                    __VdlyDim0__a2nix_card__DOT__areg__v4 
+                        = vlSelfRef.a2nix_card__DOT__asel;
+                    __VdlySet__a2nix_card__DOT__areg__v4 = 1U;
+                    __Vdly__a2nix_card__DOT__pf_req = 1U;
+                }
+            } else if ((2U & (IData)(vlSelfRef.c0n_addr))) {
+                if ((1U & (IData)(vlSelfRef.c0n_addr))) {
+                    __Vdly__a2nix_card__DOT__aidx = 
+                        (3U & ((IData)(1U) + (IData)(vlSelfRef.a2nix_card__DOT__aidx)));
+                }
+            }
+        }
+        if (vlSelfRef.c0n_write) {
+            if ((1U & (~ ((IData)(vlSelfRef.c0n_addr) 
+                          >> 3U)))) {
                 if ((1U & (~ ((IData)(vlSelfRef.c0n_addr) 
                               >> 2U)))) {
                     if ((2U & (IData)(vlSelfRef.c0n_addr))) {
@@ -1157,21 +1419,72 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                         }
                     }
                 }
+                if ((4U & (IData)(vlSelfRef.c0n_addr))) {
+                    if ((2U & (IData)(vlSelfRef.c0n_addr))) {
+                        if ((1U & (~ (IData)(vlSelfRef.c0n_addr)))) {
+                            vlSelfRef.a2nix_card__DOT__psel 
+                                = (7U & (IData)(vlSelfRef.c0n_wdata));
+                        }
+                    }
+                }
             }
         }
-        if (vlSelfRef.c0n_read) {
-            if ((3U == (IData)(vlSelfRef.c0n_addr))) {
-                __Vdly__a2nix_card__DOT__aidx = (3U 
-                                                 & ((IData)(1U) 
-                                                    + (IData)(vlSelfRef.a2nix_card__DOT__aidx)));
-            } else if ((7U == (IData)(vlSelfRef.c0n_addr))) {
-                __Vdly__a2nix_card__DOT__pidx = (0x0000001fU 
-                                                 & ((IData)(1U) 
-                                                    + (IData)(vlSelfRef.a2nix_card__DOT__pidx)));
-            } else if ((8U == (IData)(vlSelfRef.c0n_addr))) {
-                __Vdly__a2nix_card__DOT__lenidx = (3U 
-                                                   & ((IData)(1U) 
-                                                      + (IData)(vlSelfRef.a2nix_card__DOT__lenidx)));
+        vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_init = 0U;
+        vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_start = 0U;
+        if (((1U == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state)) 
+             & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__pb_v))) {
+            vlSelfRef.a2nix_card__DOT__u_hash__DOT__total 
+                = (1ULL + vlSelfRef.a2nix_card__DOT__u_hash__DOT__total);
+        }
+        if (vlSelfRef.a2nix_card__DOT__h_init) {
+            vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_init = 1U;
+            __Vdly__a2nix_card__DOT__u_hash__DOT__bidx = 0U;
+            vlSelfRef.a2nix_card__DOT__u_hash__DOT__total = 0ULL;
+            __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx = 0U;
+            vlSelfRef.a2nix_card__DOT__h_done = 0U;
+            __Vdly__a2nix_card__DOT__u_hash__DOT__state = 1U;
+        } else if ((4U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
+            if ((2U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
+                if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
+                    vlSelfRef.a2nix_card__DOT__h_done = 1U;
+                } else if ((7U == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__lenidx))) {
+                    __Vdly__a2nix_card__DOT__u_hash__DOT__ret = 7U;
+                    __Vdly__a2nix_card__DOT__u_hash__DOT__state = 2U;
+                } else {
+                    __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx 
+                        = (7U & ((IData)(1U) + (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__lenidx)));
+                }
+            } else if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
+                if ((0x38U == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx))) {
+                    __Vdly__a2nix_card__DOT__u_hash__DOT__state = 6U;
+                } else if (vlSelfRef.a2nix_card__DOT__u_hash__DOT__blk_full) {
+                    __Vdly__a2nix_card__DOT__u_hash__DOT__ret = 5U;
+                    __Vdly__a2nix_card__DOT__u_hash__DOT__state = 2U;
+                }
+            } else if (vlSelfRef.a2nix_card__DOT__u_hash__DOT__blk_full) {
+                __Vdly__a2nix_card__DOT__u_hash__DOT__ret = 5U;
+                __Vdly__a2nix_card__DOT__u_hash__DOT__state = 2U;
+            } else {
+                __Vdly__a2nix_card__DOT__u_hash__DOT__state = 5U;
+            }
+        } else if ((2U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
+            if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
+                if ((1U & (~ (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_busy)))) {
+                    __Vdly__a2nix_card__DOT__u_hash__DOT__state 
+                        = vlSelfRef.a2nix_card__DOT__u_hash__DOT__ret;
+                }
+            } else if (vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_busy) {
+                __Vdly__a2nix_card__DOT__u_hash__DOT__state = 3U;
+            } else {
+                vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_start = 1U;
+            }
+        } else if ((1U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))) {
+            if (vlSelfRef.a2nix_card__DOT__u_hash__DOT__blk_full) {
+                __Vdly__a2nix_card__DOT__u_hash__DOT__ret = 1U;
+                __Vdly__a2nix_card__DOT__u_hash__DOT__state = 2U;
+            } else if (((IData)(vlSelfRef.a2nix_card__DOT__h_finish) 
+                        & (~ (IData)(vlSelfRef.a2nix_card__DOT__h_valid)))) {
+                __Vdly__a2nix_card__DOT__u_hash__DOT__state = 4U;
             }
         }
         vlSelfRef.a2nix_card__DOT__h_valid = 0U;
@@ -1191,20 +1504,16 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
         __Vdly__a2nix_card__DOT__u_hash__DOT__u_core__DOT__h5 = 0x9b05688cU;
         __Vdly__a2nix_card__DOT__u_hash__DOT__u_core__DOT__h6 = 0x1f83d9abU;
         __Vdly__a2nix_card__DOT__u_hash__DOT__u_core__DOT__h7 = 0x5be0cd19U;
-        vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_init = 0U;
-        __Vdly__a2nix_card__DOT__u_hash__DOT__state = 0U;
-        __Vdly__a2nix_card__DOT__u_hash__DOT__ret = 0U;
-        __Vdly__a2nix_card__DOT__u_hash__DOT__bidx = 0U;
-        vlSelfRef.a2nix_card__DOT__u_hash__DOT__total = 0ULL;
-        __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx = 0U;
-        __Vdly__a2nix_card__DOT__h_done = 0U;
-        vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_start = 0U;
-        __Vdly__a2nix_card__DOT__aidx = 0U;
         __Vdly__a2nix_card__DOT__pidx = 0U;
         __Vdly__a2nix_card__DOT__lenidx = 0U;
-        vlSelfRef.a2nix_card__DOT__wptr = 0U;
+        __Vdly__a2nix_card__DOT__wptr = 0U;
         vlSelfRef.a2nix_card__DOT__rptr = 0U;
-        vlSelfRef.a2nix_card__DOT__len = 0U;
+        __Vdly__a2nix_card__DOT__mbidx = 0U;
+        __Vdly__a2nix_card__DOT__mcount = 0U;
+        vlSelfRef.a2nix_card__DOT__hops = 0U;
+        vlSelfRef.a2nix_card__DOT__alloc_ptr = 0x00000010U;
+        __Vdly__a2nix_card__DOT__aidx = 0U;
+        __Vdly__a2nix_card__DOT__len = 0U;
         __Vdly__a2nix_card__DOT__busy = 0U;
         vlSelfRef.a2nix_card__DOT__done = 0U;
         vlSelfRef.a2nix_card__DOT__err = 0U;
@@ -1212,13 +1521,35 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
         vlSelfRef.a2nix_card__DOT__irq_pend = 0U;
         vlSelfRef.a2nix_card__DOT__push_mode = 0U;
         vlSelfRef.a2nix_card__DOT__finalizing = 0U;
-        vlSelfRef.a2nix_card__DOT__h_init = 0U;
+        __Vdly__a2nix_card__DOT__h_init = 0U;
         vlSelfRef.a2nix_card__DOT__h_byte = 0U;
-        vlSelfRef.a2nix_card__DOT__h_finish = 0U;
-        __VdlySet__a2nix_card__DOT__areg__v1 = 1U;
-        vlSelfRef.a2nix_card__DOT__h_valid = 0U;
-        vlSelfRef.a2nix_card__DOT__psel = 0U;
+        __Vdly__a2nix_card__DOT__h_finish = 0U;
+        __VdlySet__a2nix_card__DOT__areg__v5 = 1U;
+        __Vdly__a2nix_card__DOT__mstate = 0U;
+        __Vdly__a2nix_card__DOT__mret = 0U;
+        __Vdly__a2nix_card__DOT__mcur = 0U;
+        vlSelfRef.a2nix_card__DOT__mbyte = 0U;
+        __Vdly__a2nix_card__DOT__mptr = 0U;
+        vlSelfRef.a2nix_card__DOT__dw_pend = 0U;
+        vlSelfRef.a2nix_card__DOT__dw_addr = 0U;
+        vlSelfRef.a2nix_card__DOT__dw_data = 0U;
+        __Vdly__a2nix_card__DOT__pf_req = 0U;
+        vlSelfRef.a2nix_card__DOT__data_latch = 0U;
+        vlSelfRef.mem_addr = 0U;
+        vlSelfRef.mem_we = 0U;
+        vlSelfRef.mem_wdata = 0U;
+        __VdlySet__a2nix_card__DOT__areg__v6 = 1U;
+        vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_init = 0U;
         vlSelfRef.a2nix_card__DOT__asel = 0U;
+        vlSelfRef.a2nix_card__DOT__psel = 0U;
+        __Vdly__a2nix_card__DOT__u_hash__DOT__state = 0U;
+        __Vdly__a2nix_card__DOT__u_hash__DOT__ret = 0U;
+        __Vdly__a2nix_card__DOT__u_hash__DOT__bidx = 0U;
+        vlSelfRef.a2nix_card__DOT__u_hash__DOT__total = 0ULL;
+        __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx = 0U;
+        vlSelfRef.a2nix_card__DOT__h_done = 0U;
+        vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_start = 0U;
+        vlSelfRef.a2nix_card__DOT__h_valid = 0U;
     }
     vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__d 
         = __Vdly__a2nix_card__DOT__u_hash__DOT__u_core__DOT__d;
@@ -1400,26 +1731,26 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                  + (Va2nix_card__ConstPool__CONST_h7be248c9_0
                     [(0x0000003fU & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__round))] 
                     + vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__w[0U]))));
-    vlSelfRef.a2nix_card__DOT__u_hash__DOT__lenidx 
-        = __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx;
-    vlSelfRef.a2nix_card__DOT__u_hash__DOT__ret = __Vdly__a2nix_card__DOT__u_hash__DOT__ret;
-    vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_busy 
-        = __Vdly__a2nix_card__DOT__u_hash__DOT__core_busy;
-    vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx = __Vdly__a2nix_card__DOT__u_hash__DOT__bidx;
-    vlSelfRef.a2nix_card__DOT__u_hash__DOT__state = __Vdly__a2nix_card__DOT__u_hash__DOT__state;
-    vlSelfRef.__VdfgRegularize_h6e95ff9d_0_13 = (IData)(
-                                                        (1U 
-                                                         == 
-                                                         (3U 
-                                                          & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))));
-    vlSelfRef.a2nix_card__DOT__h_done = __Vdly__a2nix_card__DOT__h_done;
+    vlSelfRef.a2nix_card__DOT__mstate = __Vdly__a2nix_card__DOT__mstate;
+    vlSelfRef.a2nix_card__DOT__mptr = __Vdly__a2nix_card__DOT__mptr;
+    vlSelfRef.a2nix_card__DOT__mbidx = __Vdly__a2nix_card__DOT__mbidx;
+    vlSelfRef.a2nix_card__DOT__mcur = __Vdly__a2nix_card__DOT__mcur;
+    vlSelfRef.a2nix_card__DOT__mret = __Vdly__a2nix_card__DOT__mret;
+    vlSelfRef.a2nix_card__DOT__pf_req = __Vdly__a2nix_card__DOT__pf_req;
+    vlSelfRef.a2nix_card__DOT__mcount = __Vdly__a2nix_card__DOT__mcount;
     if (__VdlySet__a2nix_card__DOT__fifo__v0) {
         vlSelfRef.a2nix_card__DOT__fifo[__VdlyDim0__a2nix_card__DOT__fifo__v0] 
             = __VdlyVal__a2nix_card__DOT__fifo__v0;
     }
+    if (__VdlySet__a2nix_card__DOT__fifo__v1) {
+        vlSelfRef.a2nix_card__DOT__fifo[__VdlyDim0__a2nix_card__DOT__fifo__v1] 
+            = __VdlyVal__a2nix_card__DOT__fifo__v1;
+    }
+    vlSelfRef.a2nix_card__DOT__len = __Vdly__a2nix_card__DOT__len;
     vlSelfRef.a2nix_card__DOT__lenidx = __Vdly__a2nix_card__DOT__lenidx;
     vlSelfRef.a2nix_card__DOT__pidx = __Vdly__a2nix_card__DOT__pidx;
     vlSelfRef.a2nix_card__DOT__aidx = __Vdly__a2nix_card__DOT__aidx;
+    vlSelfRef.a2nix_card__DOT__wptr = __Vdly__a2nix_card__DOT__wptr;
     vlSelfRef.a2nix_card__DOT__h_digest[0U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h7;
     vlSelfRef.a2nix_card__DOT__h_digest[1U] = vlSelfRef.a2nix_card__DOT__u_hash__DOT__u_core__DOT__h6;
     vlSelfRef.a2nix_card__DOT__h_digest[2U] = (IData)(
@@ -1444,11 +1775,28 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                        >> 0x00000020U));
     vlSelfRef.a2nix_card__DOT__busy = __Vdly__a2nix_card__DOT__busy;
     if (__VdlySet__a2nix_card__DOT__areg__v0) {
-        vlSelfRef.a2nix_card__DOT__areg[__VdlyDim0__a2nix_card__DOT__areg__v0] 
-            = (((~ ((IData)(0x000000ffU) << (IData)(__VdlyLsb__a2nix_card__DOT__areg__v0))) 
-                & vlSelfRef.a2nix_card__DOT__areg[__VdlyDim0__a2nix_card__DOT__areg__v0]) 
-               | (0x00000000ffffffffULL & ((IData)(__VdlyVal__a2nix_card__DOT__areg__v0) 
-                                           << (IData)(__VdlyLsb__a2nix_card__DOT__areg__v0))));
+        vlSelfRef.a2nix_card__DOT__areg[1U] = __VdlyVal__a2nix_card__DOT__areg__v0;
+    }
+    if (__VdlySet__a2nix_card__DOT__areg__v1) {
+        vlSelfRef.a2nix_card__DOT__areg[__VdlyDim0__a2nix_card__DOT__areg__v1] 
+            = __VdlyVal__a2nix_card__DOT__areg__v1;
+    }
+    if (__VdlySet__a2nix_card__DOT__areg__v2) {
+        vlSelfRef.a2nix_card__DOT__areg[__VdlyDim0__a2nix_card__DOT__areg__v2] 
+            = (((~ ((IData)(0x000000ffU) << (IData)(__VdlyLsb__a2nix_card__DOT__areg__v2))) 
+                & vlSelfRef.a2nix_card__DOT__areg[__VdlyDim0__a2nix_card__DOT__areg__v2]) 
+               | (0x00000000ffffffffULL & ((IData)(__VdlyVal__a2nix_card__DOT__areg__v2) 
+                                           << (IData)(__VdlyLsb__a2nix_card__DOT__areg__v2))));
+    }
+    if (__VdlySet__a2nix_card__DOT__areg__v3) {
+        vlSelfRef.a2nix_card__DOT__areg[1U] = __VdlyVal__a2nix_card__DOT__areg__v3;
+    }
+    if (__VdlySet__a2nix_card__DOT__areg__v4) {
+        vlSelfRef.a2nix_card__DOT__areg[__VdlyDim0__a2nix_card__DOT__areg__v4] 
+            = __VdlyVal__a2nix_card__DOT__areg__v4;
+    }
+    if (__VdlySet__a2nix_card__DOT__areg__v5) {
+        vlSelfRef.a2nix_card__DOT__areg[0U] = 0U;
     }
     if (__VdlySet__a2nix_card__DOT__pslot__v0) {
         vlSelfRef.a2nix_card__DOT__pslot[0U][0U] = __VdlyVal__a2nix_card__DOT__pslot__v0[0U];
@@ -1484,12 +1832,13 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
         vlSelfRef.a2nix_card__DOT__pslot[3U][6U] = __VdlyVal__a2nix_card__DOT__pslot__v3[6U];
         vlSelfRef.a2nix_card__DOT__pslot[3U][7U] = __VdlyVal__a2nix_card__DOT__pslot__v3[7U];
     }
-    if (__VdlySet__a2nix_card__DOT__areg__v1) {
-        vlSelfRef.a2nix_card__DOT__areg[0U] = 0U;
+    if (__VdlySet__a2nix_card__DOT__areg__v5) {
+        VL_ASSIGN_W(256, vlSelfRef.a2nix_card__DOT__pslot[0U], Va2nix_card__ConstPool__CONST_h9e67c271_0);
+    }
+    if (__VdlySet__a2nix_card__DOT__areg__v6) {
         vlSelfRef.a2nix_card__DOT__areg[1U] = 0U;
         vlSelfRef.a2nix_card__DOT__areg[2U] = 0U;
         vlSelfRef.a2nix_card__DOT__areg[3U] = 0U;
-        VL_ASSIGN_W(256, vlSelfRef.a2nix_card__DOT__pslot[0U], Va2nix_card__ConstPool__CONST_h9e67c271_0);
         VL_ASSIGN_W(256, vlSelfRef.a2nix_card__DOT__pslot[1U], Va2nix_card__ConstPool__CONST_h9e67c271_0);
         VL_ASSIGN_W(256, vlSelfRef.a2nix_card__DOT__pslot[2U], Va2nix_card__ConstPool__CONST_h9e67c271_0);
         VL_ASSIGN_W(256, vlSelfRef.a2nix_card__DOT__pslot[3U], Va2nix_card__ConstPool__CONST_h9e67c271_0);
@@ -1524,6 +1873,15 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
         a2nix_card__DOT__sp_digest[6U] = vlSelfRef.a2nix_card__DOT__pslot[0U][6U];
         a2nix_card__DOT__sp_digest[7U] = vlSelfRef.a2nix_card__DOT__pslot[0U][7U];
     }
+    vlSelfRef.a2nix_card__DOT__h_init = __Vdly__a2nix_card__DOT__h_init;
+    vlSelfRef.a2nix_card__DOT__u_hash__DOT__lenidx 
+        = __Vdly__a2nix_card__DOT__u_hash__DOT__lenidx;
+    vlSelfRef.a2nix_card__DOT__u_hash__DOT__ret = __Vdly__a2nix_card__DOT__u_hash__DOT__ret;
+    vlSelfRef.a2nix_card__DOT__u_hash__DOT__core_busy 
+        = __Vdly__a2nix_card__DOT__u_hash__DOT__core_busy;
+    vlSelfRef.a2nix_card__DOT__h_finish = __Vdly__a2nix_card__DOT__h_finish;
+    vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx = __Vdly__a2nix_card__DOT__u_hash__DOT__bidx;
+    vlSelfRef.a2nix_card__DOT__u_hash__DOT__state = __Vdly__a2nix_card__DOT__u_hash__DOT__state;
     __VdfgRegularize_h6e95ff9d_0_0 = (0x000000ffU & 
                                       (a2nix_card__DOT__sp_digest[5U] 
                                        ^ a2nix_card__DOT__sp_digest[0U]));
@@ -1612,19 +1970,7 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                               << 8U) 
                                              | (a2nix_card__DOT__sp_digest[2U] 
                                                 >> 0x00000018U))));
-    vlSelfRef.a2nix_card__DOT__fifo_drain = ((~ ((IData)(vlSelfRef.a2nix_card__DOT__h_valid) 
-                                                 | (IData)(vlSelfRef.a2nix_card__DOT__fifo_empty))) 
-                                             & (1U 
-                                                == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state)));
-    vlSelfRef.a2nix_card__DOT__u_hash__DOT__pb_v = 
-        (1U & ((4U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
-                ? ((2U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
-                    ? (~ (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
-                    : (~ ((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state) 
-                          & (0x38U == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx)))))
-                : ((IData)(vlSelfRef.a2nix_card__DOT__h_valid) 
-                   & (IData)(vlSelfRef.__VdfgRegularize_h6e95ff9d_0_13))));
-    __VExpandSel_Lsb_1 = (0x000000ffU & (((IData)(0xffU) 
+    __VExpandSel_Lsb_2 = (0x000000ffU & (((IData)(0xffU) 
                                           - ((IData)(vlSelfRef.a2nix_card__DOT__pidx) 
                                              << 3U)) 
                                          - (IData)(7U)));
@@ -1648,37 +1994,39 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                                   ((IData)(vlSelfRef.c0n_addr) 
                                                                    >> 2U)))))))
                                            : ((4U & (IData)(vlSelfRef.c0n_addr))
-                                               ? ((3U 
-                                                   == 
-                                                   (3U 
-                                                    & (IData)(vlSelfRef.c0n_addr)))
+                                               ? ((2U 
+                                                   & (IData)(vlSelfRef.c0n_addr))
                                                    ? 
-                                                  (((0U 
-                                                     == 
-                                                     (0x0000001fU 
-                                                      & __VExpandSel_Lsb_1))
-                                                     ? 0U
-                                                     : 
-                                                    (vlSelfRef.a2nix_card__DOT__pslot
-                                                     [vlSelfRef.a2nix_card__DOT__psel]
-                                                     [
-                                                     (((IData)(7U) 
-                                                       + __VExpandSel_Lsb_1) 
-                                                      >> 5U)] 
-                                                     << 
-                                                     ((IData)(0x00000020U) 
-                                                      - 
+                                                  ((1U 
+                                                    & (IData)(vlSelfRef.c0n_addr))
+                                                    ? 
+                                                   (((0U 
+                                                      == 
                                                       (0x0000001fU 
-                                                       & __VExpandSel_Lsb_1)))) 
-                                                   | (vlSelfRef.a2nix_card__DOT__pslot
+                                                       & __VExpandSel_Lsb_2))
+                                                      ? 0U
+                                                      : 
+                                                     (vlSelfRef.a2nix_card__DOT__pslot
                                                       [vlSelfRef.a2nix_card__DOT__psel]
                                                       [
-                                                      (__VExpandSel_Lsb_1 
+                                                      (((IData)(7U) 
+                                                        + __VExpandSel_Lsb_2) 
                                                        >> 5U)] 
-                                                      >> 
-                                                      (0x0000001fU 
-                                                       & __VExpandSel_Lsb_1)))
-                                                   : 0U)
+                                                      << 
+                                                      ((IData)(0x00000020U) 
+                                                       - 
+                                                       (0x0000001fU 
+                                                        & __VExpandSel_Lsb_2)))) 
+                                                    | (vlSelfRef.a2nix_card__DOT__pslot
+                                                       [vlSelfRef.a2nix_card__DOT__psel]
+                                                       [
+                                                       (__VExpandSel_Lsb_2 
+                                                        >> 5U)] 
+                                                       >> 
+                                                       (0x0000001fU 
+                                                        & __VExpandSel_Lsb_2)))
+                                                    : 0U)
+                                                   : (IData)(vlSelfRef.a2nix_card__DOT__data_latch))
                                                : ((2U 
                                                    & (IData)(vlSelfRef.c0n_addr))
                                                    ? 
@@ -1709,37 +2057,42 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                                 - (IData)(vlSelfRef.a2nix_card__DOT__fifo_count)))) 
                                                            << 4U) 
                                                           | (IData)(vlSelfRef.a2nix_card__DOT__errcode)))))))));
-    __VExpandSel_Lsb_2 = ((0x000003c0U & ((IData)(__VdfgRegularize_h6e95ff9d_0_10) 
+    vlSelfRef.__VdfgRegularize_h6e95ff9d_0_13 = (IData)(
+                                                        (1U 
+                                                         == 
+                                                         (3U 
+                                                          & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))));
+    __VExpandSel_Lsb_3 = ((0x000003c0U & ((IData)(__VdfgRegularize_h6e95ff9d_0_10) 
                                           << 6U)) | 
                           (0x00000020U & ((IData)(__VdfgRegularize_h6e95ff9d_0_4) 
                                           >> 2U)));
-    __VExpandSel_Lsb_3 = ((0x00000300U & ((IData)(__VdfgRegularize_h6e95ff9d_0_4) 
+    __VExpandSel_Lsb_4 = ((0x00000300U & ((IData)(__VdfgRegularize_h6e95ff9d_0_4) 
                                           << 8U)) | 
                           (0x000000e0U & (IData)(__VdfgRegularize_h6e95ff9d_0_11)));
     vlSelfRef.a2nix_card__DOT__sp_path[0U] = ((((0x0000ff00U 
                                                  & ((((0U 
                                                        == 
                                                        (0x0000001fU 
-                                                        & __VExpandSel_Lsb_2))
+                                                        & __VExpandSel_Lsb_3))
                                                        ? 0U
                                                        : 
                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                        [
                                                        (((IData)(7U) 
-                                                         + __VExpandSel_Lsb_2) 
+                                                         + __VExpandSel_Lsb_3) 
                                                         >> 5U)] 
                                                        << 
                                                        ((IData)(0x00000020U) 
                                                         - 
                                                         (0x0000001fU 
-                                                         & __VExpandSel_Lsb_2)))) 
+                                                         & __VExpandSel_Lsb_3)))) 
                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                         [
-                                                        (__VExpandSel_Lsb_2 
+                                                        (__VExpandSel_Lsb_3 
                                                          >> 5U)] 
                                                         >> 
                                                         (0x0000001fU 
-                                                         & __VExpandSel_Lsb_2))) 
+                                                         & __VExpandSel_Lsb_3))) 
                                                     << 8U)) 
                                                 | (0x000000ffU 
                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
@@ -1750,51 +2103,6 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                << 0x00000010U) 
                                               | ((0x0000ff00U 
                                                   & ((((0U 
-                                                        == 
-                                                        (0x0000001fU 
-                                                         & __VExpandSel_Lsb_3))
-                                                        ? 0U
-                                                        : 
-                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                        [
-                                                        (((IData)(7U) 
-                                                          + __VExpandSel_Lsb_3) 
-                                                         >> 5U)] 
-                                                        << 
-                                                        ((IData)(0x00000020U) 
-                                                         - 
-                                                         (0x0000001fU 
-                                                          & __VExpandSel_Lsb_3)))) 
-                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                         [
-                                                         (__VExpandSel_Lsb_3 
-                                                          >> 5U)] 
-                                                         >> 
-                                                         (0x0000001fU 
-                                                          & __VExpandSel_Lsb_3))) 
-                                                     << 8U)) 
-                                                 | (0x000000ffU 
-                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                    [
-                                                    (0x0000001fU 
-                                                     & (IData)(__VdfgRegularize_h6e95ff9d_0_11))])));
-    __VExpandSel_Lsb_4 = ((0x00000380U & ((IData)(__VdfgRegularize_h6e95ff9d_0_9) 
-                                          << 7U)) | 
-                          (0x00000060U & ((IData)(__VdfgRegularize_h6e95ff9d_0_3) 
-                                          >> 1U)));
-    __VExpandSel_Lsb_5 = ((0x00000200U & ((IData)(__VdfgRegularize_h6e95ff9d_0_3) 
-                                          << 9U)) | 
-                          (0x000001e0U & ((IData)(__VdfgRegularize_h6e95ff9d_0_10) 
-                                          << 1U)));
-    vlSelfRef.a2nix_card__DOT__sp_path[1U] = ((((0x0000ff00U 
-                                                 & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                    [
-                                                    (0x0000001fU 
-                                                     & ((IData)(__VdfgRegularize_h6e95ff9d_0_9) 
-                                                        >> 3U))] 
-                                                    << 8U)) 
-                                                | (0x000000ffU 
-                                                   & (((0U 
                                                         == 
                                                         (0x0000001fU 
                                                          & __VExpandSel_Lsb_4))
@@ -1816,7 +2124,52 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                           >> 5U)] 
                                                          >> 
                                                          (0x0000001fU 
-                                                          & __VExpandSel_Lsb_4))))) 
+                                                          & __VExpandSel_Lsb_4))) 
+                                                     << 8U)) 
+                                                 | (0x000000ffU 
+                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                    [
+                                                    (0x0000001fU 
+                                                     & (IData)(__VdfgRegularize_h6e95ff9d_0_11))])));
+    __VExpandSel_Lsb_5 = ((0x00000380U & ((IData)(__VdfgRegularize_h6e95ff9d_0_9) 
+                                          << 7U)) | 
+                          (0x00000060U & ((IData)(__VdfgRegularize_h6e95ff9d_0_3) 
+                                          >> 1U)));
+    __VExpandSel_Lsb_6 = ((0x00000200U & ((IData)(__VdfgRegularize_h6e95ff9d_0_3) 
+                                          << 9U)) | 
+                          (0x000001e0U & ((IData)(__VdfgRegularize_h6e95ff9d_0_10) 
+                                          << 1U)));
+    vlSelfRef.a2nix_card__DOT__sp_path[1U] = ((((0x0000ff00U 
+                                                 & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                    [
+                                                    (0x0000001fU 
+                                                     & ((IData)(__VdfgRegularize_h6e95ff9d_0_9) 
+                                                        >> 3U))] 
+                                                    << 8U)) 
+                                                | (0x000000ffU 
+                                                   & (((0U 
+                                                        == 
+                                                        (0x0000001fU 
+                                                         & __VExpandSel_Lsb_5))
+                                                        ? 0U
+                                                        : 
+                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                        [
+                                                        (((IData)(7U) 
+                                                          + __VExpandSel_Lsb_5) 
+                                                         >> 5U)] 
+                                                        << 
+                                                        ((IData)(0x00000020U) 
+                                                         - 
+                                                         (0x0000001fU 
+                                                          & __VExpandSel_Lsb_5)))) 
+                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                         [
+                                                         (__VExpandSel_Lsb_5 
+                                                          >> 5U)] 
+                                                         >> 
+                                                         (0x0000001fU 
+                                                          & __VExpandSel_Lsb_5))))) 
                                                << 0x00000010U) 
                                               | ((0x0000ff00U 
                                                   & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
@@ -1829,57 +2182,57 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                     & (((0U 
                                                          == 
                                                          (0x0000001fU 
-                                                          & __VExpandSel_Lsb_5))
+                                                          & __VExpandSel_Lsb_6))
                                                          ? 0U
                                                          : 
                                                         (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                          [
                                                          (((IData)(7U) 
-                                                           + __VExpandSel_Lsb_5) 
+                                                           + __VExpandSel_Lsb_6) 
                                                           >> 5U)] 
                                                          << 
                                                          ((IData)(0x00000020U) 
                                                           - 
                                                           (0x0000001fU 
-                                                           & __VExpandSel_Lsb_5)))) 
+                                                           & __VExpandSel_Lsb_6)))) 
                                                        | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                           [
-                                                          (__VExpandSel_Lsb_5 
+                                                          (__VExpandSel_Lsb_6 
                                                            >> 5U)] 
                                                           >> 
                                                           (0x0000001fU 
-                                                           & __VExpandSel_Lsb_5))))));
-    __VExpandSel_Lsb_6 = ((0x000003c0U & ((IData)(__VdfgRegularize_h6e95ff9d_0_7) 
+                                                           & __VExpandSel_Lsb_6))))));
+    __VExpandSel_Lsb_7 = ((0x000003c0U & ((IData)(__VdfgRegularize_h6e95ff9d_0_7) 
                                           << 6U)) | 
                           (0x00000020U & ((IData)(__VdfgRegularize_h6e95ff9d_0_2) 
                                           >> 2U)));
-    __VExpandSel_Lsb_7 = ((0x00000300U & ((IData)(__VdfgRegularize_h6e95ff9d_0_2) 
+    __VExpandSel_Lsb_8 = ((0x00000300U & ((IData)(__VdfgRegularize_h6e95ff9d_0_2) 
                                           << 8U)) | 
                           (0x000000e0U & (IData)(__VdfgRegularize_h6e95ff9d_0_8)));
     vlSelfRef.a2nix_card__DOT__sp_path[2U] = ((((0x0000ff00U 
                                                  & ((((0U 
                                                        == 
                                                        (0x0000001fU 
-                                                        & __VExpandSel_Lsb_6))
+                                                        & __VExpandSel_Lsb_7))
                                                        ? 0U
                                                        : 
                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                        [
                                                        (((IData)(7U) 
-                                                         + __VExpandSel_Lsb_6) 
+                                                         + __VExpandSel_Lsb_7) 
                                                         >> 5U)] 
                                                        << 
                                                        ((IData)(0x00000020U) 
                                                         - 
                                                         (0x0000001fU 
-                                                         & __VExpandSel_Lsb_6)))) 
+                                                         & __VExpandSel_Lsb_7)))) 
                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                         [
-                                                        (__VExpandSel_Lsb_6 
+                                                        (__VExpandSel_Lsb_7 
                                                          >> 5U)] 
                                                         >> 
                                                         (0x0000001fU 
-                                                         & __VExpandSel_Lsb_6))) 
+                                                         & __VExpandSel_Lsb_7))) 
                                                     << 8U)) 
                                                 | (0x000000ffU 
                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
@@ -1890,51 +2243,6 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                << 0x00000010U) 
                                               | ((0x0000ff00U 
                                                   & ((((0U 
-                                                        == 
-                                                        (0x0000001fU 
-                                                         & __VExpandSel_Lsb_7))
-                                                        ? 0U
-                                                        : 
-                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                        [
-                                                        (((IData)(7U) 
-                                                          + __VExpandSel_Lsb_7) 
-                                                         >> 5U)] 
-                                                        << 
-                                                        ((IData)(0x00000020U) 
-                                                         - 
-                                                         (0x0000001fU 
-                                                          & __VExpandSel_Lsb_7)))) 
-                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                         [
-                                                         (__VExpandSel_Lsb_7 
-                                                          >> 5U)] 
-                                                         >> 
-                                                         (0x0000001fU 
-                                                          & __VExpandSel_Lsb_7))) 
-                                                     << 8U)) 
-                                                 | (0x000000ffU 
-                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                    [
-                                                    (0x0000001fU 
-                                                     & (IData)(__VdfgRegularize_h6e95ff9d_0_8))])));
-    __VExpandSel_Lsb_8 = ((0x00000380U & ((IData)(__VdfgRegularize_h6e95ff9d_0_6) 
-                                          << 7U)) | 
-                          (0x00000060U & ((IData)(__VdfgRegularize_h6e95ff9d_0_1) 
-                                          >> 1U)));
-    __VExpandSel_Lsb_9 = ((0x00000200U & ((IData)(__VdfgRegularize_h6e95ff9d_0_1) 
-                                          << 9U)) | 
-                          (0x000001e0U & ((IData)(__VdfgRegularize_h6e95ff9d_0_7) 
-                                          << 1U)));
-    vlSelfRef.a2nix_card__DOT__sp_path[3U] = ((((0x0000ff00U 
-                                                 & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                    [
-                                                    (0x0000001fU 
-                                                     & ((IData)(__VdfgRegularize_h6e95ff9d_0_6) 
-                                                        >> 3U))] 
-                                                    << 8U)) 
-                                                | (0x000000ffU 
-                                                   & (((0U 
                                                         == 
                                                         (0x0000001fU 
                                                          & __VExpandSel_Lsb_8))
@@ -1956,7 +2264,52 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                           >> 5U)] 
                                                          >> 
                                                          (0x0000001fU 
-                                                          & __VExpandSel_Lsb_8))))) 
+                                                          & __VExpandSel_Lsb_8))) 
+                                                     << 8U)) 
+                                                 | (0x000000ffU 
+                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                    [
+                                                    (0x0000001fU 
+                                                     & (IData)(__VdfgRegularize_h6e95ff9d_0_8))])));
+    __VExpandSel_Lsb_9 = ((0x00000380U & ((IData)(__VdfgRegularize_h6e95ff9d_0_6) 
+                                          << 7U)) | 
+                          (0x00000060U & ((IData)(__VdfgRegularize_h6e95ff9d_0_1) 
+                                          >> 1U)));
+    __VExpandSel_Lsb_10 = ((0x00000200U & ((IData)(__VdfgRegularize_h6e95ff9d_0_1) 
+                                           << 9U)) 
+                           | (0x000001e0U & ((IData)(__VdfgRegularize_h6e95ff9d_0_7) 
+                                             << 1U)));
+    vlSelfRef.a2nix_card__DOT__sp_path[3U] = ((((0x0000ff00U 
+                                                 & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                    [
+                                                    (0x0000001fU 
+                                                     & ((IData)(__VdfgRegularize_h6e95ff9d_0_6) 
+                                                        >> 3U))] 
+                                                    << 8U)) 
+                                                | (0x000000ffU 
+                                                   & (((0U 
+                                                        == 
+                                                        (0x0000001fU 
+                                                         & __VExpandSel_Lsb_9))
+                                                        ? 0U
+                                                        : 
+                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                        [
+                                                        (((IData)(7U) 
+                                                          + __VExpandSel_Lsb_9) 
+                                                         >> 5U)] 
+                                                        << 
+                                                        ((IData)(0x00000020U) 
+                                                         - 
+                                                         (0x0000001fU 
+                                                          & __VExpandSel_Lsb_9)))) 
+                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                         [
+                                                         (__VExpandSel_Lsb_9 
+                                                          >> 5U)] 
+                                                         >> 
+                                                         (0x0000001fU 
+                                                          & __VExpandSel_Lsb_9))))) 
                                                << 0x00000010U) 
                                               | ((0x0000ff00U 
                                                   & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
@@ -1969,57 +2322,57 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                     & (((0U 
                                                          == 
                                                          (0x0000001fU 
-                                                          & __VExpandSel_Lsb_9))
+                                                          & __VExpandSel_Lsb_10))
                                                          ? 0U
                                                          : 
                                                         (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                          [
                                                          (((IData)(7U) 
-                                                           + __VExpandSel_Lsb_9) 
+                                                           + __VExpandSel_Lsb_10) 
                                                           >> 5U)] 
                                                          << 
                                                          ((IData)(0x00000020U) 
                                                           - 
                                                           (0x0000001fU 
-                                                           & __VExpandSel_Lsb_9)))) 
+                                                           & __VExpandSel_Lsb_10)))) 
                                                        | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                           [
-                                                          (__VExpandSel_Lsb_9 
+                                                          (__VExpandSel_Lsb_10 
                                                            >> 5U)] 
                                                           >> 
                                                           (0x0000001fU 
-                                                           & __VExpandSel_Lsb_9))))));
-    __VExpandSel_Lsb_10 = ((0x000003c0U & (a2nix_card__DOT__sp_digest[4U] 
+                                                           & __VExpandSel_Lsb_10))))));
+    __VExpandSel_Lsb_11 = ((0x000003c0U & (a2nix_card__DOT__sp_digest[4U] 
                                            >> 0x00000012U)) 
                            | (0x00000020U & ((IData)(__VdfgRegularize_h6e95ff9d_0_0) 
                                              >> 2U)));
-    __VExpandSel_Lsb_11 = ((0x00000300U & ((IData)(__VdfgRegularize_h6e95ff9d_0_0) 
+    __VExpandSel_Lsb_12 = ((0x00000300U & ((IData)(__VdfgRegularize_h6e95ff9d_0_0) 
                                            << 8U)) 
                            | (0x000000e0U & (IData)(__VdfgRegularize_h6e95ff9d_0_5)));
     vlSelfRef.a2nix_card__DOT__sp_path[4U] = ((((0x0000ff00U 
                                                  & ((((0U 
                                                        == 
                                                        (0x0000001fU 
-                                                        & __VExpandSel_Lsb_10))
+                                                        & __VExpandSel_Lsb_11))
                                                        ? 0U
                                                        : 
                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                        [
                                                        (((IData)(7U) 
-                                                         + __VExpandSel_Lsb_10) 
+                                                         + __VExpandSel_Lsb_11) 
                                                         >> 5U)] 
                                                        << 
                                                        ((IData)(0x00000020U) 
                                                         - 
                                                         (0x0000001fU 
-                                                         & __VExpandSel_Lsb_10)))) 
+                                                         & __VExpandSel_Lsb_11)))) 
                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                         [
-                                                        (__VExpandSel_Lsb_10 
+                                                        (__VExpandSel_Lsb_11 
                                                          >> 5U)] 
                                                         >> 
                                                         (0x0000001fU 
-                                                         & __VExpandSel_Lsb_10))) 
+                                                         & __VExpandSel_Lsb_11))) 
                                                     << 8U)) 
                                                 | (0x000000ffU 
                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
@@ -2030,51 +2383,6 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                << 0x00000010U) 
                                               | ((0x0000ff00U 
                                                   & ((((0U 
-                                                        == 
-                                                        (0x0000001fU 
-                                                         & __VExpandSel_Lsb_11))
-                                                        ? 0U
-                                                        : 
-                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                        [
-                                                        (((IData)(7U) 
-                                                          + __VExpandSel_Lsb_11) 
-                                                         >> 5U)] 
-                                                        << 
-                                                        ((IData)(0x00000020U) 
-                                                         - 
-                                                         (0x0000001fU 
-                                                          & __VExpandSel_Lsb_11)))) 
-                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                         [
-                                                         (__VExpandSel_Lsb_11 
-                                                          >> 5U)] 
-                                                         >> 
-                                                         (0x0000001fU 
-                                                          & __VExpandSel_Lsb_11))) 
-                                                     << 8U)) 
-                                                 | (0x000000ffU 
-                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                    [
-                                                    (0x0000001fU 
-                                                     & (IData)(__VdfgRegularize_h6e95ff9d_0_5))])));
-    __VExpandSel_Lsb_12 = ((0x00000380U & (a2nix_card__DOT__sp_digest[4U] 
-                                           >> 1U)) 
-                           | (0x00000060U & (a2nix_card__DOT__sp_digest[4U] 
-                                             >> 0x00000011U)));
-    __VExpandSel_Lsb_13 = ((0x00000200U & (a2nix_card__DOT__sp_digest[4U] 
-                                           >> 7U)) 
-                           | (0x000001e0U & (a2nix_card__DOT__sp_digest[4U] 
-                                             >> 0x00000017U)));
-    vlSelfRef.a2nix_card__DOT__sp_path[5U] = ((((0x0000ff00U 
-                                                 & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                    [
-                                                    (0x0000001fU 
-                                                     & (a2nix_card__DOT__sp_digest[4U] 
-                                                        >> 0x0000000bU))] 
-                                                    << 8U)) 
-                                                | (0x000000ffU 
-                                                   & (((0U 
                                                         == 
                                                         (0x0000001fU 
                                                          & __VExpandSel_Lsb_12))
@@ -2096,7 +2404,52 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                           >> 5U)] 
                                                          >> 
                                                          (0x0000001fU 
-                                                          & __VExpandSel_Lsb_12))))) 
+                                                          & __VExpandSel_Lsb_12))) 
+                                                     << 8U)) 
+                                                 | (0x000000ffU 
+                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                    [
+                                                    (0x0000001fU 
+                                                     & (IData)(__VdfgRegularize_h6e95ff9d_0_5))])));
+    __VExpandSel_Lsb_13 = ((0x00000380U & (a2nix_card__DOT__sp_digest[4U] 
+                                           >> 1U)) 
+                           | (0x00000060U & (a2nix_card__DOT__sp_digest[4U] 
+                                             >> 0x00000011U)));
+    __VExpandSel_Lsb_14 = ((0x00000200U & (a2nix_card__DOT__sp_digest[4U] 
+                                           >> 7U)) 
+                           | (0x000001e0U & (a2nix_card__DOT__sp_digest[4U] 
+                                             >> 0x00000017U)));
+    vlSelfRef.a2nix_card__DOT__sp_path[5U] = ((((0x0000ff00U 
+                                                 & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                    [
+                                                    (0x0000001fU 
+                                                     & (a2nix_card__DOT__sp_digest[4U] 
+                                                        >> 0x0000000bU))] 
+                                                    << 8U)) 
+                                                | (0x000000ffU 
+                                                   & (((0U 
+                                                        == 
+                                                        (0x0000001fU 
+                                                         & __VExpandSel_Lsb_13))
+                                                        ? 0U
+                                                        : 
+                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                        [
+                                                        (((IData)(7U) 
+                                                          + __VExpandSel_Lsb_13) 
+                                                         >> 5U)] 
+                                                        << 
+                                                        ((IData)(0x00000020U) 
+                                                         - 
+                                                         (0x0000001fU 
+                                                          & __VExpandSel_Lsb_13)))) 
+                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                         [
+                                                         (__VExpandSel_Lsb_13 
+                                                          >> 5U)] 
+                                                         >> 
+                                                         (0x0000001fU 
+                                                          & __VExpandSel_Lsb_13))))) 
                                                << 0x00000010U) 
                                               | ((0x0000ff00U 
                                                   & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
@@ -2109,57 +2462,57 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                     & (((0U 
                                                          == 
                                                          (0x0000001fU 
-                                                          & __VExpandSel_Lsb_13))
+                                                          & __VExpandSel_Lsb_14))
                                                          ? 0U
                                                          : 
                                                         (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                          [
                                                          (((IData)(7U) 
-                                                           + __VExpandSel_Lsb_13) 
+                                                           + __VExpandSel_Lsb_14) 
                                                           >> 5U)] 
                                                          << 
                                                          ((IData)(0x00000020U) 
                                                           - 
                                                           (0x0000001fU 
-                                                           & __VExpandSel_Lsb_13)))) 
+                                                           & __VExpandSel_Lsb_14)))) 
                                                        | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                           [
-                                                          (__VExpandSel_Lsb_13 
+                                                          (__VExpandSel_Lsb_14 
                                                            >> 5U)] 
                                                           >> 
                                                           (0x0000001fU 
-                                                           & __VExpandSel_Lsb_13))))));
-    __VExpandSel_Lsb_14 = ((0x000003c0U & (a2nix_card__DOT__sp_digest[3U] 
+                                                           & __VExpandSel_Lsb_14))))));
+    __VExpandSel_Lsb_15 = ((0x000003c0U & (a2nix_card__DOT__sp_digest[3U] 
                                            >> 0x0000000aU)) 
                            | (0x00000020U & (a2nix_card__DOT__sp_digest[3U] 
                                              >> 0x0000001aU)));
-    __VExpandSel_Lsb_15 = ((0x00000300U & (a2nix_card__DOT__sp_digest[3U] 
+    __VExpandSel_Lsb_16 = ((0x00000300U & (a2nix_card__DOT__sp_digest[3U] 
                                            >> 0x00000010U)) 
                            | (0x000000e0U & a2nix_card__DOT__sp_digest[4U]));
     vlSelfRef.a2nix_card__DOT__sp_path[6U] = ((((0x0000ff00U 
                                                  & ((((0U 
                                                        == 
                                                        (0x0000001fU 
-                                                        & __VExpandSel_Lsb_14))
+                                                        & __VExpandSel_Lsb_15))
                                                        ? 0U
                                                        : 
                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                        [
                                                        (((IData)(7U) 
-                                                         + __VExpandSel_Lsb_14) 
+                                                         + __VExpandSel_Lsb_15) 
                                                         >> 5U)] 
                                                        << 
                                                        ((IData)(0x00000020U) 
                                                         - 
                                                         (0x0000001fU 
-                                                         & __VExpandSel_Lsb_14)))) 
+                                                         & __VExpandSel_Lsb_15)))) 
                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                         [
-                                                        (__VExpandSel_Lsb_14 
+                                                        (__VExpandSel_Lsb_15 
                                                          >> 5U)] 
                                                         >> 
                                                         (0x0000001fU 
-                                                         & __VExpandSel_Lsb_14))) 
+                                                         & __VExpandSel_Lsb_15))) 
                                                     << 8U)) 
                                                 | (0x000000ffU 
                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
@@ -2170,51 +2523,6 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                << 0x00000010U) 
                                               | ((0x0000ff00U 
                                                   & ((((0U 
-                                                        == 
-                                                        (0x0000001fU 
-                                                         & __VExpandSel_Lsb_15))
-                                                        ? 0U
-                                                        : 
-                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                        [
-                                                        (((IData)(7U) 
-                                                          + __VExpandSel_Lsb_15) 
-                                                         >> 5U)] 
-                                                        << 
-                                                        ((IData)(0x00000020U) 
-                                                         - 
-                                                         (0x0000001fU 
-                                                          & __VExpandSel_Lsb_15)))) 
-                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                         [
-                                                         (__VExpandSel_Lsb_15 
-                                                          >> 5U)] 
-                                                         >> 
-                                                         (0x0000001fU 
-                                                          & __VExpandSel_Lsb_15))) 
-                                                     << 8U)) 
-                                                 | (0x000000ffU 
-                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                    [
-                                                    (0x0000001fU 
-                                                     & a2nix_card__DOT__sp_digest[4U])])));
-    __VExpandSel_Lsb_16 = ((0x00000380U & (a2nix_card__DOT__sp_digest[3U] 
-                                           << 7U)) 
-                           | (0x00000060U & (a2nix_card__DOT__sp_digest[3U] 
-                                             >> 9U)));
-    __VExpandSel_Lsb_17 = ((0x00000200U & (a2nix_card__DOT__sp_digest[3U] 
-                                           << 1U)) 
-                           | (0x000001e0U & (a2nix_card__DOT__sp_digest[3U] 
-                                             >> 0x0000000fU)));
-    vlSelfRef.a2nix_card__DOT__sp_path[7U] = ((((0x0000ff00U 
-                                                 & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
-                                                    [
-                                                    (0x0000001fU 
-                                                     & (a2nix_card__DOT__sp_digest[3U] 
-                                                        >> 3U))] 
-                                                    << 8U)) 
-                                                | (0x000000ffU 
-                                                   & (((0U 
                                                         == 
                                                         (0x0000001fU 
                                                          & __VExpandSel_Lsb_16))
@@ -2236,7 +2544,52 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                           >> 5U)] 
                                                          >> 
                                                          (0x0000001fU 
-                                                          & __VExpandSel_Lsb_16))))) 
+                                                          & __VExpandSel_Lsb_16))) 
+                                                     << 8U)) 
+                                                 | (0x000000ffU 
+                                                    & Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                    [
+                                                    (0x0000001fU 
+                                                     & a2nix_card__DOT__sp_digest[4U])])));
+    __VExpandSel_Lsb_17 = ((0x00000380U & (a2nix_card__DOT__sp_digest[3U] 
+                                           << 7U)) 
+                           | (0x00000060U & (a2nix_card__DOT__sp_digest[3U] 
+                                             >> 9U)));
+    __VExpandSel_Lsb_18 = ((0x00000200U & (a2nix_card__DOT__sp_digest[3U] 
+                                           << 1U)) 
+                           | (0x000001e0U & (a2nix_card__DOT__sp_digest[3U] 
+                                             >> 0x0000000fU)));
+    vlSelfRef.a2nix_card__DOT__sp_path[7U] = ((((0x0000ff00U 
+                                                 & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                    [
+                                                    (0x0000001fU 
+                                                     & (a2nix_card__DOT__sp_digest[3U] 
+                                                        >> 3U))] 
+                                                    << 8U)) 
+                                                | (0x000000ffU 
+                                                   & (((0U 
+                                                        == 
+                                                        (0x0000001fU 
+                                                         & __VExpandSel_Lsb_17))
+                                                        ? 0U
+                                                        : 
+                                                       (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                        [
+                                                        (((IData)(7U) 
+                                                          + __VExpandSel_Lsb_17) 
+                                                         >> 5U)] 
+                                                        << 
+                                                        ((IData)(0x00000020U) 
+                                                         - 
+                                                         (0x0000001fU 
+                                                          & __VExpandSel_Lsb_17)))) 
+                                                      | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
+                                                         [
+                                                         (__VExpandSel_Lsb_17 
+                                                          >> 5U)] 
+                                                         >> 
+                                                         (0x0000001fU 
+                                                          & __VExpandSel_Lsb_17))))) 
                                                << 0x00000010U) 
                                               | ((0x0000ff00U 
                                                   & (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
@@ -2249,26 +2602,38 @@ void Va2nix_card___024root___nba_sequent__TOP__0(Va2nix_card___024root* vlSelf) 
                                                     & (((0U 
                                                          == 
                                                          (0x0000001fU 
-                                                          & __VExpandSel_Lsb_17))
+                                                          & __VExpandSel_Lsb_18))
                                                          ? 0U
                                                          : 
                                                         (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                          [
                                                          (((IData)(7U) 
-                                                           + __VExpandSel_Lsb_17) 
+                                                           + __VExpandSel_Lsb_18) 
                                                           >> 5U)] 
                                                          << 
                                                          ((IData)(0x00000020U) 
                                                           - 
                                                           (0x0000001fU 
-                                                           & __VExpandSel_Lsb_17)))) 
+                                                           & __VExpandSel_Lsb_18)))) 
                                                        | (Va2nix_card__ConstPool__CONST_h4c4fb9bc_0
                                                           [
-                                                          (__VExpandSel_Lsb_17 
+                                                          (__VExpandSel_Lsb_18 
                                                            >> 5U)] 
                                                           >> 
                                                           (0x0000001fU 
-                                                           & __VExpandSel_Lsb_17))))));
+                                                           & __VExpandSel_Lsb_18))))));
+    vlSelfRef.a2nix_card__DOT__fifo_drain = ((~ ((IData)(vlSelfRef.a2nix_card__DOT__h_valid) 
+                                                 | (IData)(vlSelfRef.a2nix_card__DOT__fifo_empty))) 
+                                             & (1U 
+                                                == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state)));
+    vlSelfRef.a2nix_card__DOT__u_hash__DOT__pb_v = 
+        (1U & ((4U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
+                ? ((2U & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
+                    ? (~ (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))
+                    : (~ ((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state) 
+                          & (0x38U == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx)))))
+                : ((IData)(vlSelfRef.a2nix_card__DOT__h_valid) 
+                   & (IData)(vlSelfRef.__VdfgRegularize_h6e95ff9d_0_13))));
     vlSelfRef.a2nix_card__DOT__u_hash__DOT__blk_full 
         = ((IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__pb_v) 
            & (0x3fU == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx)));

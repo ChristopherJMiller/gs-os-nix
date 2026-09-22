@@ -27,6 +27,8 @@
 #include "Va2nix_card.h"
 #include "verilated.h"
 
+#include "heapmem.h"
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -52,17 +54,21 @@ constexpr uint16_t RESULT_STAT = 0x0320;
 int card_slot = 4;
 
 Va2nix_card *card = nullptr;
-uint8_t ram[0x10000];
+HeapMem<Va2nix_card> heap;          // the card's off-chip heap, distinct from CPU RAM
+uint8_t ram[0x10000];               // the 65816's own address space
 
 uint64_t card_cycles = 0;
 uint64_t cpu_cycles = 0;
 uint64_t slot_accesses = 0;
 
+// See the port contract in sim/heapmem.h for why settle/commit straddle the edge.
 void tick() {
+    heap.settle(card);
     card->clk = 0;
     card->eval();
     card->clk = 1;
     card->eval();
+    heap.commit(card);
     ++card_cycles;
 }
 

@@ -13,6 +13,8 @@
 #include "Va2nix_card.h"
 #include "verilated.h"
 
+#include "heapmem.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -32,8 +34,14 @@ enum : uint8_t {
 
 // Verbs.
 enum : uint8_t {
-    V_HASH_INIT = 0x10, V_HASH_FINAL = 0x12, V_STOREPATH = 0x14, V_HASH_PUSH = 0x15,
+    V_HASH_INIT = 0x10, V_HASH_STREAM = 0x11, V_HASH_FINAL = 0x12,
+    V_STOREPATH = 0x14, V_HASH_PUSH = 0x15,
+    V_ALLOC = 0x20, V_FOLLOW = 0x21,
 };
+
+// Heap geometry and tags -- must match rtl/a2nix_card.v and docs/HEAP.md.
+constexpr uint32_t HEAP_BASE = 0x00000010;
+constexpr uint8_t  TAG_INT = 0x01, TAG_STRING = 0x04, TAG_INDIRECT = 0x0A;
 
 // Status bits.
 enum : uint8_t {
@@ -52,14 +60,21 @@ enum : uint8_t {
 constexpr int CARD_CYCLES_PER_ACCESS = 48;
 
 Va2nix_card *dut = nullptr;
+HeapMem<Va2nix_card> heap;          // the card's off-chip heap (docs/HEAP.md)
 uint64_t cycles = 0;
 uint64_t bus_accesses = 0;
 
+// Ordering matters and follows the port contract:
+//   settle() makes mem_rdata valid for the address presented on the previous edge;
+//   the edge then lets the card sample it and/or issue a new request;
+//   commit() applies a write the card just asserted.
 void tick() {
+    heap.settle(dut);
     dut->clk = 0;
     dut->eval();
     dut->clk = 1;
     dut->eval();
+    heap.commit(dut);
     ++cycles;
 }
 
@@ -111,6 +126,36 @@ void reset() {
 void read_pslot(int slot, uint8_t *out, int n) {
     wr(R_PSEL, static_cast<uint8_t>(slot));
     for (int i = 0; i < n; ++i) out[i] = rd(R_PPORT);
+}
+
+// --- L3 helpers: address registers and LEN are little-endian integers ---
+void set_areg(int n, uint32_t v) {
+    wr(R_ASEL, static_cast<uint8_t>(n));
+    for (int i = 0; i < 4; ++i) wr(R_APORT, static_cast<uint8_t>(v >> (8 * i)));
+}
+
+uint32_t get_areg(int n) {
+    wr(R_ASEL, static_cast<uint8_t>(n));
+    uint32_t v = 0;
+    for (int i = 0; i < 4; ++i) v |= static_cast<uint32_t>(rd(R_APORT)) << (8 * i);
+    return v;
+}
+
+void set_len(uint32_t v) {
+    // LEN has no select register, so rewind the port indices first (CTRL b3).
+    // Without this, any earlier partial LEN access leaves the index rotated and
+    // every subsequent write lands in the wrong byte -- silently.
+    wr(R_CTRL, 0x08);
+    for (int i = 0; i < 4; ++i) wr(R_LEN, static_cast<uint8_t>(v >> (8 * i)));
+}
+
+// Wait for DONE or ERR. Returns the final status.
+uint8_t wait_verb() {
+    for (int guard = 0; guard < 200000; ++guard) {
+        const uint8_t s = rd(R_CMD);
+        if (s & (ST_DONE | ST_ERR)) return s;
+    }
+    return 0;
 }
 
 // The documented CPU sequence, byte for byte. If this drifts from CARD-ISA.md, one of
@@ -270,7 +315,142 @@ int main(int argc, char **argv) {
         expect(false, "empty message after a partial one completes");
     }
 
+    // =========================== L3: heap memory =============================
+    std::printf("--- L3: heap memory ---\n");
+
+    // --- DATA port: write, rewind, read back ---
+    // This is the auto-incrementing pointer the 65816 does not have.
+    const uint32_t probe = 0x00001000;
+    set_areg(0, probe);
+    for (int i = 0; i < 8; ++i) wr(R_DATA, static_cast<uint8_t>(0xA0 + i));
+    expect(get_areg(0) == probe + 8, "DATA writes advance the address register");
+
+    set_areg(0, probe);
+    bool data_ok = true;
+    for (int i = 0; i < 8; ++i) data_ok &= (rd(R_DATA) == 0xA0 + i);
+    expect(data_ok, "DATA reads return what was written, in order");
+    expect(get_areg(0) == probe + 8, "DATA reads advance the address register");
+
+    // --- TAG reads the same byte but must NOT advance ---
+    set_areg(0, probe);
+    expect(rd(R_TAG) == 0xA0, "TAG returns the byte at the selected pointer");
+    expect(rd(R_TAG) == 0xA0, "TAG is repeatable");
+    expect(get_areg(0) == probe, "TAG does not advance the pointer");
+
+    // --- ALLOC: P0's first 4 bytes are the header; LEN is the payload size ---
+    wr(R_PSEL, 0);
+    wr(R_PPORT, TAG_INT);      // tag
+    wr(R_PPORT, 0x00);         // aux, 3 bytes little-endian
+    wr(R_PPORT, 0x00);
+    wr(R_PPORT, 0x00);
+    set_len(8);                // an INT payload is 8 bytes
+    wr(R_CMD, V_ALLOC);
+    uint8_t st = wait_verb();
+    expect((st & ST_ERR) == 0, "ALLOC succeeds");
+    const uint32_t obj1 = get_areg(1);
+    expect(obj1 == HEAP_BASE, "first ALLOC returns HEAP_BASE");
+    expect(heap.peek(obj1) == TAG_INT, "ALLOC writes the tag byte to memory");
+
+    // A second allocation must clear the first: 4 header + 8 payload = 12.
+    wr(R_PSEL, 0);
+    wr(R_PPORT, TAG_STRING);
+    wr(R_PPORT, 0x05);         // aux = length 5
+    wr(R_PPORT, 0x00);
+    wr(R_PPORT, 0x00);
+    set_len(5);                // 5 rounds up to 8, keeping columns aligned
+    wr(R_CMD, V_ALLOC);
+    st = wait_verb();
+    expect((st & ST_ERR) == 0, "second ALLOC succeeds");
+    const uint32_t obj2 = get_areg(1);
+    expect(obj2 == obj1 + 12, "ALLOC bumps past the previous object");
+    expect(obj2 % 4 == 0, "ALLOC keeps objects 4-byte aligned");
+    expect(heap.peek(obj2) == TAG_STRING && heap.peek(obj2 + 1) == 0x05,
+           "ALLOC writes tag and aux");
+
+    // Regression: a non-hash verb must not be completed by a stale h_done, nor have
+    // P0 overwritten by the previous message's digest. Both happened before the
+    // completion path was gated on h_finish, and ALLOC's header silently became
+    // digest bytes -- with the tag byte still correct, so it looked almost right.
+    expect(heap.peek(obj1 + 1) == 0x00 && heap.peek(obj1 + 2) == 0x00 &&
+           heap.peek(obj1 + 3) == 0x00,
+           "ALLOC header aux bytes are not clobbered by a stale digest");
+
+    // --- ALLOC refuses to run off the end rather than wrapping ---
+    set_len(0x00FFFFFF);
+    wr(R_CMD, V_ALLOC);
+    st = wait_verb();
+    expect((st & ST_ERR) != 0 && (st & 0x0F) == 0x03, "oversized ALLOC reports OOM");
+    wr(R_CTRL, 0x01);
+
+    // --- FOLLOW: chase an INDIRECT chain ---
+    // Build  i1 -> i2 -> i3 -> obj1  directly in memory, then make the card walk it.
+    const uint32_t i1 = 0x2000, i2 = 0x2100, i3 = 0x2200;
+    for (auto [from, to] : {std::pair{i1, i2}, {i2, i3}, {i3, obj1}}) {
+        heap.poke(from, TAG_INDIRECT);
+        heap.poke32(from + 4, to);
+    }
+    set_areg(0, i1);
+    wr(R_CMD, V_FOLLOW);
+    st = wait_verb();
+    expect((st & ST_ERR) == 0, "FOLLOW succeeds");
+    expect(get_areg(1) == obj1, "FOLLOW resolves a 3-deep chain to the real object");
+
+    // A non-indirection resolves to itself in one hop.
+    set_areg(0, obj1);
+    wr(R_CMD, V_FOLLOW);
+    st = wait_verb();
+    expect((st & ST_ERR) == 0 && get_areg(1) == obj1,
+           "FOLLOW on a non-indirection returns it unchanged");
+
+    // --- FOLLOW must not hang on a cycle ---
+    // A self-referential INDIRECT is the degenerate case; without the hop cap the
+    // card would spin forever and the bus would never see DONE.
+    heap.poke(i1, TAG_INDIRECT);
+    heap.poke32(i1 + 4, i1);
+    set_areg(0, i1);
+    wr(R_CMD, V_FOLLOW);
+    st = wait_verb();
+    expect((st & ST_ERR) != 0, "FOLLOW reports an error on a cyclic chain");
+    wr(R_CTRL, 0x01);
+
+    // --- HASH_STREAM: hash card-resident bytes with ZERO data crossing the bus ---
+    std::printf("--- L3: HASH_STREAM ---\n");
+    {
+        const char *msg = "abc";
+        const uint32_t at = 0x3000;
+        for (int i = 0; msg[i]; ++i) heap.poke(at + i, static_cast<uint8_t>(msg[i]));
+
+        const uint64_t before = bus_accesses;
+        wr(R_CMD, V_HASH_INIT);
+        set_areg(0, at);
+        set_len(3);
+        wr(R_CMD, V_HASH_STREAM);
+        st = wait_verb();
+        expect((st & ST_ERR) == 0, "HASH_STREAM succeeds");
+        wr(R_CMD, V_HASH_FINAL);
+        st = wait_verb();
+        expect((st & ST_ERR) == 0, "HASH_FINAL after HASH_STREAM succeeds");
+
+        uint8_t dig[32];
+        read_pslot(0, dig, 32);
+        static const char *H = "0123456789abcdef";
+        std::string got;
+        for (int i = 0; i < 32; ++i) {
+            got.push_back(H[dig[i] >> 4]);
+            got.push_back(H[dig[i] & 0xf]);
+        }
+        expect(got == "ba7816bf8f01cfea414140de5dae2223"
+                      "b00361a396177a9cb410ff61f20015ad",
+               "HASH_STREAM of card-resident \"abc\" matches the NIST vector");
+        std::printf("  HASH_STREAM of 3 bytes cost %llu bus accesses "
+                    "(none of them data)\n",
+                    static_cast<unsigned long long>(bus_accesses - before));
+    }
+
+    expect(heap.bad_writes() == 0, "no card writes landed outside heap memory");
+
     // --- Store-path parity through the real verb sequence ---
+    std::printf("--- store-path parity ---\n");
     std::ifstream in(vec_path);
     if (!in) {
         std::fprintf(stderr, "cannot open vectors: %s\n", vec_path);
@@ -357,6 +537,46 @@ int main(int argc, char **argv) {
         hash_push(unhex(fp_hex), d, p, /*poll_per_byte=*/true);
     }
 
+    // HASH_STREAM's cost is a FIXED handful of accesses regardless of length, because
+    // no data crosses the bus -- only the pointer, the count, and the verb. That is
+    // the principle NARHASH takes to its conclusion (CARD-ISA.md).
+    uint64_t stream_acc = 0, stream_bytes = 0;
+    {
+        const uint32_t at = 0x4000;
+        // Reuse a real fingerprint so the comparison is against like work.
+        std::ifstream v2(vec_path);
+        std::string l2;
+        std::vector<uint8_t> msg;
+        while (std::getline(v2, l2)) {
+            if (l2.rfind("SP ", 0) != 0) continue;
+            if (l2.find("nix-on-an-apple-iigs") == std::string::npos) continue;
+            std::istringstream ls2(l2);
+            std::string k, fp;
+            ls2 >> k >> fp;
+            msg = unhex(fp);
+            break;
+        }
+        for (size_t i = 0; i < msg.size(); ++i)
+            heap.poke(at + static_cast<uint32_t>(i), msg[i]);
+
+        const uint64_t a0 = bus_accesses;
+        wr(R_CMD, V_HASH_INIT);
+        set_areg(0, at);
+        set_len(static_cast<uint32_t>(msg.size()));
+        wr(R_CMD, V_HASH_STREAM);
+        wait_verb();
+        wr(R_CMD, V_HASH_FINAL);
+        wait_verb();
+        uint8_t pth[32];
+        read_pslot(3, pth, 32);
+        stream_acc   = bus_accesses - a0;
+        stream_bytes = msg.size();
+
+        const std::string sp(reinterpret_cast<char *>(pth), 32);
+        expect(sp == "fsl59pk3f4c65048v3w7vgazqwg4d75w",
+               "HASH_STREAM over a card-resident fingerprint yields the right path");
+    }
+
     std::printf("\n--- verb economics: HASH_PUSH (card %d cycles per bus access) ---\n",
                 CARD_CYCLES_PER_ACCESS);
     std::printf("  streaming, 16-byte bursts : %.2f accesses/byte\n",
@@ -369,6 +589,12 @@ int main(int argc, char **argv) {
     if (total_bytes)
         std::printf("  end-to-end per store path : %.2f accesses/byte\n",
                     static_cast<double>(sp_accesses) / static_cast<double>(total_bytes));
+    if (stream_bytes)
+        std::printf("  HASH_STREAM, %llu bytes    : %.2f accesses/byte"
+                    " (%llu accesses total, length-independent)\n",
+                    static_cast<unsigned long long>(stream_bytes),
+                    static_cast<double>(stream_acc) / static_cast<double>(stream_bytes),
+                    static_cast<unsigned long long>(stream_acc));
     std::printf("  card cycles simulated     : %llu\n",
                 static_cast<unsigned long long>(cycles));
 
