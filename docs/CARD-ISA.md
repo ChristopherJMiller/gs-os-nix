@@ -219,7 +219,45 @@ search would have found.
 > needed simply disappeared.
 
 `ALU64` exists because the 65816 has **no multiply or divide at all** and Nix integers
-are 64-bit.
+are 64-bit. Operands `P0`/`P1` and the result `P3` are 8-byte little-endian integers in
+byte-array slots (byte 0 is the LSB); `P2` byte 0 selects the operation:
+
+| Op | Name | Cycles | Notes |
+|---|---|---:|---|
+| `$0` | `ADD` | 1 | wrapping |
+| `$1` | `SUB` | 1 | wrapping |
+| `$2` | `MUL` | 64 | low 64 bits; the same signed or unsigned |
+| `$3` | `DIV` | 64 | **truncates toward zero**, as Nix and C do. `x/0` → ERR `BADPARAM` |
+| `$4` | `MOD` | 64 | remainder takes the **dividend's** sign: `-7 % 2 = -1`. `x%0` → ERR |
+| `$5` | `AND` | 1 | |
+| `$6` | `OR` | 1 | |
+| `$7` | `XOR` | 1 | |
+| `$8` | `CMP` | 1 | `-1`, `0` or `1` as a signed 64-bit result. A **true** signed compare, not a subtraction — subtracting overflows for operands of opposite sign |
+| `$9` | `NEG` | 1 | two's complement; `NEG INT64_MIN = INT64_MIN` |
+
+Multiply and divide are **sequential** (64 shift-add / restoring steps) rather than
+combinational. A one-cycle 64×64 multiplier is ~4k LUT4 on an ECP5; the sequential
+unit is 1462, and its 64 cycles are about one bus access of latency — which the CPU,
+polling `DONE`, cannot see. `INT64_MIN / -1`, which C leaves undefined, wraps to
+`INT64_MIN`.
+
+> ### Measured: a card multiply is ~31x cheaper than the 65816's own
+>
+> | | cost | ≈ fast cycles |
+> |---|---:|---:|
+> | 65816 shift-add multiply, 8-bit emulation mode (`just bench-mul64`) | 9819 CPU cycles | 9819 |
+> | `ALU64 MUL`, end to end: operands in, verb, poll, result out | **32 bus accesses** | ~320 |
+>
+> The CPU figure is an **upper bound**: `a2min` models emulation mode only, and a
+> native-mode 16-bit routine would run in roughly half the cycles. Even so the card
+> wins ~15x, so the conclusion does not depend on the mode. Two thirds of the card's
+> 32 accesses are moving the 16 operand bytes in and 8 result bytes out through
+> `PPORT`; the arithmetic itself is invisible.
+>
+> Writing that benchmark surfaced two 6502 traps worth remembering, both of which
+> `a2min` emulated faithfully: **`CPX` clobbers the carry** a multi-byte `ADC` chain
+> depends on, and **`abs,X` adds X unsigned**, so the "count from `$F8`" idiom needs
+> its base `$F8` *below* the target, not 8 above it.
 
 `DFASTEP` walks the lexer DFA table. A lexer is the one genuinely tight loop in
 parsing, so this is what makes L5 self-hosting affordable — the grammar itself stays

@@ -77,7 +77,8 @@ module a2nix_card (
                      V_HASH_PUSH   = 8'h15,
                      V_ALLOC       = 8'h20,
                      V_FOLLOW      = 8'h21,
-                     V_LOOKUP      = 8'h30;
+                     V_LOOKUP      = 8'h30,
+                     V_ALU64       = 8'h50;
 
     // ---------------------------------------------------------------- errors -------
     // 4 bits: STATUS b4 is READY, so the error code occupies b3..b0.
@@ -92,6 +93,7 @@ module a2nix_card (
                      E_OOM      = 4'h3,
                      E_BADADDR  = 4'h4,
                      E_BUSYERR  = 4'h5,
+                     E_BADPARAM = 4'h6,   // ALU64 divide by zero, or an unknown op
                      E_OVERRUN  = 4'h7;   // DATA written with the input FIFO full
 
     localparam [7:0] CARD_ID = 8'hA2;
@@ -270,6 +272,45 @@ module a2nix_card (
     // Absolute attribute index of a hit: batches already examined, plus the lane.
     wire [23:0] lk_hit_index = lk_done + {19'd0, cam_index};
 
+    // ---------------------------------------------------------------- ALU64 --------
+    // P0 and P1 hold the operands as 8-byte little-endian integers in byte-array
+    // slots (byte 0 at the top of the slot, and byte 0 is the LSB). P2 byte 0 selects
+    // the operation. The result lands in P3 the same way.
+    // Takes just the slot's first 8 bytes (its top 64 bits) and reverses them into
+    // a little-endian integer.
+    function [63:0] pslot_i64(input [63:0] top8);
+        pslot_i64 = { top8[ 7: 0], top8[15: 8], top8[23:16], top8[31:24],
+                      top8[39:32], top8[47:40], top8[55:48], top8[63:56] };
+    endfunction
+
+    reg         alu_start;
+    reg         alu_verb;      // an ALU64 verb is in flight; gates completion
+    wire        alu_done;
+    wire        alu_err;
+    wire [63:0] alu_result;
+    // Completion is gated on the one-cycle done pulse, so the level-sensitive busy
+    // output is not needed here.
+    /* verilator lint_off UNUSEDSIGNAL */
+    wire        alu_busy_nc;
+    /* verilator lint_on UNUSEDSIGNAL */
+
+    alu64 u_alu (
+        .clk    (clk),
+        .rst_n  (rst_n),
+        .start  (alu_start),
+        // Byte 0 of P2 is bits [255:248]; its LOW nibble is [251:248]. The first cut
+        // used [255 -: 4] -- the HIGH nibble -- so every op decoded as $0 = ADD, and
+        // CMP, x/0 and an unknown op all "succeeded" as additions. Six regression
+        // failures from one wrong constant.
+        .op     (pslot[2][251:248]),
+        .a      (pslot_i64(pslot[0][255:192])),
+        .b      (pslot_i64(pslot[1][255:192])),
+        .busy   (alu_busy_nc),
+        .done   (alu_done),
+        .err    (alu_err),
+        .result (alu_result)
+    );
+
     // ---------------------------------------------------------------- read path ----
     // b4 READY now means "the input FIFO has at least FIFO_BURST slots free", so one
     // poll licenses a burst of FIFO_BURST DATA writes. It deliberately does NOT track
@@ -327,6 +368,7 @@ module a2nix_card (
             lk_base <= 32'd0; lk_count <= 24'd0; lk_done <= 24'd0; lk_lane <= 6'd0;
             dw_pend <= 1'b0; dw_addr <= 32'd0; dw_data <= 8'h00;
             pf_req <= 1'b0; data_latch <= 8'h00;
+            alu_start <= 1'b0; alu_verb <= 1'b0;
             mem_addr <= 32'd0; mem_we <= 1'b0; mem_wstrb <= 4'd0; mem_wdata <= 32'd0;
         end else begin
             // Single-cycle strobes.
@@ -334,6 +376,7 @@ module a2nix_card (
             h_valid <= 1'b0;
             mem_we    <= 1'b0;        // writes are one cycle; default the port to read
             mem_wstrb <= 4'd0;
+            alu_start <= 1'b0;        // one-shot
 
             // ------------------------------------------------ memory engine --------
             case (mstate)
@@ -563,6 +606,23 @@ module a2nix_card (
                     busy         <= 1'b0;
                     done         <= 1'b1;
                     irq_pend     <= 1'b1;
+                end else if (alu_verb && alu_done) begin
+                    // alu_done is a one-cycle pulse, so unlike h_done it cannot go
+                    // stale -- but gate on alu_verb anyway, for the same reason R1
+                    // exists: no completion path may fire for a verb it does not own.
+                    alu_verb <= 1'b0;
+                    busy     <= 1'b0;
+                    if (alu_err) begin
+                        err     <= 1'b1;
+                        errcode <= E_BADPARAM;    // divide by zero, or a bad op
+                    end else begin
+                        pslot[3] <= { alu_result[7:0],   alu_result[15:8],
+                                      alu_result[23:16], alu_result[31:24],
+                                      alu_result[39:32], alu_result[47:40],
+                                      alu_result[55:48], alu_result[63:56],
+                                      192'd0 };
+                        done     <= 1'b1;
+                    end
                 end
             end
 
@@ -636,6 +696,12 @@ module a2nix_card (
                                     lk_base <= areg[0];
                                     busy    <= 1'b1;
                                     mstate  <= M_LK_CNT;
+                                end
+
+                                V_ALU64: begin
+                                    alu_start <= 1'b1;
+                                    alu_verb  <= 1'b1;
+                                    busy      <= 1'b1;
                                 end
                                 V_HASH_FINAL: begin
                                     // Do NOT assert finish yet: queued bytes still

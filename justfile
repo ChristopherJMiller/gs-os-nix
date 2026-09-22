@@ -9,8 +9,8 @@
 #   just check      full flake check: parity, lint, synth
 #   just resume     print where the project stands
 
-RTL := "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/keycam.v rtl/a2nix_card.v"
-TOPS := "sha256_core sha256 storepath keycam a2nix_card"
+RTL := "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/keycam.v rtl/alu64.v rtl/a2nix_card.v"
+TOPS := "sha256_core sha256 storepath keycam alu64 a2nix_card"
 VECTORS := "tests/vectors/l1.txt"
 SIM_DIR := "sim/build"
 CARD_DIR := "sim/build_card"
@@ -149,6 +149,20 @@ m2: asm-headless
         --Mdir sim/build_a2min -o a2min \
         rtl/a2nix_card.v sim/a2min.cpp
     ./sim/build_a2min/a2min target/build/storepath_demo_headless.bin {{VECTORS}} 4
+
+# The D5 gate for ALU64: how many cycles does the 65816 spend on a 64x64 multiply
+# by itself? Assembles target/tests/mul64_bench.s and runs it on a2min.
+bench-mul64 a="123456789" b="987654321":
+    mkdir -p target/build
+    ca65 --cpu 65816 -o target/build/mul64_bench.o target/tests/mul64_bench.s
+    ld65 -C target/tests/apple2.cfg -o target/build/mul64_bench.bin \
+        target/build/mul64_bench.o
+    verilator --cc --exe --build -j 0 \
+        -Irtl --top-module a2nix_card \
+        -Wall -Wno-DECLFILENAME \
+        --Mdir sim/build_a2min -o a2min \
+        rtl/a2nix_card.v sim/a2min.cpp
+    ./sim/build_a2min/a2min --bench-mul64 target/build/mul64_bench.bin {{a}} {{b}}
 
 # M2 again, but on real MAME for higher fidelity (real slot timing, real IIgs).
 # Needs a complete apple2gs romset: ROMPATH=~/mame/roms just m2-mame

@@ -29,9 +29,9 @@
         });
 
       # Every RTL module, in dependency order.
-      rtlSources = "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/keycam.v"
+      rtlSources = "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/keycam.v rtl/alu64.v"
         + " rtl/a2nix_card.v";
-      rtlTops = [ "sha256_core" "sha256" "storepath" "keycam" "a2nix_card" ];
+      rtlTops = [ "sha256_core" "sha256" "storepath" "keycam" "alu64" "a2nix_card" ];
     in
     {
       devShells = forAll ({ pkgs, ours, ... }: {

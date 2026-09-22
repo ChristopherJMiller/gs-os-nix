@@ -9,7 +9,7 @@
 # Every mutation is reverted afterwards, including on failure or interrupt.
 set -uo pipefail
 
-FILES=(rtl/a2nix_card.v rtl/sha256.v rtl/sha256_core.v rtl/storepath.v rtl/keycam.v)
+FILES=(rtl/a2nix_card.v rtl/sha256.v rtl/sha256_core.v rtl/storepath.v rtl/keycam.v rtl/alu64.v)
 BACKUP_DIR=$(mktemp -d)
 restore() { for f in "${FILES[@]}"; do cp "$BACKUP_DIR/$(basename "$f")" "$f"; done; }
 trap 'restore; rm -rf "$BACKUP_DIR"' EXIT INT TERM
@@ -139,6 +139,34 @@ mutate "L3 LOOKUP examines one batch only" rtl/a2nix_card.v \
 # pointer belongs -- a plausible-looking address.
 mutate "L3 LOOKUP reads the wrong column" rtl/a2nix_card.v \
        's/mem_addr <= lk_values_at + ({8.d0, lk_hit_index} << 2);/mem_addr <= lk_keys_at + ({8'"'"'d0, lk_hit_index} << 2);/'
+
+# ALU64: never add the partial product, so every multiply returns zero -- or, with a
+# multiplicand of 1, the right answer, which is why the tests use awkward operands.
+mutate "ALU64 MUL never accumulates" rtl/alu64.v \
+       's/                        if (x\[0\]) acc <= acc + y;/                        if (1'"'"'b0) acc <= acc + y;/'
+
+# ALU64: give the remainder the DIVISOR's sign instead of the dividend's. Every
+# positive case still passes; only mixed-sign MOD reveals it.
+mutate "ALU64 MOD takes the wrong sign" rtl/alu64.v \
+       's/                            neg_r <= a\[63\];/                            neg_r <= b[63];/'
+
+# ALU64: never negate the quotient, so -7/2 comes back as 3 -- right magnitude,
+# wrong sign.
+mutate "ALU64 DIV drops the quotient sign" rtl/alu64.v \
+       's/                            neg_q <= a\[63\] ^ b\[63\];/                            neg_q <= 1'"'"'b0;/'
+
+# ALU64: let x/0 return a value instead of an error.
+mutate "ALU64 divide by zero not flagged" rtl/alu64.v \
+       's/                            err    <= 1.b1;        \/\/ loud, never a wrap/                            err    <= 1'"'"'b0;/'
+
+# ALU64: compare by subtraction, which overflows for operands of opposite sign.
+mutate "ALU64 CMP overflows on opposite signs" rtl/alu64.v \
+       's/    wire a_lt_b = (\$signed(a) < \$signed(b));/    wire [63:0] a_minus_b = a - b; wire a_lt_b = a_minus_b[63];/'
+
+# ALU64: decode the op from the wrong nibble, so everything becomes ADD. This is the
+# bug the first build actually had: six regression failures from one constant.
+mutate "ALU64 op decoded from the wrong nibble" rtl/a2nix_card.v \
+       's/        .op     (pslot\[2\]\[251:248\]),/        .op     (pslot[2][255:252]),/'
 
 echo
 echo "$pass mutations caught, $fail not caught"

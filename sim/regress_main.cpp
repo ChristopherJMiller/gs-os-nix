@@ -448,6 +448,158 @@ void l3_lookup() {
           "wrong key, which no caller could detect");
 }
 
+// ---------------------------------------------------------------------------
+// L3 ALU64: 64-bit integer arithmetic.
+//
+// The host's int64 arithmetic is the oracle. That is sound because C's `/` and `%`
+// truncate toward zero with the remainder taking the dividend's sign -- exactly
+// Nix's semantics -- and a wrapping multiply's low 64 bits are the same signed or
+// unsigned. The one case C leaves undefined, INT64_MIN / -1, is checked against a
+// hardcoded wrapped value instead of computed.
+enum : std::uint8_t {
+    A_ADD = 0, A_SUB = 1, A_MUL = 2, A_DIV = 3, A_MOD = 4,
+    A_AND = 5, A_OR = 6, A_XOR = 7, A_CMP = 8, A_NEG = 9,
+};
+
+void put_i64(int slot, std::int64_t v) {
+    std::uint8_t b[8];
+    const std::uint64_t u = static_cast<std::uint64_t>(v);
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<std::uint8_t>(u >> (8 * i));
+    bus->write_pslot(slot, b, 8);
+}
+
+std::int64_t get_i64(int slot) {
+    std::uint8_t b[8];
+    bus->read_pslot(slot, b, 8);
+    std::uint64_t u = 0;
+    for (int i = 0; i < 8; ++i) u |= static_cast<std::uint64_t>(b[i]) << (8 * i);
+    return static_cast<std::int64_t>(u);
+}
+
+// Returns the status; result via out-param so an ERR case is not misread as a value.
+std::uint8_t alu(std::uint8_t op, std::int64_t a, std::int64_t b, std::int64_t &out) {
+    put_i64(0, a);
+    put_i64(1, b);
+    const std::uint8_t opb[1] = { op };
+    bus->write_pslot(2, opb, 1);
+    bus->wr(R_CMD, V_ALU64);
+    const std::uint8_t st = bus->wait_verb();
+    out = (st & ST_ERR) ? 0 : get_i64(3);
+    return st;
+}
+
+void l3_alu64() {
+    std::printf("L3 ALU64 64-bit integer arithmetic\n");
+
+    // The D5 gate: the whole cost of a card multiply, in bus accesses, against the
+    // 9819 CPU cycles `just bench-mul64` measures for the 65816 doing it alone.
+    {
+        const std::uint64_t a0 = bus->accesses();
+        std::int64_t tmp;
+        alu(A_MUL, 123456789LL, 987654321LL, tmp);
+        std::printf("        ALU64 MUL: %llu bus accesses end to end "
+                    "(operands in, verb, poll, result out)\n",
+                    static_cast<unsigned long long>(bus->accesses() - a0));
+    }
+
+    struct Case { std::uint8_t op; std::int64_t a, b; const char *name; };
+    // Values chosen to exercise carries across every 16-bit word the 65816 would
+    // have to juggle, negative operands, and sign fixups on division.
+    const Case cases[] = {
+        { A_ADD, 0x0123456789ABCDEFLL, 0x0FEDCBA987654321LL, "ADD with carries across words" },
+        { A_ADD, -1, 1, "ADD to zero across the sign" },
+        { A_SUB, 5, 7, "SUB going negative" },
+        { A_SUB, INT64_MIN, 1, "SUB wrapping at INT64_MIN" },
+        { A_MUL, 123456789LL, 987654321LL, "MUL 64-bit product" },
+        { A_MUL, -3, 7, "MUL negative x positive" },
+        { A_MUL, -3, -7, "MUL negative x negative" },
+        { A_MUL, 0x100000000LL, 0x100000000LL, "MUL overflow wraps to zero" },
+        { A_DIV, 100, 7, "DIV positive" },
+        { A_DIV, -7, 2, "DIV truncates toward zero: -7/2 = -3" },
+        { A_DIV, 7, -2, "DIV negative divisor" },
+        { A_DIV, -7, -2, "DIV both negative" },
+        { A_MOD, 100, 7, "MOD positive" },
+        { A_MOD, -7, 2, "MOD takes the dividend's sign: -7%2 = -1" },
+        { A_MOD, 7, -2, "MOD positive dividend, negative divisor: 1" },
+        { A_MOD, -7, -2, "MOD both negative: -1" },
+        { A_DIV, INT64_MIN, 2, "DIV of INT64_MIN" },
+        { A_AND, 0x0F0F0F0F0F0F0F0FLL, 0x00FF00FF00FF00FFLL, "AND" },
+        { A_OR,  0x0F0F0F0F0F0F0F0FLL, 0x00FF00FF00FF00FFLL, "OR" },
+        { A_XOR, 0x0F0F0F0F0F0F0F0FLL, 0x00FF00FF00FF00FFLL, "XOR" },
+        { A_NEG, 42, 0, "NEG" },
+        { A_NEG, INT64_MIN, 0, "NEG of INT64_MIN wraps to itself" },
+    };
+
+    int ok = 0, bad = 0;
+    for (const Case &c : cases) {
+        std::int64_t want;
+        const std::uint64_t ua = static_cast<std::uint64_t>(c.a);
+        const std::uint64_t ub = static_cast<std::uint64_t>(c.b);
+        switch (c.op) {
+            case A_ADD: want = static_cast<std::int64_t>(ua + ub); break;
+            case A_SUB: want = static_cast<std::int64_t>(ua - ub); break;
+            case A_MUL: want = static_cast<std::int64_t>(ua * ub); break;
+            case A_DIV: want = c.a / c.b; break;
+            case A_MOD: want = c.a % c.b; break;
+            case A_AND: want = c.a & c.b; break;
+            case A_OR:  want = c.a | c.b; break;
+            case A_XOR: want = c.a ^ c.b; break;
+            case A_NEG: want = static_cast<std::int64_t>(0 - ua); break;
+            default:    want = 0; break;
+        }
+        std::int64_t got;
+        const std::uint8_t st = alu(c.op, c.a, c.b, got);
+        if ((st & ST_ERR) || got != want) {
+            std::printf("        %s: want %lld got %lld status %02x\n",
+                        c.name, static_cast<long long>(want),
+                        static_cast<long long>(got), st);
+            ++bad;
+        } else {
+            ++ok;
+        }
+    }
+    check(bad == 0, "every ALU64 case matches int64 arithmetic",
+          "a carry dropped between words, or a sign fixup applied to the wrong "
+          "operand -- an answer of the right magnitude and wrong sign");
+    std::printf("        (%d cases)\n", ok);
+
+    // --- CMP returns -1 / 0 / 1 ---
+    std::int64_t r;
+    bool cmp_ok = true;
+    alu(A_CMP, -5, 3, r);  cmp_ok &= (r == -1);
+    alu(A_CMP, 3, 3, r);   cmp_ok &= (r == 0);
+    alu(A_CMP, 3, -5, r);  cmp_ok &= (r == 1);
+    // The case a naive subtract-and-check-sign gets wrong: the difference overflows.
+    alu(A_CMP, INT64_MAX, INT64_MIN, r); cmp_ok &= (r == 1);
+    alu(A_CMP, INT64_MIN, INT64_MAX, r); cmp_ok &= (r == -1);
+    check(cmp_ok, "CMP is a true signed compare, not a subtract",
+          "comparing by subtraction, which overflows for operands of opposite sign "
+          "and reports INT64_MAX < INT64_MIN");
+
+    // --- Division by zero must be an ERROR, never a silent value ---
+    std::uint8_t st = alu(A_DIV, 42, 0, r);
+    check((st & ST_ERR) && (st & 0x0F) == E_BADPARAM,
+          "DIV by zero reports BADPARAM",
+          "returning a wrapped or zero result for x/0, which Nix would have thrown on");
+    bus->wr(R_CTRL, CTRL_RESET);
+    st = alu(A_MOD, 42, 0, r);
+    check((st & ST_ERR) != 0, "MOD by zero reports an error",
+          "the modulo path missing the zero-divisor check the divide path has");
+    bus->wr(R_CTRL, CTRL_RESET);
+
+    // --- The one case C leaves undefined: INT64_MIN / -1 wraps to INT64_MIN ---
+    st = alu(A_DIV, INT64_MIN, -1, r);
+    check((st & ST_ERR) == 0 && r == INT64_MIN,
+          "INT64_MIN / -1 wraps rather than hanging or erroring",
+          "the magnitude of INT64_MIN not fitting the divider's unsigned path");
+
+    // --- An unknown op must be rejected ---
+    st = alu(0xF, 1, 1, r);
+    check((st & ST_ERR) != 0, "an unknown ALU op reports an error",
+          "an unknown op silently producing some default result");
+    bus->wr(R_CTRL, CTRL_RESET);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -468,6 +620,7 @@ int main(int argc, char **argv) {
     r5_init_abandons_partial_message();
     r6_errors_surface();
     l3_lookup();
+    l3_alu64();
 
     card->final();
     delete card;

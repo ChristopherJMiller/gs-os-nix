@@ -247,6 +247,23 @@ void step() {
     case 0x4A: cpu.c = cpu.a & 1; cpu.a >>= 1; set_nz(cpu.a); break;          // LSR A
     case 0x0A: cpu.c = (cpu.a & 0x80) != 0; cpu.a <<= 1; set_nz(cpu.a); break;// ASL A
 
+    // Read-modify-write shifts on memory: the multi-byte shifts a 64-bit software
+    // multiply is made of. Carry chains between bytes, so it must be sampled BEFORE
+    // it is overwritten.
+    case 0x0E: { const uint16_t ea = addr_abs(); uint8_t v = rd(ea);             // ASL abs
+                 cpu.c = (v & 0x80) != 0; v <<= 1; wr(ea, v); set_nz(v); cyc = 6; } break;
+    case 0x2E: { const uint16_t ea = addr_abs(); uint8_t v = rd(ea);             // ROL abs
+                 const bool cin = cpu.c; cpu.c = (v & 0x80) != 0;
+                 v = static_cast<uint8_t>((v << 1) | (cin ? 1 : 0));
+                 wr(ea, v); set_nz(v); cyc = 6; } break;
+    case 0x4E: { const uint16_t ea = addr_abs(); uint8_t v = rd(ea);             // LSR abs
+                 cpu.c = v & 1; v >>= 1; wr(ea, v); set_nz(v); cyc = 6; } break;
+    case 0x6E: { const uint16_t ea = addr_abs(); uint8_t v = rd(ea);             // ROR abs
+                 const bool cin = cpu.c; cpu.c = v & 1;
+                 v = static_cast<uint8_t>((v >> 1) | (cin ? 0x80 : 0));
+                 wr(ea, v); set_nz(v); cyc = 6; } break;
+    case 0x7D: do_adc(rd(addr_abs_x())); cyc = 4; break;                        // ADC abs,x
+
     case 0xC9: do_cmp(cpu.a, fetch());        break;                          // CMP #
     case 0xC5: do_cmp(cpu.a, rd(addr_zp()));  cyc = 3; break;                 // CMP zp
     case 0xCD: do_cmp(cpu.a, rd(addr_abs())); cyc = 4; break;                 // CMP abs
@@ -328,8 +345,74 @@ void step() {
 
 } // namespace
 
+// --- Benchmark mode for the D5 verb-economics gate ---
+//
+//   a2min --bench-mul64 <bin> <a> <b>
+//
+// Runs a 65816 software 64x64 multiply (target/tests/mul64_bench.s) with the operands
+// poked into $0340/$0348, checks the product at $0300 against the host's own int64
+// multiply, and reports CPU cycles. That number is what ALU64's bus cost is judged
+// against. The card is instantiated but unused -- this measures the CPU alone.
+int bench_mul64(const char *bin_path, uint64_t a, uint64_t b) {
+    std::ifstream bin(bin_path, std::ios::binary);
+    if (!bin) { std::fprintf(stderr, "cannot open %s\n", bin_path); return 2; }
+    std::memset(ram, 0, sizeof(ram));
+    const std::vector<uint8_t> image((std::istreambuf_iterator<char>(bin)),
+                                     std::istreambuf_iterator<char>());
+    for (size_t i = 0; i < image.size(); ++i) ram[LOAD_ADDR + i] = image[i];
+
+    for (int i = 0; i < 8; ++i) {
+        ram[0x0340 + i] = static_cast<uint8_t>(a >> (8 * i));
+        ram[0x0348 + i] = static_cast<uint8_t>(b >> (8 * i));
+    }
+
+    card = new Va2nix_card;
+    card->clk = 0; card->rst_n = 0;
+    card->c0n_addr = 0; card->c0n_read = 0; card->c0n_write = 0; card->c0n_wdata = 0;
+    card->c8_addr = 0; card->mem_rdata = 0;
+    for (int i = 0; i < 8; ++i) tick();
+    card->rst_n = 1;
+    tick();
+
+    const uint16_t seed = HALT_ADDR - 1;
+    push(static_cast<uint8_t>(seed >> 8));
+    push(static_cast<uint8_t>(seed & 0xFF));
+
+    const uint64_t budget = 50'000'000;
+    while (!cpu.halted && cpu_cycles < budget) step();
+    if (!cpu.halted) { std::fprintf(stderr, "bench: did not halt\n"); return 1; }
+
+    uint64_t got = 0;
+    for (int i = 0; i < 8; ++i) got |= static_cast<uint64_t>(ram[RESULT + i]) << (8 * i);
+    const uint64_t want = a * b;    // wrapping, the same signed or unsigned
+
+    std::printf("bench mul64: %llu x %llu\n",
+                static_cast<unsigned long long>(a), static_cast<unsigned long long>(b));
+    std::printf("  status       : $%02X\n", ram[RESULT_STAT]);
+    std::printf("  instructions : %llu\n", static_cast<unsigned long long>(cpu.instructions));
+    std::printf("  CPU cycles   : %llu   <-- the 65816's cost, 8-bit emulation mode\n",
+                static_cast<unsigned long long>(cpu_cycles));
+    std::printf("  want         : %016llx\n", static_cast<unsigned long long>(want));
+    std::printf("  got          : %016llx\n", static_cast<unsigned long long>(got));
+
+    card->final();
+    delete card;
+
+    if (ram[RESULT_STAT] != 0x01 || got != want) {
+        std::fprintf(stderr, "BENCH FAIL: software multiply is wrong\n");
+        return 1;
+    }
+    std::printf("BENCH OK\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     Verilated::commandArgs(argc, argv);
+
+    if (argc >= 5 && std::string(argv[1]) == "--bench-mul64")
+        return bench_mul64(argv[2],
+                           std::strtoull(argv[3], nullptr, 0),
+                           std::strtoull(argv[4], nullptr, 0));
 
     const char *bin_path = (argc > 1) ? argv[1] : "target/build/storepath_demo_headless.bin";
     const char *vec_path = (argc > 2) ? argv[2] : "tests/vectors/l1.txt";
