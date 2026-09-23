@@ -32,6 +32,9 @@ struct Scope {
 pub struct Compiler {
     pub chunks: Vec<Chunk>,
     scopes: Vec<Scope>,
+    /// canonical path -> the chunk its body was compiled into, so one file is
+    /// one chunk however many sites import it.
+    imported: std::collections::HashMap<String, usize>,
     /// Synthesised primop lambdas, one per program: Nix name -> chunk index.
     builtins: HashMap<String, usize>,
     /// Position of the last CALL emitted into each chunk, for the tail-call
@@ -56,6 +59,7 @@ pub fn compile(program: &Expr) -> Result<Vec<Chunk>, Unsupported> {
     let mut c = Compiler {
         chunks: vec![Chunk::default()],
         scopes: Vec::new(),
+        imported: std::collections::HashMap::new(),
         builtins: HashMap::new(),
         last_call: HashMap::new(),
     };
@@ -378,6 +382,12 @@ impl Compiler {
                 self.emit(chunk, OP_POP);
                 self.strict(b, chunk)?;
             }
+            // `import ./f.nix` in a strict position: build the closed thunk and
+            // force it, which evaluates the file once and memoises it in place.
+            Expr::Import(path, e) => {
+                self.closed_thunk(path, e, chunk)?;
+                self.emit(chunk, OP_FORCE);
+            }
             Expr::Apply(f, arg) => {
                 self.strict(f, chunk)?;
                 // Arguments are lazy: a literal or a variable is passed by pointer,
@@ -561,11 +571,51 @@ impl Compiler {
     }
 
     fn lazy_thunk(&mut self, e: &Expr, chunk: usize) -> Result<(), Unsupported> {
+        self.thunk_over(e, chunk, OP_THUNK)
+    }
+
+    /// An imported file: its own chunk, reached through a CLOSED_THUNK so it is
+    /// evaluated in the EMPTY environment. This IR resolves names against
+    /// whatever encloses them, so an ordinary THUNK would let the imported file
+    /// see the importer's bindings (docs/BYTECODE.md "Imports").
+    fn closed_thunk(&mut self, path: &str, e: &Expr, chunk: usize) -> Result<(), Unsupported> {
+        // One chunk per FILE, not per import site. The VM memoises the thunk by
+        // chunk index, so this is what makes `import ./f == import ./f` true --
+        // both sites name the same chunk and get the same object.
+        if let Some(&body) = self.imported.get(path) {
+            self.emit(chunk, OP_CLOSED_THUNK);
+            self.emit_u16(chunk, body as u16);
+            return Ok(());
+        }
+        // Claim the chunk and record it BEFORE compiling into it: an imported
+        // file makes nested thunks of its own, so asking afterwards which chunk
+        // was "just" created answers with the innermost one.
+        self.chunks.push(Chunk::default());
+        let body = self.chunks.len() - 1;
+        self.imported.insert(path.to_string(), body);
+        // Compiled with NO enclosing scopes, which is the whole point: a free
+        // variable in an imported file is then refused here as unbound, the way
+        // Nix refuses it, instead of resolving to a (depth, index) that means
+        // nothing inside a chunk whose environment is null. Without this the
+        // mistake is still caught -- CLOSED_THUNK leaves ENV_GET nothing to
+        // walk and the VM stops with E_BADNBC -- but at run time, and a fixture
+        // that compiles ought to be a valid program.
+        let outer = std::mem::take(&mut self.scopes);
+        let r = self.strict(e, body);
+        self.scopes = outer;
+        r?;
+        self.emit_return(body);
+        self.emit(chunk, OP_CLOSED_THUNK);
+        self.emit_u16(chunk, body as u16);
+        Ok(())
+    }
+
+    fn thunk_over(&mut self, e: &Expr, chunk: usize, op: u8) -> Result<(), Unsupported> {
         self.chunks.push(Chunk::default());
         let body = self.chunks.len() - 1;
         self.strict(e, body)?;
         self.emit_return(body);
-        self.emit(chunk, OP_THUNK);
+        self.emit(chunk, op);
         self.emit_u16(chunk, body as u16);
         Ok(())
     }

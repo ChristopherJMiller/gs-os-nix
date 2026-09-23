@@ -109,19 +109,26 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
    it changed what this slice is. There are **45** tests whose first refusal is
    a path literal, and they split three ways:
 
-   - **23 of them open with `with import ./lib.nix;`** — what they need is
-     `import`, not paths. The imported files (`lib.nix`, `imported.nix`,
-     `imported2.nix`) are vendored, so the generator can resolve the import at
-     lowering time: parse that file, compile it as its own chunk, and reference
-     it. No VM change, no paths at runtime, ~23 tests. The one thing it must get
-     right is that an imported file is evaluated in an **empty scope**, and the
-     IR's names are symbolic (resolved in `compiler.rs`), so inlining its IR
-     would let it capture the importer's `let` and `with` bindings — a silent
-     wrong answer. So an import compiles to a **closed thunk**: a new opcode for
-     `THUNK { code = chunk, env = 0 }`, where a stray `ENV_GET` is a loud
-     `E_BADNBC` rather than a capture. `import` also has to be refused if the
-     name is bound anywhere in the file, since the lowering has no scope
-     tracking to tell a shadowed `import` from the builtin.
+   - ~~**23 of them open with `with import ./lib.nix;`**~~ **import done**
+     (2026-09-23): resolved at lowering time, compiled to its own chunk and
+     reached through `CLOSED_THUNK`. The refusal histogram moved as predicted —
+     path literals 45 → 21 — and the next domino is what `lib.nix` opens with:
+     **`with builtins;`**, now the single largest blocker at **29 tests**. That is
+     a contained piece of work: the compiler already synthesises a lambda per
+     primop, so `builtins` as a value is an attribute set of them.
+
+     What it took: an imported file is evaluated in its **own scope**, but this
+     IR carries names symbolically and resolves them in `compiler.rs` against
+     whatever encloses them — so inlining an imported file's IR would let it
+     capture the importer's `let` and `with` bindings, silently. Hence
+     `CLOSED_THUNK` (`env = 0`), and compiling the imported chunk with the
+     scope stack emptied, so a free variable there is refused as unbound at
+     generation time, as Nix refuses it. Belt and braces on purpose: if the
+     compile-time check is ever bypassed, `ENV_GET` in a closed chunk has no
+     environment to walk and stops with `E_BADNBC` at the offending
+     instruction. Computed imports, interpolated import paths, a shadowed
+     `import`, `import` used as a value, and import cycles are all refused by
+     name rather than guessed.
    - **~12 are paths as values** — `dirOf`, `baseNameOf`, `toString`, `+`, path
      antiquotation. Reachable, and their expected values are stable: they use
      **absolute** literals (`/foo/bar`, `/bin`), and tvix substitutes a fixed

@@ -206,14 +206,26 @@ obj_t *make_apply(obj_t *f, obj_t *x)
  * pointer"), and the current environment. A lambda is a thunk that takes a
  * parameter: CALL gives it an environment with the argument in slot 1 where
  * FORCE gives a thunk its captured environment directly. */
-static void closure(uint8_t tag)
+/* `closed` builds a thunk over the EMPTY environment, which is what an import
+ * is: the file is evaluated in its own scope (BYTECODE.md "Imports"). A free
+ * variable in an imported file then reaches ENV_GET with nothing to walk and
+ * stops with E_BADNBC, rather than silently resolving against the importer. */
+static void closure(uint8_t tag, int closed)
 {
     uint16_t idx = fetch16();
-    obj_t *o = alloc(12);
+    obj_t *o;
+    if (closed) {
+        /* One thunk per imported file, whichever site asks for it, so the file
+         * is evaluated once and `import ./f == import ./f` is true. */
+        if (idx >= CHUNK_MAX) badnbc();
+        if (imports[idx]) { push(imports[idx]); return; }
+    }
+    o = alloc(12);
     SET_HDR(o, tag, 0);
     CL_CODE(o) = chunk_info[idx].code;
     CL_CTAB(o) = chunk_info[idx].ctab;
-    CL_ENV(o) = env;
+    CL_ENV(o) = closed ? 0 : env;
+    if (closed) imports[idx] = o;
     push(o);
 }
 
@@ -539,8 +551,9 @@ void run(void)
         case OP_ENV_POP: env = ELEMS(deref(env))[0]; break;
 
         /* --- closures and calls --- */
-        case OP_LAMBDA: closure(T_LAMBDA); break;
-        case OP_THUNK:  closure(T_THUNK); break;
+        case OP_LAMBDA: closure(T_LAMBDA, 0); break;
+        case OP_THUNK:  closure(T_THUNK, 0); break;
+        case OP_CLOSED_THUNK: closure(T_THUNK, 1); break;   /* an import */
         case OP_CALL:   do_call(); break;
         case OP_TAIL_CALL: call_enter(); break; /* the callee's RETURN returns to our caller */
         case OP_WITH_PUSH:                      /* the set (unforced) becomes a marked environment */

@@ -138,6 +138,12 @@ extern uint16_t catch_n;
 extern obj_t *ctab_pool[CTAB_N];
 extern uint16_t cnext;
 extern struct chunk_info chunk_info[CHUNK_MAX];
+/* One thunk per imported FILE, not per import site: Nix evaluates an imported
+ * file once and shares the value, and that is observable -- `import ./f ==
+ * import ./f` is true because both sides are the SAME object. CLOSED_THUNK
+ * memoises here, so the sharing does not depend on where the import appears.
+ * A root, like the constant tables. */
+extern obj_t *imports[CHUNK_MAX];
 extern uint16_t nchunks;
 
 extern const uint8_t *pc;

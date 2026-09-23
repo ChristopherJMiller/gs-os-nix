@@ -13,8 +13,28 @@
 
 use crate::ast::{unsupported, BinOp, Expr, Param, Pos, StrPart, Unsupported};
 use rnix::ast::{self, AstNode, BinOpKind, HasEntry, LiteralKind, UnaryOpKind};
+use std::path::{Path, PathBuf};
 
+/// Parse a file, so `import ./other.nix` can be resolved relative to it. The
+/// generator resolves imports itself; the VM has no parser and no filesystem
+/// (docs/BYTECODE.md "Imports").
+pub fn parse_file(path: &Path) -> Result<Expr, Unsupported> {
+    let src = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => return unsupported(Pos { line: 0, col: 0 }, format!("cannot read {}: {e}", path.display())),
+    };
+    let here = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    parse_in(&src, here.parent().map(|d| d.to_path_buf()), vec![here])
+}
+
+/// Parse a bare string, with no file to resolve imports against. The unit
+/// tests use this; an import in a string is refused rather than guessed.
+#[allow(dead_code)]
 pub fn parse(src: &str) -> Result<Expr, Unsupported> {
+    parse_in(src, None, Vec::new())
+}
+
+fn parse_in(src: &str, dir: Option<PathBuf>, chain: Vec<PathBuf>) -> Result<Expr, Unsupported> {
     let parsed = rnix::Root::parse(src);
     if let Some(err) = parsed.errors().first() {
         return unsupported(Pos { line: 0, col: 0 }, format!("parse error: {err}"));
@@ -23,14 +43,70 @@ pub fn parse(src: &str) -> Result<Expr, Unsupported> {
     let Some(expr) = root.expr() else {
         return unsupported(Pos { line: 0, col: 0 }, "empty file");
     };
-    Lower { src }.expr(&expr)
+    Lower { src, dir, chain }.expr(&expr)
 }
 
 struct Lower<'a> {
     src: &'a str,
+    /// The directory of the file being lowered, for resolving a relative
+    /// import. `None` when parsing a bare string (the unit tests), which makes
+    /// every import a refusal rather than a guess.
+    dir: Option<PathBuf>,
+    /// Files currently being imported, outermost first, so a cycle is refused
+    /// instead of recursing forever.
+    chain: Vec<PathBuf>,
 }
 
 impl<'a> Lower<'a> {
+    /// Is this the bare identifier `import`?
+    fn is_import(&self, f: &ast::Expr) -> bool {
+        matches!(f, ast::Expr::Ident(id)
+            if id.ident_token().map(|t| t.text() == "import").unwrap_or(false))
+    }
+
+    /// `import <path literal>`: read that file, lower it, and wrap it so the
+    /// compiler gives it its own chunk and a CLOSED_THUNK. Only a literal
+    /// relative or absolute path can be resolved here -- anything computed is
+    /// refused (docs/BYTECODE.md "Imports").
+    fn import(&self, app: &ast::Apply, arg: &ast::Expr) -> Result<Expr, Unsupported> {
+        let text = match arg {
+            ast::Expr::PathRel(p) => p.to_string(),
+            ast::Expr::PathAbs(p) => p.to_string(),
+            _ => return self.refuse(app, "computed import"),
+        };
+        if text.contains("${") {
+            return self.refuse(app, "interpolated import path");
+        }
+        let Some(dir) = self.dir.as_ref() else {
+            return self.refuse(app, "import with no file to resolve against");
+        };
+        let joined = if text.starts_with('/') {
+            PathBuf::from(&text)
+        } else {
+            dir.join(&text)
+        };
+        // A directory import means `<dir>/default.nix`, as Nix does.
+        let target = if joined.is_dir() { joined.join("default.nix") } else { joined };
+        let target = target.canonicalize().unwrap_or(target);
+        if self.chain.contains(&target) {
+            return self.refuse(app, "import cycle");
+        }
+        let src = match std::fs::read_to_string(&target) {
+            Ok(s) => s,
+            Err(e) => return self.refuse(app, &format!("import {}: {e}", target.display())),
+        };
+        let key = target.to_string_lossy().into_owned();
+        let mut chain = self.chain.clone();
+        let dir = target.parent().map(|d| d.to_path_buf());
+        chain.push(target);
+        // A refusal from the imported file carries ITS position, which would
+        // point into the wrong file, so re-anchor it here and keep the name.
+        match parse_in(&src, dir, chain) {
+            Ok(e) => Ok(Expr::Import(key, Box::new(e))),
+            Err(u) => self.refuse(app, &format!("in imported file: {}", u.what)),
+        }
+    }
+
     fn pos(&self, node: &impl AstNode) -> Pos {
         let off: usize = node.syntax().text_range().start().into();
         let before = &self.src[..off.min(self.src.len())];
@@ -167,6 +243,12 @@ impl<'a> Lower<'a> {
                 LiteralKind::Uri(_) => self.refuse(lit, "URI literal"),
             },
             ast::Expr::Ident(id) => match id.ident_token() {
+                // `import` reaching here is `import` used as anything other
+                // than the head of `import <path literal>` -- passed around,
+                // or applied to something the generator cannot resolve. Either
+                // way it cannot be resolved at compile time, and guessing would
+                // produce a fixture that runs and answers wrongly.
+                Some(tok) if tok.text() == "import" => self.refuse(id, "import as a value"),
                 Some(tok) => Ok(Expr::Var(tok.text().to_string(), self.pos(id))),
                 None => self.refuse(id, "identifier `or`"),
             },
@@ -241,6 +323,11 @@ impl<'a> Lower<'a> {
             }
             ast::Expr::LetIn(l) => {
                 let binds = self.bindings(l, "let", true)?;
+                // The lowering has no scope tracking, so it cannot tell a
+                // shadowed `import` from the builtin. Refuse rather than pick.
+                if binds.iter().any(|(n, _, _)| n == "import") {
+                    return self.refuse(l, "import is shadowed");
+                }
                 let Some(body) = l.body() else { return self.refuse(l, "let without a body") };
                 Ok(Expr::Let(binds, Box::new(self.expr(&body)?)))
             }
@@ -336,6 +423,9 @@ impl<'a> Lower<'a> {
                 let (Some(f), Some(a)) = (app.lambda(), app.argument()) else {
                     return self.refuse(app, "incomplete application");
                 };
+                if self.is_import(&f) {
+                    return self.import(app, &a);
+                }
                 Ok(Expr::Apply(Box::new(self.expr(&f)?), Box::new(self.expr(&a)?)))
             }
             ast::Expr::Assert(a) => {
@@ -475,6 +565,12 @@ mod tests {
             ("1.5", "float literal"),
             ("let x = 1; x = 2; in x", "`x` bound twice in one let"),
             ("{ a = 1; inherit a; }", "`a` bound twice in one attribute set"),
+            // Imports the generator will not guess at (docs/BYTECODE.md).
+            ("import ./lib.nix", "import with no file to resolve against"),
+            ("import (f 1)", "computed import"),
+            ("let import = 1; in 2", "import is shadowed"),
+            ("[ import ]", "import as a value"),
+            ("map import [ 1 ]", "import as a value"),
         ];
         for (src, want) in cases {
             let err = parse(src).unwrap_err();
@@ -482,6 +578,59 @@ mod tests {
         }
         assert!(parse("a == b == c").unwrap_err().what.starts_with("parse error"));
         assert!(parse("1 +").unwrap_err().what.starts_with("parse error"));
+    }
+
+    /// An import is resolved against the importing FILE, and the imported file is
+    /// lowered in its own right -- so this needs real files, not a string.
+    #[test]
+    fn resolves_an_import_relative_to_the_file() {
+        let dir = std::env::temp_dir().join(format!("nbc-import-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("lib.nix"), "{ a = 1; }\n").unwrap();
+        std::fs::write(dir.join("main.nix"), "(import ./lib.nix).a\n").unwrap();
+        // A file that reads a name the IMPORTER binds. Nix refuses it, and so
+        // must this: the imported file is compiled with no enclosing scope, so
+        // the name is unbound rather than captured.
+        std::fs::write(dir.join("peek.nix"), "secret\n").unwrap();
+        std::fs::write(dir.join("capture.nix"), "let secret = 9; in import ./peek.nix\n").unwrap();
+        // And one that imports itself.
+        std::fs::write(dir.join("loop.nix"), "import ./loop.nix\n").unwrap();
+
+        // Two sites importing the same file, one of them through a symlink.
+        std::fs::write(dir.join("twice.nix"),
+                       "[ (import ./lib.nix) (import ./link.nix) ]\n").unwrap();
+        let _ = std::os::unix::fs::symlink("lib.nix", dir.join("link.nix"));
+
+        let ast = parse_file(&dir.join("main.nix")).unwrap();
+        // The import became its own subtree, not an Apply of a variable.
+        assert!(matches!(&ast, Expr::Select(inner, _, _) if matches!(**inner, Expr::Import(..))),
+                "expected a Select over an Import, got {ast:?}");
+
+        // One file is one chunk however many sites import it, and a symlink is
+        // the same file -- which is what makes `import ./f == import ./f` true
+        // (docs/BYTECODE.md "Imports").
+        let twice = parse_file(&dir.join("twice.nix")).unwrap();
+        let chunks = crate::compiler::compile(&twice).unwrap();
+        // List elements are lazy, so each site sits in its own element chunk.
+        let closed: Vec<u16> = chunks
+            .iter()
+            .flat_map(|k| {
+                k.code
+                    .windows(3)
+                    .filter(|w| w[0] == crate::opcodes::OP_CLOSED_THUNK)
+                    .map(|w| u16::from_le_bytes([w[1], w[2]]))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(closed.len(), 2, "expected two import sites");
+        assert_eq!(closed[0], closed[1], "both sites must name the same chunk");
+
+        let captured = parse_file(&dir.join("capture.nix")).unwrap();
+        assert_eq!(crate::compiler::compile(&captured).unwrap_err().what,
+                   "unbound variable `secret`");
+
+        assert_eq!(parse_file(&dir.join("loop.nix")).unwrap_err().what, "import cycle");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

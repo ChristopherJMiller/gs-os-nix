@@ -14,6 +14,7 @@ uint16_t catch_n;
 obj_t *ctab_pool[CTAB_N];
 uint16_t cnext;
 struct chunk_info chunk_info[CHUNK_MAX];
+obj_t *imports[CHUNK_MAX];
 uint16_t nchunks;
 
 /* The shared singletons. Immutable: FORCE never touches a value, and nothing
@@ -116,6 +117,7 @@ static void load(void)
     total = (uint32_t)rd16(img + 8) | ((uint32_t)rd16(img + 10) << 16);
     if (total > IMAGE_MAX || nchunks == 0 || nchunks > CHUNK_MAX) badnbc();
     cnext = 0;
+    memset(imports, 0, sizeof imports);      /* no file imported yet */
     for (ci = 0; ci < nchunks; ++ci) {
         off = (uint32_t)rd16(img + 16 + 4 * ci) | ((uint32_t)rd16(img + 18 + 4 * ci) << 16);
         if (off >= total) badnbc();

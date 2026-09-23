@@ -24,7 +24,8 @@
  * yet), so the collector never reads the card.
  *
  * Roots: the value stack; env; RSTACK; FSTACK; the env of every catch frame;
- * the constant tables. Not a pointer: word 0 of a THUNK/LAMBDA/BLACKHOLE (code
+ * the constant tables; the imported-file thunks (run.c memoises one per file,
+ * so `import ./f == import ./f` is true -- BYTECODE.md "Imports"). Not a pointer: word 0 of a THUNK/LAMBDA/BLACKHOLE (code
  * and constant-table offsets).
  */
 #pragma noroot
@@ -167,6 +168,7 @@ void gc_collect(void)
     for (i = 0; i < fstack_n; ++i) fstack[i] = evac(fstack[i]);
     for (i = 0; i < catch_n; ++i) catches[i].env = evac(catches[i].env);
     for (i = 0; i < cnext; ++i) ctab_pool[i] = evac(ctab_pool[i]);
+    for (i = 0; i < CHUNK_MAX; ++i) imports[i] = evac(imports[i]);
     while (gscan != gfree) scan_one();
     if (gfree == gc_water) { nfree = gc_water; return; }   /* nothing survived */
     if (slot_x == 0) {
@@ -187,5 +189,6 @@ void gc_collect(void)
     for (i = 0; i < fstack_n; ++i) fstack[i] = translate(fstack[i]);
     for (i = 0; i < catch_n; ++i) catches[i].env = translate(catches[i].env);
     for (i = 0; i < cnext; ++i) ctab_pool[i] = translate(ctab_pool[i]);
+    for (i = 0; i < CHUNK_MAX; ++i) imports[i] = translate(imports[i]);
     nfree = gc_water;                           /* the nursery is empty */
 }

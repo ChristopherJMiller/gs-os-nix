@@ -44,14 +44,10 @@ fn main() -> ExitCode {
             }
         }
         [input, flag, output] if flag == "-o" => {
-            let src = match std::fs::read_to_string(input) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("nbc: {input}: {e}");
-                    return ExitCode::from(1);
-                }
-            };
-            let compiled = front::parse(&src).and_then(|ast| compiler::compile(&ast));
+            // parse_file, not parse: `import ./lib.nix` is resolved relative to
+            // the file being compiled (docs/BYTECODE.md "Imports").
+            let compiled = front::parse_file(std::path::Path::new(input))
+                .and_then(|ast| compiler::compile(&ast));
             match compiled {
                 Ok(chunks) => {
                     if let Err(e) = std::fs::write(output, nbc::write(&chunks)) {

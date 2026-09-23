@@ -51,6 +51,10 @@ pub const OP_THUNK: u8 = 0x40;
 pub const OP_FORCE: u8 = 0x41;
 pub const OP_RETURN: u8 = 0x42;
 pub const OP_PRIM: u8 = 0x43;
+/// A thunk that captures the EMPTY environment, for `import`: an imported file
+/// is evaluated in its own scope, and the IR's names are symbolic, so an
+/// ordinary THUNK would let it capture the importer's bindings.
+pub const OP_CLOSED_THUNK: u8 = 0x44;
 
 /// Constant kinds are heap tags (docs/HEAP.md).
 pub const K_INT: u8 = 0x01;

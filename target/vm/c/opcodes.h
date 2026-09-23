@@ -55,6 +55,7 @@
 #define OP_FORCE        0x41
 #define OP_RETURN       0x42
 #define OP_PRIM         0x43
+#define OP_CLOSED_THUNK 0x44
 
 /* Primops: PRIM_<NAME> id, then the arity in a comment. The Nix name is in
  * BYTECODE.md's table; the checker matches these by upper-casing the name and

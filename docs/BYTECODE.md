@@ -161,6 +161,7 @@ instruction even if it was a thunk before (in-place update, see below).
 | `$2B` | `UPDATE` | | `a b → a//b` | forces both; merges by name, `b` wins |
 | `$2C` | `INTERPOLATE` | `u16 n` | `p1 … pn → str` | forces the `n` parts; each must be a `STRING` in this slice (Nix coerces paths and `__toString` sets too — later); concatenates. String context is the union — carried from day one as the context pointer, currently always null |
 | `$43` | `PRIM` | `u8 id` | `a1 … ak → v` | run primop `id` (table below) on its `k` arguments, which are on the stack unforced; the primop forces what it needs |
+| `$44` | `CLOSED_THUNK` | `u16 chunk` | `→ t` | allocate `THUNK { code = chunk, env = 0 }` — see "Imports" |
 | `$36` | `WITH_PUSH` | | `s →` | `env ← LIST(2)` with `[0] = old env`, `[1] = s` (unforced), and the **with mark** (bit 22 of `aux`) set. A `with` scope is an environment like any other, so thunks capture it and `ENV_GET` depths count it |
 | `$37` | `WITH_GET` | | `k → v` | walk the environment chain; at each marked environment force `[1]` (must be `ATTRS`) and look `k` up; the first hit is pushed unforced. None → `E_NOVAR` |
 | `$38` | `TRY_WITH_GET` | | `k → v \| ∅` | as `WITH_GET`, but a miss pushes ∅ — the compiler uses it when a global (`map`, `toString`, …) is the fallback |
@@ -307,6 +308,46 @@ is safe **because both collectors are Cheney copiers**: nothing ever walks from-
 linearly, sizes are only ever read through a pointer, and to-space is laid out by
 the copier itself. [HEAP.md](HEAP.md) records this as the one permitted way for an
 object's footprint to shrink.
+
+## Imports
+
+`import ./lib.nix` is resolved by the **generator**, not the VM: the VM has no
+parser and no filesystem. The generator reads that file, lowers it, compiles it
+as its own chunk, and emits `CLOSED_THUNK` naming that chunk.
+
+**One thunk per file, not per import site.** Nix evaluates an imported file once
+and shares the value, and that is observable: `import ./f == import ./f` is
+**true**, because both sides are the same object. Two halves make that work —
+the generator gives one file one *chunk* however many sites import it (keyed by
+canonical path), and the VM memoises the thunk by chunk index in `imports[]`,
+which is a GC root like the constant tables. Keying on the **canonical** path is
+load-bearing rather than tidy: `eval-okay-observable-eval-cache` imports three
+byte-identical files of which the second is a **symlink** to the first, and
+expects the symlinked pair to compare equal and the third not to. Resolving
+symlinks is what makes that come out right.
+
+The reason it is `CLOSED_THUNK` and not `THUNK` is scope. Nix evaluates an
+imported file in its **own** scope — it cannot see the importer's `let` or
+`with` bindings — but the generator's IR carries names symbolically and resolves
+them in `compiler.rs` against whatever scope encloses them. An ordinary `THUNK`
+captures the current environment, so the imported file's `x` would silently
+resolve to the importer's `x`. `CLOSED_THUNK` stores a null environment
+instead, which makes that mistake impossible: a free variable in an imported
+file reaches `ENV_GET` with no environment to walk and stops with `E_BADNBC`.
+Loud, and at the exact instruction that was wrong.
+
+Two things the generator must refuse rather than guess:
+
+- **`import` applied to anything but a path literal.** `import (f x)` cannot be
+  resolved at compile time. Refused as `unsupported: computed import`.
+- **`import` where the name is bound anywhere in the file.** The lowering has
+  no scope tracking, so it cannot tell `let import = f; in import 3` from the
+  builtin. A file that binds the name at all is refused as
+  `unsupported: import is shadowed`, which is conservative and costs nothing on
+  the corpus.
+
+An import cycle is refused the same way (`unsupported: import cycle`), since
+the generator would otherwise recurse forever.
 
 ## Thunk placement (what is lazy)
 

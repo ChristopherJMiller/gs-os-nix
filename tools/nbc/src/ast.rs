@@ -96,6 +96,13 @@ pub enum Expr {
     /// Compiler-internal: evaluate `a` for effect (force it), then `b`.
     /// Formals force their argument set on entry, as Nix does.
     Seq(Box<Expr>, Box<Expr>),
+    /// `import ./file.nix`: the file's canonical path, and its lowered body.
+    /// It compiles to its own chunk and a CLOSED_THUNK over it, because an
+    /// imported file is evaluated in its OWN scope and this IR resolves names
+    /// against whatever encloses them. The path is carried so the compiler can
+    /// give one file ONE chunk however many sites import it, which is what lets
+    /// the VM share a single thunk (docs/BYTECODE.md "Imports").
+    Import(String, Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
