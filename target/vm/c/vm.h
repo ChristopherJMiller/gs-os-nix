@@ -24,6 +24,34 @@
 #define DIAG_ADDR        0x0310UL   /* the VM's state on error, see diag_write() */
 #define RESULT_STAT_ADDR 0x0320UL   /* $01 done, $FF error */
 #define RESULT_ERR_ADDR  0x0321UL
+/* Phase counters, written beside DIAG at exit and printed by a2min.
+ *
+ * They exist because three separate performance questions this VM raised were
+ * answered wrongly by reasoning about the code and only settled by measurement
+ * -- and the one number the harness already had (bus accesses) is what settled
+ * each of them. Everything else was a single undifferentiated cycle count, so
+ * "where did 60M cycles go" took an hour of hypotheses. These are the cheap
+ * half of the answer: how MANY times each expensive thing happened.
+ *
+ * Every counter sits on a cold path -- a collection, a promotion, a window
+ * copy, a thunk force -- so none of them is on the dispatch loop. */
+#define STATS_ADDR       0x0340UL   /* 8 x u32, live -- see the note above */
+#define STATS_N          8
+/* Counted IN PLACE, at a fixed address, rather than in globals copied out at
+ * exit. The first version did the latter and was useless for the one run that
+ * mattered: a program stopped by the cycle budget never reaches the copy, so
+ * the counters printed as zero exactly when they were needed. A volatile
+ * absolute increment costs the same as a global one here (both are bank 0), so
+ * there is nothing to trade away. */
+#define STAT(i)          (*(volatile uint32_t *)(STATS_ADDR + 4UL * (i)))
+#define ST_COLLECT       STAT(0)    /* collections */
+#define ST_BARRIER       STAT(1)    /* of those, forced by a write barrier */
+#define ST_PROMOTED      STAT(2)    /* bytes streamed to the card */
+#define ST_VIEWS         STAT(3)    /* mature reads that copied (cache misses) */
+#define ST_VIEW_BYTES    STAT(4)    /* bytes those copies moved */
+#define ST_TURNOVER      STAT(5)    /* window-ring turnovers */
+#define ST_FORCES        STAT(6)    /* thunks forced */
+
 /* The two harness flags. They were at $0BF0, which is inside the C stack's
  * range ($0400..$1FFF): a deep enough recursion would have overwritten them,
  * silently turning GC stress off or a masked verb back on -- the second of
@@ -115,7 +143,12 @@ typedef struct obj {
 #define FSTACK_N   128
 #define CATCH_N    12
 #define CTAB_N     512      /* constant pointers, all chunks together */
-#define CHUNK_MAX  128
+/* `builtins` used as a value materialises a lambda per primop, and the 47
+ * primops need 73 chunks between them (one per argument, curried), so a program
+ * that says `with builtins;` spends more than half of 128 before its own code.
+ * A chunk costs 4 bytes here and 4 in imports[]; 256 is 1 KB of bank 0. The
+ * loader refuses an image with more (main.c), loudly. */
+#define CHUNK_MAX  256
 
 struct chunk_info { uint16_t code; uint16_t ctab; };   /* image offset, ctab offset */
 
@@ -144,6 +177,8 @@ extern struct chunk_info chunk_info[CHUNK_MAX];
  * memoises here, so the sharing does not depend on where the import appears.
  * A root, like the constant tables. */
 extern obj_t *imports[CHUNK_MAX];
+
+
 extern uint16_t nchunks;
 
 extern const uint8_t *pc;

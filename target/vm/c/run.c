@@ -46,6 +46,7 @@ static void force_thunk(void)
 {
     obj_t *th = peek(), *tv, *v, *vv;
     const uint8_t *spc = pc;
+    ++ST_FORCES;
     obj_t **sctab = ctab;
     uint32_t buf[3];
     stack_check();
@@ -66,7 +67,7 @@ static void force_thunk(void)
     if (IS_MATURE(th)) {
         /* The update goes through the bus, so the value must be mature first:
          * the write barrier, a collection with the value as a root. */
-        if (IS_YOUNG(v)) { push(v); gc_collect(); v = pop(); }
+        if (IS_YOUNG(v)) { ++ST_BARRIER; push(v); gc_collect(); v = pop(); }
         vv = deref(v);
         switch (vv->tag) {
         case T_INT: case T_LAMBDA: case T_THUNK:

@@ -394,3 +394,42 @@ C compiler* (or landing 16-bit mode in LLVM-MOS) is the way to remove the last
 non-free tool. It is a project of its own; STATUS.md tracks it.
 
 The pipeline itself is specified in [TOOLCHAIN.md](TOOLCHAIN.md).
+
+---
+
+## D19 — Build the instrument before the third hypothesis
+
+**Forced by wasting an afternoon.** `eval-okay-foldlStrict` (a fold over
+`range 1 1000`) stopped halting. Four hypotheses were proposed and tested by
+running the simulator and watching the wall clock:
+
+1. the window ring re-copying a mature list — *tested, "disproved"*, and the
+   disproof was wrong: a stale 1 GHz-budget run from an earlier probe was still
+   competing for the CPU and made the control look slow too;
+2. the copy-back collector — *tested*, produced only timeouts, because bounding
+   a run with `timeout` kills the simulator before it prints anything;
+3. the `imports[]` root scan, which had just been widened from 128 to 256
+   entries — *fixed*, and changed the instruction count by 0.2%;
+4. the write barrier running a full collection per store — *arithmetic that
+   matched, then didn't*.
+
+Each experiment took minutes. The instrument that answered all four took about
+fifteen to build and one run to read: **phase counters** in the VM (collections,
+barrier-triggered collections, bytes promoted, window copies, forces) and a
+**PC-page profiler** in a2min (`A2MIN_PROFILE=1`). The first run with both said
+"51 of 52 collections came from the write barrier" and the question was over.
+
+Two rules from it, both now in the harness rather than in anyone's memory:
+
+- **Bound a long run with `A2MIN_BUDGET`, never `timeout`.** A budgeted run
+  prints its counters, its DIAG block and its profile; a killed one prints
+  nothing, which is how hypothesis 2 produced three timeouts and no data.
+- **Check for a live `a2min` before measuring.** Simulated cycles are immune to
+  contention but wall clock is not, and hypothesis 1 was disproved on a
+  contended control.
+
+The general form: this project already had exactly one good instrument, the bus
+access counter, and it is what settled all three earlier surprises (D5's verb
+gate, `LOOKUP`'s baseline, field-wise versus bulk reads). Everything else was a
+single undifferentiated cycle count. **When a cost is a mystery, the cheapest
+next step is usually a counter, not an experiment.**

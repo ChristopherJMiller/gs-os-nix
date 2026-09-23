@@ -246,6 +246,39 @@ it must be flushed when addresses move (today a `RESERVE` never reuses one), and
 an object promoted mid-deep-force carries the `aux2` visit mark, which the
 tracer must mask out of the count. Recorded here so none of it can be forgotten.
 
+
+### Measured: the barrier makes a promoting workload quadratic
+
+`builtins.foldl' (x: y: x + y) 0 (range 1 n)`, which builds `n` thunks and
+forces each, with the phase counters of [VM.md](VM.md):
+
+| `n` | collections | from the barrier | bytes promoted | result |
+|---:|---:|---:|---:|---|
+| 500 | **0** | 0 | 0 | 125250 |
+| 550 | 52 | **51** | 15,972 | 151525 |
+| 650 | 101 | **100** | 24,432 | over 60M cycles |
+| 1000, **no card** | **3** | **0** | 0 | 500500 |
+
+Read the last row against the others. With no card nothing is ever promoted, so
+nothing is ever mature, so the barrier never fires: three collections, all from
+memory pressure, and the program finishes. With a card it does not finish. **The
+card makes this workload quadratic precisely because it works.**
+
+The mechanism is the rule above, taken literally. Once a collection promotes the
+list and its unforced thunks, forcing one of those thunks writes its value into a
+*mature* object — and the only way to promote the value is a **whole collection**,
+which is O(live). One per ten forces at `n` = 550, and `live` grows with `n`, so
+the total is O(n²). Nothing about the bus is involved: the crossing is ~1.5% of
+the cycles, and `MEMCPY` or any other verb would not touch it.
+
+This is the cost of "there is no remembered set". A remembered set would make
+the store O(1) — write the young pointer through the bus, record the field, and
+fix it at the next collection, which then promotes for memory-pressure reasons
+only. The invariant would weaken to *a mature object never points into the
+nursery except through a recorded field, which the card must not trace*, and
+that is safe only while the card's collector does not run. It has to be resolved
+before `MARK` does, like the `THUNK` word-0 discrepancy below.
+
 ## What the collector traces
 
 The card's collector (`MARK`/`COMPACT`, see [CARD-ISA.md](CARD-ISA.md)) is a

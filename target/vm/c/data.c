@@ -82,6 +82,7 @@ uint16_t win_ring;              /* the bump pointer; the dispatch loop reads it 
  * makes reusing the bytes safe. */
 void windows_turnover(void)
 {
+    ++ST_TURNOVER;
     memset(wins, 0, sizeof wins);
     win_ring = 0;
 }
@@ -111,6 +112,8 @@ static obj_t *mature_view(obj_t *p)
      * instruction that wants more is E_NOMEM -- loud -- rather than wrapping
      * onto a view it is still holding, which would answer wrongly in silence. */
     if ((uint16_t)(win_ring + size) > WINDOW_RING) nomem();
+    ++ST_VIEWS;
+    ST_VIEW_BYTES += size;
     w = WIN_PTR(win_ring);
     card_read_at(PBITS(p), w, size);
     wins[h].card = p;
@@ -133,7 +136,7 @@ obj_t *deref(obj_t *p)
 void store_field(obj_t *c, uint16_t off, obj_t *v)
 {
     if (IS_RAM(c)) { *(obj_t **)((uint8_t *)c + off) = v; return; }
-    if (IS_YOUNG(v)) { push(v); gc_collect(); v = pop(); }
+    if (IS_YOUNG(v)) { ++ST_BARRIER; push(v); gc_collect(); v = pop(); }
     card_write_at(PBITS(c) + off, &v, 4);
     windows_invalidate(c);
 }

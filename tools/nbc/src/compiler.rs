@@ -53,6 +53,9 @@ enum Binding {
     /// Not lexically bound, but a `with` is in scope: looked up at runtime, with
     /// the named global as the fallback if there is one.
     With(Option<&'static str>),
+    /// `builtins` itself, used as a value rather than as `builtins.NAME`: the
+    /// whole set, one attribute per primop the VM has.
+    BuiltinsSet,
 }
 
 pub fn compile(program: &Expr) -> Result<Vec<Chunk>, Unsupported> {
@@ -153,32 +156,73 @@ impl Compiler {
         }
         match global {
             Some(g) => Ok(Binding::Global(g)),
+            // `builtins` is not in GLOBALS -- that list is the names Nix also
+            // exposes unqualified -- so an unshadowed `builtins` reaching here
+            // is the set itself: `with builtins;`, `builtins ? foo`, passing it
+            // to a function.
+            None if name == "builtins" => Ok(Binding::BuiltinsSet),
             None => unsupported(pos, format!("unbound variable `{name}`")),
         }
     }
     fn resolve(&self, name: &str, pos: Pos) -> Result<Binding, Unsupported> {
         self.resolve_from(name, 0, pos)
     }
+    /// Could `name` mean something other than the global? True for a `with`,
+    /// whose set is not known here.
     fn is_shadowed(&self, name: &str) -> bool {
         self.scopes.iter().any(|s| s.with || s.names.iter().any(|n| n == name))
+    }
+    /// Is `name` bound by a `let`, a lambda parameter or a `rec`? Unlike
+    /// `is_shadowed`, a `with` does not count -- a with-set MIGHT define the
+    /// name, which is a run-time question, not this one.
+    fn is_lexically_bound(&self, name: &str) -> bool {
+        self.scopes.iter().any(|s| s.names.iter().any(|n| n == name))
     }
 
     /// A runtime `with` lookup of `name`, leaving the value unforced on the
     /// stack; `global` is what a miss falls back to.
     fn emit_with_get(&mut self, name: &str, global: Option<&'static str>, pos: Pos, chunk: usize) -> Result<(), Unsupported> {
         self.emit_const(chunk, Const::Str(name.to_string()))?;
-        match global {
-            None => self.emit(chunk, OP_WITH_GET),
-            Some(g) => {
-                self.emit(chunk, OP_TRY_WITH_GET);
-                let miss = self.emit_jump(chunk, OP_JMP_IF_NOTFOUND);
-                let end = self.emit_jump(chunk, OP_JMP);
-                self.patch_jump(chunk, miss)?;
-                self.emit(chunk, OP_POP);
-                self.emit_builtin(g, pos, chunk)?;
-                self.patch_jump(chunk, end)?;
-            }
+        // A `with` set may or may not define the name, so anything that has a
+        // fallback is TRY_WITH_GET plus the fallback on a miss. `builtins` has
+        // one even though it is not in GLOBALS: it lives in Nix's base
+        // environment, so `with s; builtins` is the set unless `s` defines it.
+        if global.is_none() && name != "builtins" {
+            self.emit(chunk, OP_WITH_GET);
+            return Ok(());
         }
+        self.emit(chunk, OP_TRY_WITH_GET);
+        let miss = self.emit_jump(chunk, OP_JMP_IF_NOTFOUND);
+        let end = self.emit_jump(chunk, OP_JMP);
+        self.patch_jump(chunk, miss)?;
+        self.emit(chunk, OP_POP);
+        match global {
+            Some(g) => self.emit_builtin(g, pos, chunk)?,
+            None => self.emit_builtins_set(pos, chunk)?,
+        }
+        self.patch_jump(chunk, end)?;
+        Ok(())
+    }
+
+    /// `builtins` as a value: an attribute set with one entry per primop, whose
+    /// values are the same synthesised lambdas `builtins.NAME` would give. Nix
+    /// keeps attributes sorted by name bytes and the VM relies on it, so the
+    /// names are sorted here rather than taken in table order.
+    ///
+    /// This is not cheap -- 47 attributes, a name constant each, and 73 chunks
+    /// of curried lambdas -- but `with builtins;` is once per program, which is
+    /// how the corpus uses it. Every primop is eagerly built, because the set is
+    /// a value: something may iterate it with `attrNames`.
+    fn emit_builtins_set(&mut self, pos: Pos, chunk: usize) -> Result<(), Unsupported> {
+        let mut names: Vec<&'static str> = PRIMOPS.iter().map(|(n, _, _)| *n).collect();
+        names.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+        for name in &names {
+            self.emit_const(chunk, Const::Str((*name).to_string()))?;
+            self.emit_builtin(name, pos, chunk)?;
+        }
+        let n = Self::count(names.len(), "attributes")?;
+        self.emit(chunk, OP_ATTRS);
+        self.emit_u16(chunk, n);
         Ok(())
     }
 
@@ -228,6 +272,7 @@ impl Compiler {
             Expr::Var(name, pos) => match self.resolve(name, *pos)? {
                 Binding::Literal(op) => self.emit(chunk, op),
                 Binding::Global(g) => self.emit_builtin(g, *pos, chunk)?,
+                Binding::BuiltinsSet => self.emit_builtins_set(*pos, chunk)?,
                 Binding::Env(d, i) => {
                     self.emit(chunk, OP_ENV_GET);
                     self.emit_u16(chunk, d);
@@ -242,6 +287,7 @@ impl Compiler {
             Expr::Inherit(name, pos) => match self.resolve_from(name, 1, *pos)? {
                 Binding::Literal(op) => self.emit(chunk, op),
                 Binding::Global(g) => self.emit_builtin(g, *pos, chunk)?,
+                Binding::BuiltinsSet => self.emit_builtins_set(*pos, chunk)?,
                 Binding::Env(d, i) => {
                     self.emit(chunk, OP_ENV_GET);
                     self.emit_u16(chunk, d);
@@ -442,6 +488,25 @@ impl Compiler {
                     if b == "builtins" && !self.is_shadowed("builtins") {
                         return self.emit_builtin(name, *pos, chunk);
                     }
+                    // Only a `with` stands in the way: it might define
+                    // `builtins`, which is not knowable here, so ask at run
+                    // time and fall back to the primop. Selecting from the
+                    // whole synthesised set would be correct too, but it would
+                    // build 47 attributes and 73 chunks at every site.
+                    if b == "builtins" && !self.is_lexically_bound("builtins") {
+                        self.emit_const(chunk, Const::Str("builtins".to_string()))?;
+                        self.emit(chunk, OP_TRY_WITH_GET);
+                        let miss = self.emit_jump(chunk, OP_JMP_IF_NOTFOUND);
+                        // Found a `builtins` in the with-set: select from it.
+                        self.emit_const(chunk, Const::Str(name.clone()))?;
+                        self.emit(chunk, OP_SELECT);
+                        let end = self.emit_jump(chunk, OP_JMP);
+                        self.patch_jump(chunk, miss)?;
+                        self.emit(chunk, OP_POP);
+                        self.emit_builtin(name, *pos, chunk)?;
+                        self.patch_jump(chunk, end)?;
+                        return Ok(());
+                    }
                 }
                 self.strict(base, chunk)?;
                 match default {
@@ -519,6 +584,7 @@ impl Compiler {
                     return Ok(());
                 }
                 Binding::Global(g) => return self.emit_builtin(g, *pos, chunk),
+                Binding::BuiltinsSet => return self.emit_builtins_set(*pos, chunk),
                 Binding::Env(d, i) => {
                     self.emit(chunk, OP_ENV_GET);
                     self.emit_u16(chunk, d);
@@ -558,6 +624,7 @@ impl Compiler {
                     return Ok(());
                 }
                 Binding::Global(g) => return self.emit_builtin(g, *pos, chunk),
+                Binding::BuiltinsSet => return self.emit_builtins_set(*pos, chunk),
                 Binding::Env(d, i) => {
                     self.emit(chunk, OP_ENV_GET);
                     self.emit_u16(chunk, d);

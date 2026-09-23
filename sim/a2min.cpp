@@ -79,6 +79,7 @@ constexpr uint16_t SELFTEST_RESULT = 0x0400;    // the native self-test's word t
 constexpr uint32_t NBC_BASE    = 0x030000;      // where --run-nbc places the image: bank 3 (docs/VM.md)
 constexpr size_t   NBC_MAX     = 0xFFF0;
 constexpr uint32_t DIAG        = 0x0310;        // the VM's state on error (target/vm/c/main.c diag_write)
+constexpr uint32_t STATS       = 0x0340;        // phase counters (target/vm/c/main.c stats_write)
 
 int card_slot = 4;
 
@@ -237,9 +238,20 @@ void bring_up_card() {
 // run to the halt or the budget.
 bool trace_on = false;   // --trace-cpu: every instruction to stderr
 
+// A2MIN_PROFILE=1: where the cycles actually go, by 256-byte page of the VM's
+// own code. There is no symbol map for the ORCA/C output, so a page is the
+// finest honest unit -- but it is enough to say WHICH routine, and that is the
+// question a cycle total cannot answer. Built after four hypotheses about a
+// superlinear cost were each disproved by a slow experiment: the instrument is
+// cheaper than the guessing.
+bool profile_on = false;
+std::uint64_t pc_pages[256];      // bank-0 page (pc >> 8) -> instructions seen
+std::uint64_t pc_other = 0;       // anything outside bank 0
+
 bool run_to_halt(uint64_t budget = 50'000'000) {
     // A2MIN_BUDGET overrides the cycle budget: GC-stress runs of the C VM need more.
     if (const char *b = std::getenv("A2MIN_BUDGET")) budget = std::strtoull(b, nullptr, 0);
+    if (const char *p = std::getenv("A2MIN_PROFILE")) profile_on = (p[0] == '1');
     cpu.reset(LOAD_ADDR);
     bus.halted = false;
     const uint16_t seed = HALT_ADDR - 1;
@@ -250,6 +262,11 @@ bool run_to_halt(uint64_t budget = 50'000'000) {
                          ram[cpu.pcaddr() & 0xFFFFF], ram[(cpu.pcaddr() + 1) & 0xFFFFF],
                          ram[(cpu.pcaddr() + 2) & 0xFFFFF], ram[(cpu.pcaddr() + 3) & 0xFFFFF],
                          cpu.a, cpu.x, cpu.y, cpu.sp, cpu.dp, cpu.packP());
+        if (profile_on) {
+            const std::uint32_t pa = cpu.pcaddr();
+            if ((pa >> 16) == 0) ++pc_pages[(pa >> 8) & 0xFF];
+            else ++pc_other;
+        }
         cpu.step();
     }
     return bus.halted;
@@ -485,6 +502,36 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
                 nbc_path, static_cast<unsigned long long>(cpu.instructions),
                 static_cast<unsigned long long>(cpu.cycles),
                 static_cast<unsigned long long>(slot_accesses));
+    // The VM's phase counters (target/vm/c/vm.h STATS_ADDR): how many times each
+    // expensive thing happened. Printed even when the run did not halt, which is
+    // when they matter most -- a cycle total alone cannot say WHERE it went.
+    {
+        const uint32_t c = ram32(STATS), b = ram32(STATS + 4), pb = ram32(STATS + 8),
+                       v = ram32(STATS + 12), vb = ram32(STATS + 16),
+                       to = ram32(STATS + 20), f = ram32(STATS + 24);
+        // Printed unconditionally: a run stopped by the budget is the case
+        // these exist for, and the counters are live at STATS so they are valid
+        // whether or not the VM reached its exit.
+        if (true)
+            std::printf("  phases: %u collections (%u from the write barrier), "
+                        "%u bytes promoted; %u window copies moving %u bytes, "
+                        "%u ring turnovers; %u thunks forced\n",
+                        c, b, pb, v, vb, to, f);
+    }
+    if (profile_on) {
+        // Top pages by instruction count, so a routine can be identified from the
+        // omf2bin layout even without a symbol map.
+        std::vector<std::pair<std::uint64_t, int>> v;
+        for (int i = 0; i < 256; ++i) if (pc_pages[i]) v.push_back({pc_pages[i], i});
+        std::sort(v.rbegin(), v.rend());
+        std::printf("  profile: bank 0 by page (top %zu of %zu), %llu instructions outside bank 0\n",
+                    v.size() < 8 ? v.size() : 8, v.size(),
+                    static_cast<unsigned long long>(pc_other));
+        for (size_t i = 0; i < v.size() && i < 8; ++i)
+            std::printf("    $%02X00-$%02XFF %12llu  %5.1f%%\n", v[i].second, v[i].second,
+                        static_cast<unsigned long long>(v[i].first),
+                        100.0 * v[i].first / cpu.instructions);
+    }
     if (!halted) { std::printf("error: did not halt\n"); return 1; }
 
     const uint8_t status = ram[RESULT_STAT];

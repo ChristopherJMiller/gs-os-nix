@@ -49,12 +49,14 @@ static void diag_write(void);
  * unset buffer. */
 void vm_entry(void)
 {
+    uint16_t i;
     obj_true    = STATIC_PTR(&true_s);
     obj_false   = STATIC_PTR(&false_s);
     obj_null    = STATIC_PTR(&null_s);
     str_functor = STATIC_PTR(&functor_s);
     str_success = STATIC_PTR(&success_s);
     str_value   = STATIC_PTR(&value_s);
+    for (i = 0; i < STATS_N; ++i) STAT(i) = 0;
     vsp = rsp = fstack_n = catch_n = 0;
     env = 0;
     gc_water = nfree = 0x0010;                  /* offset 0 stays unallocated */

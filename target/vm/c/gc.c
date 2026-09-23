@@ -25,7 +25,10 @@
  *
  * Roots: the value stack; env; RSTACK; FSTACK; the env of every catch frame;
  * the constant tables; the imported-file thunks (run.c memoises one per file,
- * so `import ./f == import ./f` is true -- BYTECODE.md "Imports"). Not a pointer: word 0 of a THUNK/LAMBDA/BLACKHOLE (code
+ * so `import ./f == import ./f` is true -- BYTECODE.md "Imports"). Every root
+ * is walked on EVERY collection, so each list is bounded by what is in use
+ * (cnext, nchunks), not by its capacity: the write barrier can trigger a
+ * collection per store, which makes the root scan a per-store cost. Not a pointer: word 0 of a THUNK/LAMBDA/BLACKHOLE (code
  * and constant-table offsets).
  */
 #pragma noroot
@@ -161,6 +164,7 @@ static uint16_t translate_one(uint16_t off)
 void gc_collect(void)
 {
     uint16_t i, off, size;
+    ++ST_COLLECT;
     gfree = gscan = gc_water;
     for (i = 0; i < vsp; ++i) vstack[i] = evac(vstack[i]);
     env = evac(env);
@@ -168,7 +172,7 @@ void gc_collect(void)
     for (i = 0; i < fstack_n; ++i) fstack[i] = evac(fstack[i]);
     for (i = 0; i < catch_n; ++i) catches[i].env = evac(catches[i].env);
     for (i = 0; i < cnext; ++i) ctab_pool[i] = evac(ctab_pool[i]);
-    for (i = 0; i < CHUNK_MAX; ++i) imports[i] = evac(imports[i]);
+    for (i = 0; i < nchunks; ++i) imports[i] = evac(imports[i]);
     while (gscan != gfree) scan_one();
     if (gfree == gc_water) { nfree = gc_water; return; }   /* nothing survived */
     if (slot_x == 0) {
@@ -180,6 +184,7 @@ void gc_collect(void)
     /* step C: promote. RESERVE the block, translate every pointer field in the
      * staging area, stream it across in one burst, rewrite the roots. */
     size = (uint16_t)(gfree - gc_water);
+    ST_PROMOTED += size;
     xbase = card_reserve(size);
     for (off = gc_water; off != gfree; off += translate_one(off)) ;
     card_write_at(xbase, STAGE_AT(gc_water), size);
@@ -189,6 +194,6 @@ void gc_collect(void)
     for (i = 0; i < fstack_n; ++i) fstack[i] = translate(fstack[i]);
     for (i = 0; i < catch_n; ++i) catches[i].env = translate(catches[i].env);
     for (i = 0; i < cnext; ++i) ctab_pool[i] = translate(ctab_pool[i]);
-    for (i = 0; i < CHUNK_MAX; ++i) imports[i] = translate(imports[i]);
+    for (i = 0; i < nchunks; ++i) imports[i] = translate(imports[i]);
     nfree = gc_water;                           /* the nursery is empty */
 }

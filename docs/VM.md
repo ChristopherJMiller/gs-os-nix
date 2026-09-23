@@ -149,6 +149,27 @@ target/vm/c/
 `mkOrcaBinary { name = "cvm"; srcs = [ main.c run.c data.c prims.c gc.c card.c ]; }`
 builds it; `just cvm` does the same in the tree.
 
+## Phase counters and the profiler
+
+Two instruments, both added after four hypotheses about a superlinear cost were
+each disproved by a slow experiment (DECISIONS.md D19):
+
+- **Phase counters** (`vm.h STATS_ADDR`, printed by a2min as `phases:`):
+  collections, how many of those a write barrier forced, bytes promoted, window
+  copies and the bytes they moved, ring turnovers, thunks forced. They are
+  counted **in place** at a fixed address rather than in globals copied out at
+  exit — the first version did the latter and read as all zeros for a run
+  stopped by the cycle budget, which is the one run worth measuring. Every
+  counter is on a cold path, so none of them is in the dispatch loop.
+- **A PC-page profiler** (`A2MIN_PROFILE=1`): instructions per 256-byte page of
+  bank 0, top pages printed. There is no symbol map for the ORCA/C output, so a
+  page is the finest honest unit, but the link order (`main run data prims gc
+  card`) is enough to name the routine — which is the question a cycle total
+  cannot answer.
+
+Bound a long run with **`A2MIN_BUDGET`, never `timeout`**: a budgeted run prints
+its counters, DIAG and profile, and a killed one prints nothing.
+
 ## Measured (first cut, 2026-09-22)
 
 The C VM against the assembly VM it was translated from, same fixtures, same
