@@ -44,36 +44,54 @@ void stack_check(void)
  * top is the thunk's afterwards (it may have moved during the body). */
 static void force_thunk(void)
 {
-    obj_t *th = peek(), *v;
+    obj_t *th = peek(), *tv, *v, *vv;
     const uint8_t *spc = pc;
     obj_t **sctab = ctab;
+    uint32_t buf[3];
     stack_check();
-    th->tag = T_BLACKHOLE;
+    tv = deref(th);
     if (fstack_n >= FSTACK_N) nomem();
     fstack[fstack_n++] = th;
     rpush(env);
-    pc = IMAGE_PC(CL_CODE(th));
-    ctab = CTAB_AT(CL_CTAB(th));
-    env = CL_ENV(th);
+    pc = IMAGE_PC(CL_CODE(tv));
+    ctab = CTAB_AT(CL_CTAB(tv));
+    env = CL_ENV(tv);
+    store_byte(th, 0, T_BLACKHOLE);             /* re-entry during evaluation is infinite recursion */
     run();                                      /* leaves the value above the thunk */
     env = rpop();
     ctab = sctab;
     pc = spc;
-    th = fstack[--fstack_n];
+    th = fstack[--fstack_n];                    /* the thunk, wherever it is now */
     v = pop();
-    if (!IS_RAM(v)) type_err();                 /* a mature result: not yet */
-    th = deref(th);
-    switch (v->tag) {
-    case T_INT: case T_LAMBDA: case T_THUNK:
-        ((uint32_t *)th)[2] = ((uint32_t *)v)[2];
-        /* fall through */
-    case T_BOOL: case T_NULL:
-        ((uint32_t *)th)[1] = ((uint32_t *)v)[1];
-        ((uint32_t *)th)[0] = ((uint32_t *)v)[0];
-        break;
-    default:
-        SET_HDR(th, T_INDIRECT, 0);
-        IND_TARGET(th) = v;
+    if (IS_MATURE(th)) {
+        /* The update goes through the bus, so the value must be mature first:
+         * the write barrier, a collection with the value as a root. */
+        if (IS_YOUNG(v)) { push(v); gc_collect(); v = pop(); }
+        vv = deref(v);
+        switch (vv->tag) {
+        case T_INT: case T_LAMBDA: case T_THUNK:
+            memcpy(buf, vv, 12); card_write_at(PBITS(th), buf, 12); break;
+        case T_BOOL: case T_NULL:
+            memcpy(buf, vv, 8); card_write_at(PBITS(th), buf, 8); break;
+        default:
+            SET_HDR((obj_t *)buf, T_INDIRECT, 0); buf[1] = PBITS(v);
+            card_write_at(PBITS(th), buf, 8);
+        }
+        windows_invalidate(th);
+    } else {
+        vv = deref(v);
+        switch (vv->tag) {
+        case T_INT: case T_LAMBDA: case T_THUNK:
+            ((uint32_t *)th)[2] = ((uint32_t *)vv)[2];
+            /* fall through */
+        case T_BOOL: case T_NULL:
+            ((uint32_t *)th)[1] = ((uint32_t *)vv)[1];
+            ((uint32_t *)th)[0] = ((uint32_t *)vv)[0];
+            break;
+        default:
+            SET_HDR(th, T_INDIRECT, 0);
+            IND_TARGET(th) = v;
+        }
     }
     poke(th);
 }
@@ -104,12 +122,18 @@ void force_slot(uint16_t k)
 
 /* Force the top two values in place, then pop both: *b = the top, *a = the one
  * below. A binary operation must force both operands before it reads either. */
-void force_two(obj_t **a, obj_t **b)
+void force_two_orig(obj_t **a, obj_t **b, obj_t **ao, obj_t **bo)
 {
     force_top();
     force_slot(2);
-    *b = deref_pop();
-    *a = deref_pop();
+    *bo = pop(); *b = deref(*bo);
+    *ao = pop(); *a = deref(*ao);
+}
+
+void force_two(obj_t **a, obj_t **b)
+{
+    obj_t *ao, *bo;
+    force_two_orig(a, b, &ao, &bo);
 }
 
 /* --- calls ------------------------------------------------------------------------ */
@@ -119,18 +143,20 @@ void force_two(obj_t **a, obj_t **b)
  * is called through it: `s x` == `(s.__functor s) x`. */
 void call_enter(void)
 {
-    obj_t *f, *x, *e;
+    obj_t *f, *fo, *x, *e;
     uint16_t ix;
     for (;;) {
         force_slot(2);                          /* f, forced in place */
         x = pop();
-        f = deref_pop();
+        fo = pop();
+        f = deref(fo);
         if (f->tag == T_LAMBDA) break;
         if (f->tag != T_ATTRS) type_err();
-        if (!find_attr(f, str_functor, &ix)) type_err();
+        if (!find_attr(fo, str_functor, &ix)) type_err();
+        f = deref(fo);
         rpush(x);                               /* the argument, a root across the call */
         push(AVALUES(f, AUX16(f))[ix]);         /* the functor, unforced */
-        push(f);                                /* the set, as its own first argument */
+        push(fo);                               /* the set, as its own first argument */
         do_call();                              /* g = s.__functor s */
         push(rpop());                           /* then g x */
     }
@@ -209,12 +235,16 @@ static void with_get(int strict)
         if (cur == 0) break;
         cur = deref(cur);
         if (cur->aux2 & AUX_WITH) {
+            obj_t *so;
             push(ELEMS(cur)[1]);
             force_top();                        /* runs bytecode */
-            set = deref_pop();
+            so = pop();
+            set = deref(so);
             need(set, T_ATTRS);
-            if (find_attr(set, deref(rstack[base]), &ix)) {
-                obj_t *v = AVALUES(set, AUX16(set))[ix];
+            if (find_attr(so, rstack[base], &ix)) {
+                obj_t *v;
+                set = deref(so);
+                v = AVALUES(set, AUX16(set))[ix];
                 rsp = base;
                 push(v);
                 return;
@@ -342,7 +372,7 @@ void op_arith(uint16_t op)
 void run(void)
 {
     uint16_t op, n, i, ix;
-    obj_t *a, *b, *o;
+    obj_t *a, *b, *o, *ao, *bo;
     for (;;) {
         /* the only place a collection can happen (gc_maybe, inlined) */
         if (*(volatile uint8_t *)GC_STRESS_ADDR ? nfree != gc_water : nfree >= NURSERY_END - GC_MARGIN)
@@ -366,9 +396,9 @@ void run(void)
             /* Two functions compared at the TOP level are never equal, even the
              * same object -- C++ Nix's rule, which the corpus pins. Inside a list
              * or set the pointer shortcut in values_equal applies. */
-            force_two(&a, &b);
+            force_two_orig(&a, &b, &ao, &bo);
             if (a->tag == T_LAMBDA && b->tag == T_LAMBDA) { push(obj_false); break; }
-            push_bool(values_equal(a, b));
+            push_bool(values_equal(ao, bo));
             break;
         case OP_LT: op_arith(OP_LT); break;
         case OP_GT: push_bool(cmp_values() == 2); break;
@@ -426,15 +456,16 @@ void run(void)
             push(o);
             break;
         case OP_SELECT:
-            force_two(&a, &b);                  /* the set, the key */
+            force_two_orig(&a, &b, &ao, &bo);   /* the set, the key */
             need(a, T_ATTRS); need(b, T_STRING);
-            if (!find_attr(a, b, &ix)) err_exit(E_NOATTR);
+            if (!find_attr(ao, bo, &ix)) err_exit(E_NOATTR);
+            a = deref(ao);
             push(AVALUES(a, AUX16(a))[ix]);
             break;
         case OP_TRY_SELECT:                     /* s k -> v | not-found (the null pointer) */
-            force_two(&a, &b);
+            force_two_orig(&a, &b, &ao, &bo);
             need(b, T_STRING);
-            if (a->tag == T_ATTRS && find_attr(a, b, &ix)) push(AVALUES(a, AUX16(a))[ix]);
+            if (a->tag == T_ATTRS && find_attr(ao, bo, &ix)) { a = deref(ao); push(AVALUES(a, AUX16(a))[ix]); }
             else push(0);
             break;
         case OP_JMP_IF_NOTFOUND:
@@ -442,9 +473,9 @@ void run(void)
             if (peek() == 0) pc += (int16_t)n;
             break;
         case OP_HAS_ATTR:
-            force_two(&a, &b);
+            force_two_orig(&a, &b, &ao, &bo);
             need(b, T_STRING);
-            push_bool(a->tag == T_ATTRS && find_attr(a, b, &ix));
+            push_bool(a->tag == T_ATTRS && find_attr(ao, bo, &ix));
             break;
         case OP_UPDATE:
             force_two(&a, &b);
@@ -461,10 +492,10 @@ void run(void)
             for (i = 1; i <= n; ++i) ELEMS(o)[i] = 0;
             env = o;
             break;
-        case OP_ENV_SET:
+        case OP_ENV_SET:                        /* into a promoted env: the write barrier */
             i = fetch16();
             a = pop();
-            ELEMS(deref(env))[i] = a;
+            store_field(env, 4 + 4 * i, a);
             break;
         case OP_ENV_GET:                        /* depth, i: walk depth parents, read element i */
             n = fetch16();

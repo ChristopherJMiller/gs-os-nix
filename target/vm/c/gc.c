@@ -6,19 +6,26 @@
  * STAGING bank at the SAME low addresses the survivors will have afterwards,
  * so pointers written during the copy are already the final ones; then
  *
- *   step B (today): the compacted survivors are block-moved back into the
- *           nursery -- an in-RAM semispace collection;
- *   step C: the staging area is RESERVEd and streamed to the card instead,
- *           and the roots are rewritten to mature addresses (promotion, D6;
- *           target/vm/promote.s is the assembly draft).
+ *   step C (D6, "the generational boundary is the slot connector"): every
+ *           pointer field in the staging area is translated by the constant
+ *           card = base + (offset - gc_water), the whole area goes to the card
+ *           as ONE DATA burst into a RESERVEd block, and the roots are
+ *           rewritten the same way. The nursery is then empty. Survivors cross
+ *           the bus once, at about one access per byte; garbage never does.
+ *   step B (without a card): the survivors are block-moved back into the
+ *           nursery instead -- an in-RAM semispace collection.
  *
- * Constants materialised from the .nbc sit below gc_water and are pinned:
- * never moved, never scanned (they hold no pointers). The program's own
- * static objects are in bank 0 and are not young at all.
+ * The constants materialised from the .nbc are roots like any other (the
+ * constant tables), so the first collection promotes them and every later one
+ * ignores them: no object is pinned in the nursery, and so no mature object
+ * can point into it -- HEAP.md's invariant, kept by the write barrier
+ * (data.c store_field). The program's own static objects are in bank 0 and
+ * are not young at all. Mature objects never move (the card does not compact
+ * yet), so the collector never reads the card.
  *
- * Roots: the value stack; env; RSTACK; FSTACK; the env of every catch frame.
- * Not a pointer: word 0 of a THUNK/LAMBDA/BLACKHOLE (code and constant-table
- * offsets).
+ * Roots: the value stack; env; RSTACK; FSTACK; the env of every catch frame;
+ * the constant tables. Not a pointer: word 0 of a THUNK/LAMBDA/BLACKHOLE (code
+ * and constant-table offsets).
  */
 #pragma noroot
 #pragma optimize 15
@@ -39,8 +46,8 @@ void gc_maybe(void)
     }
 }
 
-/* The size in bytes of the young object at o. Marks in aux2 are ignored. */
-static uint16_t obj_size(obj_t *o)
+/* The size in bytes of an object from its header. Marks in aux2 are ignored. */
+uint16_t obj_size(const obj_t *o)
 {
     uint16_t n = AUX16(o);
     switch (o->tag) {
@@ -52,8 +59,8 @@ static uint16_t obj_size(obj_t *o)
     }
 }
 
-/* p -> its pointer after the collection. Null, mature, static and pinned
- * pointers pass through. A young object is copied to to-space once; its old
+/* p -> its pointer after the collection. Null, mature and static pointers pass
+ * through; nothing is pinned. A young object is copied to to-space once; its old
  * header becomes FORWARDED with the new pointer, so a second reference finds
  * the copy. */
 static obj_t *evac(obj_t *p)
@@ -61,7 +68,6 @@ static obj_t *evac(obj_t *p)
     uint16_t size, at;
     obj_t *dst;
     if (!IS_YOUNG(p)) return p;
-    if (LOW16(p) < gc_water) return p;          /* a pinned constant */
     if (p->tag == T_FORWARDED) return IND_TARGET(p);
     size = obj_size(p);
     at = gfree;
@@ -110,18 +116,76 @@ static void scan_one(void)
     }
 }
 
+/* --- promotion --------------------------------------------------------------------- */
+static uint32_t xbase;      /* the RESERVEd block: staging offset gc_water lands here */
+
+/* A young pointer -> its card address. */
+static obj_t *translate(obj_t *p)
+{
+    if (!IS_YOUNG(p)) return p;
+    return (obj_t *)(xbase + (uint32_t)(uint16_t)(LOW16(p) - gc_water));
+}
+
+/* Rewrite every pointer field of the to-space object at `off` in place, then
+ * return its size. */
+static uint16_t translate_one(uint16_t off)
+{
+    obj_t *o = STAGE_AT(off);
+    uint16_t n = AUX16(o), i, size = obj_size(o);
+    obj_t **f;
+    switch (o->tag) {
+    case T_LIST:
+        f = ELEMS(o);
+        for (i = 0; i < n; ++i) f[i] = translate(f[i]);
+        break;
+    case T_ATTRS:
+        f = AVALUES(o, n);
+        for (i = 0; i < 2 * n; ++i) f[i] = translate(f[i]);
+        break;
+    case T_THUNK: case T_LAMBDA: case T_BLACKHOLE:
+        CL_ENV(o) = translate(CL_ENV(o));
+        break;
+    case T_INDIRECT:
+        IND_TARGET(o) = translate(IND_TARGET(o));
+        break;
+    case T_STRING:
+        STRCTX(o, n) = translate(STRCTX(o, n));
+        break;
+    default:
+        break;
+    }
+    return size;
+}
+
 void gc_collect(void)
 {
-    uint16_t i;
+    uint16_t i, off, size;
     gfree = gscan = gc_water;
     for (i = 0; i < vsp; ++i) vstack[i] = evac(vstack[i]);
     env = evac(env);
     for (i = 0; i < rsp; ++i) rstack[i] = evac(rstack[i]);
     for (i = 0; i < fstack_n; ++i) fstack[i] = evac(fstack[i]);
     for (i = 0; i < catch_n; ++i) catches[i].env = evac(catches[i].env);
+    for (i = 0; i < cnext; ++i) ctab_pool[i] = evac(ctab_pool[i]);
     while (gscan != gfree) scan_one();
-    /* step B: the survivors go back into the nursery */
-    if (gfree != gc_water)
+    if (gfree == gc_water) { nfree = gc_water; return; }   /* nothing survived */
+    if (slot_x == 0) {
+        /* step B: no card -- the survivors go back into the nursery */
         memcpy(YOUNG_PTR(gc_water), STAGE_AT(gc_water), (uint16_t)(gfree - gc_water));
-    nfree = gfree;
+        nfree = gfree;
+        return;
+    }
+    /* step C: promote. RESERVE the block, translate every pointer field in the
+     * staging area, stream it across in one burst, rewrite the roots. */
+    size = (uint16_t)(gfree - gc_water);
+    xbase = card_reserve(size);
+    for (off = gc_water; off != gfree; off += translate_one(off)) ;
+    card_write_at(xbase, STAGE_AT(gc_water), size);
+    for (i = 0; i < vsp; ++i) vstack[i] = translate(vstack[i]);
+    env = translate(env);
+    for (i = 0; i < rsp; ++i) rstack[i] = translate(rstack[i]);
+    for (i = 0; i < fstack_n; ++i) fstack[i] = translate(fstack[i]);
+    for (i = 0; i < catch_n; ++i) catches[i].env = translate(catches[i].env);
+    for (i = 0; i < cnext; ++i) ctab_pool[i] = translate(ctab_pool[i]);
+    nfree = gc_water;                           /* the nursery is empty */
 }

@@ -8,7 +8,7 @@
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
 | **L2** | Card in a machine: register map, verilate, a2bus device, patched mame | **done — M2 achieved** (gated by the ROM-free harness; MAME glue written, needs a romset) |
 | **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, collector, CPU nursery | **done** — card side (memory engine, `DATA`/`TAG`, `ALLOC`/`RESERVE`, `FOLLOW`, `HASH_STREAM`, `LOOKUP`, `ALU64`, `MARK`/`COMPACT`) and the CPU-side nursery (`target/heap/nursery.s`: bump alloc, Cheney in RAM, one-burst promotion). D6 measured: `just bench-nursery` |
-| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — slice 1 done, scoreboard live.** `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **247 / 405** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`), 0 fail, all 39 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both); `target/vm/promote.s` and `card.s` stay as the reference for slice 4. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
+| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — slices 1-4 done, scoreboard live.** `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
 | **L6** | `NARHASH`, ATerm, `derivation` primop, string context | not started |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | not started |
@@ -52,16 +52,15 @@ assembly VM stayed until the C one passed everything it did; it has.
    devShell and the flake (`nix/pkgs/orca-toolchain.nix`, `nix/lib/mkOrcaBinary.nix`).
 5. ~~**Port the VM (`target/vm/c/`)**~~ **done** — one translation pass, then
    the fixtures found the one bug (the load file's entry is the first function of
-   the first object): 39/39 fixtures, 39/39 under GC stress, 247/405 on the
-   corpus. The assembly draft of promotion is kept as `target/vm/promote.s` and
-   the card driver as `target/vm/card.s` — the reference for the C versions. Next:
-   **resume slice 4 (promotion) in C**, and the measured 2.5× cost of C
-   ([VM.md](VM.md) "Measured") is the first thing to attack after it.
+   the first object): 40/40 fixtures, 40/40 under GC stress, 248/406 on the
+   corpus. Slice 4's promotion followed in C the same day (item 4 below),
+   translated from the assembly that had been kept for it. Next: the measured 2.5×
+   cost of C ([VM.md](VM.md) "Measured"), then slice 5.
 
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-The scoreboard reads **246 / 405**, and 133 of the rest are `unsupported` —
+The scoreboard reads **248 / 406**, and 133 of the rest are `unsupported` —
 refused by the lowering, not failed by the VM. Since the generator parses all of
 Nix (rnix), the refusals are by feature, and the histogram says what would move
 the number: path literal 35, float literal 23, `builtins` used as a value 10,
@@ -82,16 +81,22 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
    throw un-blackholes every thunk that was under evaluation (the VM keeps a
    force stack for exactly this), so `tryEval` twice on one failing thunk fails
    twice, as in Nix.
-4. **Slice 4: the nursery collector, then promotion to the card** (decided with
-   Chris: straight to D6, no in-RAM detour as a destination). Steps: (a) ~~precise
-   roots~~ done — every frame keeps its objects on a root stack; (b) ~~the Cheney
-   collector at bytecode boundaries~~ done — `target/vm/gc.s`, staging in bank 1,
-   survivors block-moved back for now; `just fixtures-gc` collects at every
-   boundary and all 39 fixtures survive it, and `checks.scoreboard` runs that too;
-   (c) **promotion**: the staging area streamed to the card (`RESERVE` + one `DATA`
-   burst), roots rewritten to mature addresses, mature reads through copy
-   windows, `LOOKUP` for mature sets, and the write barrier. Then measure the CAM
-   on real programs.
+4. ~~**Slice 4: the nursery collector, then promotion to the card**~~ **done**
+   (decided with Chris: straight to D6, no in-RAM detour as a destination).
+   (a) ~~precise roots~~ — every frame keeps its objects on a root stack; (b) ~~the
+   Cheney collector at bytecode boundaries~~ — `gc.c`, staging in bank 2; `just
+   fixtures-gc` collects at every boundary and all 39 fixtures survive it, and
+   `checks.scoreboard` runs that too; (c) ~~**promotion**~~ (2026-09-22, in C):
+   the staging area streamed to the card (`RESERVE` + one `DATA` burst) with every
+   pointer field translated, roots rewritten to mature addresses, mature reads
+   through a window ring, `LOOKUP` for mature sets with a scan fallback on a hash
+   collision (`eval-okay-hash-collision` is two names with one djb2 hash, so it
+   fails if the fallback does), and the write barrier for `ENV_SET`, thunk updates and deep-force
+   marks ([VM.md](VM.md) "Mature objects", [HEAP.md](HEAP.md)). Under GC stress
+   every boundary now promotes, so every object of a program is on the card within
+   one instruction of its creation, and the fixtures still all pass. Measuring the
+   CAM on real programs needs programs that promote by themselves — the corpus's
+   larger tests — and the verb-economics report per fixture (item 8).
 5. **Slice 5: builtins that touch the store, `import`, paths, floats.**
 6. ~~The parser decision~~ **decided: `rnix`** (D16). The generator now parses all
    of Nix and refuses by feature; `just scoreboard` prints a histogram of the

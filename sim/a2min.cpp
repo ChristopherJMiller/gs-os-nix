@@ -340,11 +340,24 @@ int selftest(const char *bin_path) {
     return 0;
 }
 
-// --- Nix-syntax printer over the nursery ------------------------------------------
+// --- Nix-syntax printer over the two spaces -----------------------------------------
 //
 // The VM reports a deep-forced value by pointer (BYTECODE.md "Result reporting");
-// this walks the object graph in RAM and prints it the way `nix-instantiate --eval
-// --strict` would, which is what the corpus's .exp files contain.
+// this walks the object graph and prints it the way `nix-instantiate --eval
+// --strict` would, which is what the corpus's .exp files contain. A pointer with
+// bit 31 set is in CPU RAM (bank 1 young, bank 0 static); one without is on the
+// card (promoted, docs/VM.md), and is read from the card's heap model.
+bool is_mature(uint32_t ptr) { return ptr != 0 && !(ptr & 0x80000000u); }
+
+uint8_t mem8(uint32_t ptr, uint32_t off) {
+    if (is_mature(ptr)) return heap.peek(ptr + off);
+    const uint32_t a = (ptr & 0xFFFFFF) + off;
+    return a < RAM_BYTES ? ram[a] : 0;
+}
+uint32_t mem32(uint32_t ptr, uint32_t off) {
+    return static_cast<uint32_t>(mem8(ptr, off)) | (static_cast<uint32_t>(mem8(ptr, off + 1)) << 8) |
+           (static_cast<uint32_t>(mem8(ptr, off + 2)) << 16) | (static_cast<uint32_t>(mem8(ptr, off + 3)) << 24);
+}
 uint32_t ram32(uint32_t a) {
     if (a + 3 >= RAM_BYTES) return 0;   // a corrupt pointer must not take the harness down
     return static_cast<uint32_t>(ram[a]) | (static_cast<uint32_t>(ram[a + 1]) << 8) |
@@ -378,53 +391,53 @@ bool is_nix_identifier(const std::string &s) {
     return true;
 }
 
-std::string nix_string_bytes(uint32_t addr) {
-    const uint32_t len = (ram32(addr) >> 8) & 0x3FFFFF;
-    if (addr + 4 + len > RAM_BYTES) return "<OOB>";
-    return std::string(reinterpret_cast<const char *>(&ram[addr + 4]), len);
+std::string nix_string_bytes(uint32_t ptr) {
+    const uint32_t len = (mem32(ptr, 0) >> 8) & 0x3FFFFF;
+    if (len > 0x10000) return "<OOB>";
+    std::string s; s.reserve(len);
+    for (uint32_t i = 0; i < len; ++i) s += static_cast<char>(mem8(ptr, 4 + i));
+    return s;
 }
 
 // Printing happens after errors too, when a container may still carry the VM's
 // transient marks in aux bits 22-23 (HEAP.md) -- mask them, and never index
-// past RAM on a corrupt pointer.
+// past memory on a corrupt pointer.
 std::string fmt_value(uint32_t ptr, int depth) {
     if (depth > 64) return "<DEEP>";
     if (ptr == 0) return "<NULLPTR>";
-    if (!(ptr & 0x80000000u)) return "<MATURE>";
-    const uint32_t a = ptr & 0xFFFFFF;  // young objects are in bank 1, statics in bank 0
-    const uint8_t tag = ram[a];
-    const uint32_t aux = (ram32(a) >> 8) & 0x3FFFFF;
-    if (a + 4 + 12 * aux >= RAM_BYTES) return "<OOB>";
+    const uint8_t tag = mem8(ptr, 0);
+    const uint32_t aux = (mem32(ptr, 0) >> 8) & 0x3FFFFF;
+    if (aux > 0x4000) return "<OOB>";
     switch (tag) {
         case TAG_INT: {
             uint64_t u = 0;
-            for (int i = 0; i < 8; ++i) u |= static_cast<uint64_t>(ram[a + 4 + i]) << (8 * i);
+            for (int i = 0; i < 8; ++i) u |= static_cast<uint64_t>(mem8(ptr, 4 + i)) << (8 * i);
             return std::to_string(static_cast<long long>(static_cast<int64_t>(u)));
         }
-        case TAG_BOOL: return ram[a + 4] ? "true" : "false";
+        case TAG_BOOL: return mem8(ptr, 4) ? "true" : "false";
         case TAG_NULL: return "null";
-        case TAG_STRING: return quote_nix(nix_string_bytes(a));
-        case TAG_PATH: return nix_string_bytes(a);
+        case TAG_STRING: return quote_nix(nix_string_bytes(ptr));
+        case TAG_PATH: return nix_string_bytes(ptr);
         case TAG_LIST: {
             if (aux == 0) return "[ ]";
             std::string s = "[";
-            for (uint32_t i = 0; i < aux; ++i) s += " " + fmt_value(ram32(a + 4 + 4 * i), depth + 1);
+            for (uint32_t i = 0; i < aux; ++i) s += " " + fmt_value(mem32(ptr, 4 + 4 * i), depth + 1);
             return s + " ]";
         }
         case TAG_ATTRS: {
             if (aux == 0) return "{ }";
             std::string s = "{";
             for (uint32_t i = 0; i < aux; ++i) {
-                const uint32_t np = ram32(a + 4 + 8 * aux + 4 * i);
-                const std::string name = (np & 0x80000000u) ? nix_string_bytes(np & 0xFFFFFF) : "<MATURE>";
+                const uint32_t np = mem32(ptr, 4 + 8 * aux + 4 * i);
+                const std::string name = np ? nix_string_bytes(np) : "<NULLPTR>";
                 s += " " + (is_nix_identifier(name) ? name : quote_nix(name)) + " = " +
-                     fmt_value(ram32(a + 4 + 4 * aux + 4 * i), depth + 1) + ";";
+                     fmt_value(mem32(ptr, 4 + 4 * aux + 4 * i), depth + 1) + ";";
             }
             return s + " }";
         }
         case TAG_THUNK: return "<CODE>";
         case TAG_LAMBDA: return "<LAMBDA>";
-        case TAG_INDIRECT: return fmt_value(ram32(a + 4), depth + 1);
+        case TAG_INDIRECT: return fmt_value(mem32(ptr, 4), depth + 1);
         case TAG_BLACKHOLE: return "<CYCLE>";
         default: { char b[16]; std::snprintf(b, sizeof b, "<?%02X>", tag); return b; }
     }

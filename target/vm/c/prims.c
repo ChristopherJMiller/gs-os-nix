@@ -1,10 +1,17 @@
-/* prims.c -- the primops (BYTECODE.md "Primops"). Translated from
- * target/vm/prims.s.
+/* prims.c -- the primops (BYTECODE.md "Primops"). Translated from the
+ * assembly VM's prims.s (git: commit 05ce616).
  *
  * PRIM id: the arguments are on the value stack, first argument deepest,
  * unforced. Each primop pops what it takes, forces what it needs and pushes one
  * value. Loops that call back into Nix (map, filter, foldl', any, all, ...)
- * keep their objects on the root stack, because do_call may collect.
+ * keep their objects on the root stack, because do_call may collect -- and may
+ * PROMOTE: a container being filled across a callback could become mature
+ * mid-loop, so those loops collect their results on the value stack and build
+ * the container afterwards, when nothing runs bytecode any more.
+ *
+ * Originals and views (vm.h deref): a value popped from the stack is stored
+ * (rpush, push, a field); it is read through deref(). force_pop_view gives
+ * both.
  */
 #pragma noroot
 #pragma optimize 15
@@ -60,26 +67,22 @@ void prims_init(void)
 /* --- shared ---------------------------------------------------------------------------- */
 static void push_bool(int v) { push(v ? obj_true : obj_false); }
 
-static obj_t *force_pop(void)
+/* Force and pop; the original in *orig, the view returned, type-checked. */
+static obj_t *force_pop_as(uint8_t tag, obj_t **orig)
 {
-    force_top();
-    return deref_pop();
-}
-
-static obj_t *force_pop_as(uint8_t tag)
-{
-    obj_t *o = force_pop();
-    need(o, tag);
-    return o;
+    obj_t *v;
+    *orig = force_pop_view(&v);
+    need(v, tag);
+    return v;
 }
 
 /* An INT that is an index or a length: 0..65535, else an index error. */
 static uint16_t pop_index(void)
 {
-    obj_t *o = force_pop_as(T_INT);
-    int64_t v = INTVAL(o);
-    if (v < 0 || v > 0xFFFF) err_exit(E_INDEX);
-    return (uint16_t)v;
+    obj_t *o, *v = force_pop_as(T_INT, &o);
+    int64_t x = INTVAL(v);
+    if (x < 0 || x > 0xFFFF) err_exit(E_INDEX);
+    return (uint16_t)x;
 }
 
 static void binary_ints(obj_t **a, obj_t **b)
@@ -100,6 +103,15 @@ static void call_with(obj_t *f, obj_t *x)
 /* The i-th element of the LIST whose pointer is root stack entry r. */
 #define RELEM(r, i) (ELEMS(deref(rstack[r]))[i])
 
+/* The n values on top of the stack become a fresh LIST. */
+static obj_t *list_from_stack(uint16_t n)
+{
+    obj_t *o = list_alloc(n);
+    vsp -= n;
+    memcpy(ELEMS(o), &vstack[vsp], 4 * n);
+    return o;
+}
+
 /* Entry i of an ATTRS of n entries copied from src (ns entries, index j). */
 static void copy_entry(obj_t *dst, uint16_t n, uint16_t i, obj_t *src, uint16_t ns, uint16_t j)
 {
@@ -111,78 +123,75 @@ static void copy_entry(obj_t *dst, uint16_t n, uint16_t i, obj_t *src, uint16_t 
 /* --- lists --------------------------------------------------------------------------- */
 static void prim_length(void)
 {
-    obj_t *l = force_pop_as(T_LIST);
+    obj_t *o, *l = force_pop_as(T_LIST, &o);
     push(new_int(AUX16(l)));
 }
 
 static void prim_head(void)
 {
-    obj_t *l = force_pop_as(T_LIST);
+    obj_t *o, *l = force_pop_as(T_LIST, &o);
     if (AUX16(l) == 0) err_exit(E_INDEX);
     push(ELEMS(l)[0]);
 }
 
 static void prim_tail(void)
 {
-    obj_t *l = force_pop_as(T_LIST), *o;
+    obj_t *o, *l = force_pop_as(T_LIST, &o), *r;
     uint16_t n = AUX16(l);
     if (n == 0) err_exit(E_INDEX);
-    o = list_alloc(n - 1);
-    memcpy(ELEMS(o), ELEMS(l) + 1, 4 * (n - 1));
-    push(o);
+    r = list_alloc(n - 1);
+    memcpy(ELEMS(r), ELEMS(l) + 1, 4 * (n - 1));
+    push(r);
 }
 
 static void prim_elemat(void)                   /* list i */
 {
     uint16_t i = pop_index();
-    obj_t *l = force_pop_as(T_LIST);
+    obj_t *o, *l = force_pop_as(T_LIST, &o);
     if (i >= AUX16(l)) err_exit(E_INDEX);
     push(ELEMS(l)[i]);
 }
 
 static void prim_map(void)                      /* f list -> a list of (f x) thunks */
 {
-    obj_t *l = force_pop_as(T_LIST), *f, *o;
+    obj_t *o, *l = force_pop_as(T_LIST, &o), *f, *r;
     uint16_t n = AUX16(l), i;
     f = pop();
-    o = list_alloc(n);
-    for (i = 0; i < n; ++i) ELEMS(o)[i] = make_apply(f, ELEMS(l)[i]);
-    push(o);
+    r = list_alloc(n);
+    for (i = 0; i < n; ++i) ELEMS(r)[i] = make_apply(f, ELEMS(l)[i]);
+    push(r);
 }
 
 static void prim_genlist(void)                  /* f n -> [ (f 0) ... (f (n-1)) ] */
 {
     uint16_t n = pop_index(), i;
-    obj_t *f = pop(), *o = list_alloc(n);
-    for (i = 0; i < n; ++i) ELEMS(o)[i] = make_apply(f, new_int(i));
-    push(o);
+    obj_t *f = pop(), *r = list_alloc(n);
+    for (i = 0; i < n; ++i) ELEMS(r)[i] = make_apply(f, new_int(i));
+    push(r);
 }
 
-static void prim_filter(void)                   /* f list. Roots: list, f, result */
+static void prim_filter(void)                   /* f list. Roots: list, f; kept elements on the stack */
 {
     uint16_t b = rsp, n, i, kept = 0;
-    obj_t *l = force_pop_as(T_LIST), *r;
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *v, *vo;
     n = AUX16(l);
-    rpush(l);
-    rpush(pop());
-    rpush(list_alloc(n));
+    rpush(lo);
+    rpush(pop());                               /* f */
     for (i = 0; i < n; ++i) {
         call_with(rstack[b + 1], RELEM(b, i));
-        if (BOOLVAL(force_pop_as(T_BOOL)))
-            RELEM(b + 2, kept++) = RELEM(b, i);
+        v = force_pop_as(T_BOOL, &vo);
+        if (BOOLVAL(v)) { push(RELEM(b, i)); ++kept; }
     }
-    r = deref(rstack[b + 2]);
-    SET_HDR(r, T_LIST, kept);
     rsp = b;
-    push(r);
+    push(list_from_stack(kept));
 }
 
 static void prim_foldl(void)                    /* f z list: the accumulator lives on the value stack */
 {
     uint16_t b = rsp, n, i;
-    obj_t *l = force_pop_as(T_LIST), *z;
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *z;
     n = AUX16(l);
-    rpush(l);
+    rpush(lo);
     z = pop();
     rpush(pop());                               /* f */
     push(z);
@@ -199,51 +208,48 @@ static void prim_foldl(void)                    /* f z list: the accumulator liv
 static void prim_concatlists(void)              /* [ [..] [..] ]: force each, sum, copy */
 {
     uint16_t b = rsp, n, i, total = 0, w = 0;
-    obj_t *l = force_pop_as(T_LIST), *e, *o;
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *e, *eo, *r;
     n = AUX16(l);
-    rpush(l);
+    rpush(lo);
     for (i = 0; i < n; ++i) {
         push(RELEM(b, i));
-        e = force_pop_as(T_LIST);
+        e = force_pop_as(T_LIST, &eo);
         if ((uint16_t)(total + AUX16(e)) < total) nomem();
         total += AUX16(e);
     }
-    o = list_alloc(total);
+    r = list_alloc(total);
     for (i = 0; i < n; ++i) {
         e = deref_follow(RELEM(b, i));
-        memcpy(ELEMS(o) + w, ELEMS(e), 4 * AUX16(e));
+        memcpy(ELEMS(r) + w, ELEMS(e), 4 * AUX16(e));
         w += AUX16(e);
     }
     rsp = b;
-    push(o);
+    push(r);
 }
 
 static void prim_concatmap(void)                /* concatLists (map f list), the map strict */
 {
     uint16_t b = rsp, n, i;
-    obj_t *l = force_pop_as(T_LIST), *m;
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo);
     n = AUX16(l);
-    rpush(l);
+    rpush(lo);
     rpush(pop());                               /* f */
-    rpush(list_alloc(n));                       /* mapped */
     for (i = 0; i < n; ++i) {
         call_with(rstack[b + 1], RELEM(b, i));
-        force_top();
-        RELEM(b + 2, i) = pop();
+        force_top();                            /* the result stays on the stack */
     }
-    m = rstack[b + 2];
     rsp = b;
-    push(m);
+    push(list_from_stack(n));
     prim_concatlists();
 }
 
 static void prim_elem(void)                     /* x list */
 {
     uint16_t b = rsp, n, i;
-    obj_t *l = force_pop_as(T_LIST);
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo);
     int found = 0;
     n = AUX16(l);
-    rpush(l);
+    rpush(lo);
     rpush(pop());                               /* x */
     for (i = 0; i < n; ++i)
         if (values_equal(RELEM(b, i), rstack[b + 1])) { found = 1; break; }
@@ -254,14 +260,15 @@ static void prim_elem(void)                     /* x list */
 static void any_all(int want)                   /* f list; `want` decides early */
 {
     uint16_t b = rsp, n, i;
-    obj_t *l = force_pop_as(T_LIST);
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *v, *vo;
     int r = !want;
     n = AUX16(l);
-    rpush(l);
+    rpush(lo);
     rpush(pop());                               /* f */
     for (i = 0; i < n; ++i) {
         call_with(rstack[b + 1], RELEM(b, i));
-        if ((BOOLVAL(force_pop_as(T_BOOL)) != 0) == want) { r = want; break; }
+        v = force_pop_as(T_BOOL, &vo);
+        if ((BOOLVAL(v) != 0) == want) { r = want; break; }
     }
     rsp = b;
     push_bool(r);
@@ -270,30 +277,33 @@ static void any_all(int want)                   /* f list; `want` decides early 
 /* --- attribute sets ---------------------------------------------------------------------- */
 static void prim_attrnames(void)
 {
-    obj_t *s = force_pop_as(T_ATTRS), *o;
+    obj_t *o, *s = force_pop_as(T_ATTRS, &o), *r;
     uint16_t n = AUX16(s);
-    o = list_alloc(n);
-    memcpy(ELEMS(o), ANAMES(s, n), 4 * n);
-    push(o);
+    r = list_alloc(n);
+    memcpy(ELEMS(r), ANAMES(s, n), 4 * n);
+    push(r);
 }
 
 static void prim_attrvalues(void)
 {
-    obj_t *s = force_pop_as(T_ATTRS), *o;
+    obj_t *o, *s = force_pop_as(T_ATTRS, &o), *r;
     uint16_t n = AUX16(s);
-    o = list_alloc(n);
-    memcpy(ELEMS(o), AVALUES(s, n), 4 * n);
-    push(o);
+    r = list_alloc(n);
+    memcpy(ELEMS(r), AVALUES(s, n), 4 * n);
+    push(r);
 }
 
 /* hasAttr name set / getAttr name set. Nix forces the NAME first, so a throwing
- * name is caught before a non-set second argument is a type error. */
+ * name is caught before a non-set second argument is a type error. Both
+ * originals. */
 static void force_name_then_set(obj_t **name, obj_t **set)
 {
+    obj_t *v;
     force_slot(2);
-    *set = force_pop_as(T_ATTRS);
-    *name = deref_pop();
-    need(*name, T_STRING);
+    *set = force_pop_view(&v);
+    need(v, T_ATTRS);
+    *name = pop();
+    need(deref(*name), T_STRING);
 }
 
 static void prim_hasattr(void)
@@ -306,69 +316,83 @@ static void prim_hasattr(void)
 
 static void prim_getattr(void)
 {
-    obj_t *name, *set;
+    obj_t *name, *set, *sv;
     uint16_t ix;
     force_name_then_set(&name, &set);
     if (!find_attr(set, name, &ix)) err_exit(E_NOATTR);
-    push(AVALUES(set, AUX16(set))[ix]);
+    sv = deref(set);
+    push(AVALUES(sv, AUX16(sv))[ix]);
 }
 
 static void prim_intersectattrs(void)           /* names of a that are in b, with b's values */
 {
-    obj_t *a, *b, *o;
+    obj_t *a, *b, *ao, *bo, *r;
     uint16_t na, nb, i, j, k = 0;
-    force_two(&a, &b);
+    force_two_orig(&a, &b, &ao, &bo);
     need(a, T_ATTRS); need(b, T_ATTRS);
     na = AUX16(a); nb = AUX16(b);
-    for (i = 0; i < na; ++i)
-        if (find_attr(b, deref(ANAMES(a, na)[i]), &j)) ++k;
-    o = attrs_alloc(k);
-    for (i = 0, k = 0; i < na; ++i)
-        if (find_attr(b, deref(ANAMES(a, na)[i]), &j)) { copy_entry(o, AUX16(o), k, b, nb, j); ++k; }
-    push(o);
+    for (i = 0; i < na; ++i) {
+        a = deref(ao);
+        if (find_attr(bo, ANAMES(a, na)[i], &j)) ++k;
+    }
+    r = attrs_alloc(k);
+    for (i = 0, k = 0; i < na; ++i) {
+        a = deref(ao);
+        if (find_attr(bo, ANAMES(a, na)[i], &j)) { b = deref(bo); copy_entry(r, AUX16(r), k, b, nb, j); ++k; }
+    }
+    push(r);
 }
 
-/* Is the STRING `name` among the (forced) elements of LIST l? */
-static int name_in_list(obj_t *name, obj_t *l)
+/* Is the STRING `name` (a view) among the (forced) elements of LIST l (original)? */
+static int name_in_list(obj_t *name, obj_t *lo)
 {
+    obj_t *l = deref(lo);
     uint16_t n = AUX16(l), j;
-    for (j = 0; j < n; ++j)
+    for (j = 0; j < n; ++j) {
         if (str_eq(name, deref_follow(ELEMS(l)[j]))) return 1;
+        l = deref(lo);
+    }
     return 0;
 }
 
 static void prim_removeattrs(void)              /* set [ names ]: keep entries not in the list */
 {
     uint16_t b = rsp, ns, nl, i, k = 0;
-    obj_t *s, *l, *o;
-    force_two(&s, &l);
+    obj_t *s, *l, *so, *lo, *r, *e, *eo;
+    force_two_orig(&s, &l, &so, &lo);
     need(s, T_ATTRS); need(l, T_LIST);
     nl = AUX16(l);
-    rpush(s);
-    rpush(l);
+    rpush(so);
+    rpush(lo);
     for (i = 0; i < nl; ++i) {                  /* force every name */
         push(RELEM(b + 1, i));
-        force_pop_as(T_STRING);
+        e = force_pop_as(T_STRING, &eo);
     }
-    s = deref(rstack[b]);
-    l = deref(rstack[b + 1]);
+    so = rstack[b];
+    lo = rstack[b + 1];
     rsp = b;
+    s = deref(so);
     ns = AUX16(s);
-    for (i = 0; i < ns; ++i)
-        if (!name_in_list(deref(ANAMES(s, ns)[i]), l)) ++k;
-    o = attrs_alloc(k);
-    for (i = 0, k = 0; i < ns; ++i)
-        if (!name_in_list(deref(ANAMES(s, ns)[i]), l)) { copy_entry(o, AUX16(o), k, s, ns, i); ++k; }
-    push(o);
+    for (i = 0; i < ns; ++i) {
+        s = deref(so);
+        if (!name_in_list(deref(ANAMES(s, ns)[i]), lo)) ++k;
+    }
+    r = attrs_alloc(k);
+    for (i = 0, k = 0; i < ns; ++i) {
+        s = deref(so);
+        if (!name_in_list(deref(ANAMES(s, ns)[i]), lo)) { s = deref(so); copy_entry(r, AUX16(r), k, s, ns, i); ++k; }
+    }
+    push(r);
 }
 
-/* Sorted insertion into the ATTRS `set` of capacity `cap` holding *cnt
+/* Sorted insertion into the fresh ATTRS `set` of capacity `cap` holding *cnt
  * entries; a duplicate name is dropped. Nothing here runs bytecode. */
 static void insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, obj_t *value)
 {
     uint16_t j, k, c;
+    obj_t *nv = deref(name);
     for (j = 0; j < *cnt; ++j) {
-        c = str_cmp(deref(ANAMES(set, cap)[j]), name);
+        c = str_cmp(deref(ANAMES(set, cap)[j]), nv);
         if (c == 1) return;                     /* first occurrence wins */
         if (c == 2) break;                      /* existing > new: insert here */
     }
@@ -377,7 +401,7 @@ static void insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, o
         ANAMES(set, cap)[k] = ANAMES(set, cap)[k - 1];
         AVALUES(set, cap)[k] = AVALUES(set, cap)[k - 1];
     }
-    HASHES(set)[j] = hash_str(name);
+    HASHES(set)[j] = hash_str(nv);
     ANAMES(set, cap)[j] = name;
     AVALUES(set, cap)[j] = value;
     ++*cnt;
@@ -385,74 +409,87 @@ static void insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, o
 
 static void prim_listtoattrs(void)              /* [ { name; value; } ... ] */
 {
-    uint16_t b = rsp, n, i, cnt = 0, ix;
-    obj_t *l = force_pop_as(T_LIST), *e, *set;
+    uint16_t b = rsp, n, i, cnt = 0, ix, at;
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *e, *eo, *nm, *no, *set;
     n = AUX16(l);
-    rpush(l);
-    rpush(attrs_alloc(n));                      /* capacity n; column offsets use n */
+    rpush(lo);
+    /* pass 1, running bytecode: (name, value) pairs onto the value stack */
     for (i = 0; i < n; ++i) {
         push(RELEM(b, i));
-        e = force_pop_as(T_ATTRS);
-        rpush(e);                               /* b+2: the element */
-        if (!find_attr(e, str_name, &ix)) err_exit(E_NOATTR);
+        e = force_pop_as(T_ATTRS, &eo);
+        rpush(eo);                              /* b+1: the element */
+        if (!find_attr(eo, str_name, &ix)) err_exit(E_NOATTR);
+        e = deref(eo);
         push(AVALUES(e, AUX16(e))[ix]);
-        rpush(force_pop_as(T_STRING));          /* b+3: the name */
-        e = deref(rstack[b + 2]);
-        if (!find_attr(e, str_value, &ix)) err_exit(E_NOATTR);
-        insert_entry(deref(rstack[b + 1]), n, &cnt, rstack[b + 3], AVALUES(e, AUX16(e))[ix]);
-        rsp = b + 2;
+        nm = force_pop_as(T_STRING, &no);
+        push(no);                               /* the name */
+        if (!find_attr(rstack[b + 1], str_value, &ix)) err_exit(E_NOATTR);
+        e = deref(rstack[b + 1]);
+        push(AVALUES(e, AUX16(e))[ix]);         /* the value, unforced */
+        rsp = b + 1;
     }
-    set = deref(rstack[b + 1]);
     rsp = b;
+    /* pass 2, no bytecode: sorted insertion into a fresh set */
+    at = vsp - 2 * n;
+    set = attrs_alloc(n);                       /* capacity n; column offsets use n */
+    for (i = 0; i < n; ++i)
+        insert_entry(set, n, &cnt, vstack[at + 2 * i], vstack[at + 2 * i + 1]);
+    vsp = at;
     if (cnt != n) {                             /* duplicates were dropped: compact */
-        obj_t *o = attrs_alloc(cnt);
-        for (i = 0; i < cnt; ++i) copy_entry(o, cnt, i, set, n, i);
-        set = o;
+        obj_t *r = attrs_alloc(cnt);
+        for (i = 0; i < cnt; ++i) copy_entry(r, cnt, i, set, n, i);
+        set = r;
     }
     push(set);
 }
 
 static void prim_partition(void)                /* f list -> { right; wrong; } */
 {
-    uint16_t b = rsp, n, i, nr = 0, nw = 0;
-    obj_t *l = force_pop_as(T_LIST), *o, *r, *w;
+    uint16_t b = rsp, n, i, nr = 0, nw = 0, at;
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *v, *vo, *r, *w;
     n = AUX16(l);
-    rpush(l);
+    rpush(lo);
     rpush(pop());                               /* f */
-    rpush(list_alloc(n));                       /* right */
-    rpush(list_alloc(n));                       /* wrong */
-    for (i = 0; i < n; ++i) {
+    for (i = 0; i < n; ++i) {                   /* (element, verdict) pairs on the stack */
         call_with(rstack[b + 1], RELEM(b, i));
-        if (BOOLVAL(force_pop_as(T_BOOL))) RELEM(b + 2, nr++) = RELEM(b, i);
-        else                                   RELEM(b + 3, nw++) = RELEM(b, i);
+        v = force_pop_as(T_BOOL, &vo);
+        push(RELEM(b, i));
+        push(BOOLVAL(v) ? obj_true : obj_false);
     }
-    r = deref(rstack[b + 2]); SET_HDR(r, T_LIST, nr);
-    w = deref(rstack[b + 3]); SET_HDR(w, T_LIST, nw);
     rsp = b;
-    o = attrs_alloc(2);
-    attrs_put(o, 2, 0, str_right, r);
-    attrs_put(o, 2, 1, str_wrong, w);
-    push(o);
+    at = vsp - 2 * n;
+    for (i = 0; i < n; ++i) if (vstack[at + 2 * i + 1] == obj_true) ++nr; else ++nw;
+    r = list_alloc(nr);
+    w = list_alloc(nw);
+    for (i = 0, nr = 0, nw = 0; i < n; ++i) {
+        if (vstack[at + 2 * i + 1] == obj_true) ELEMS(r)[nr++] = vstack[at + 2 * i];
+        else                                     ELEMS(w)[nw++] = vstack[at + 2 * i];
+    }
+    vsp = at;
+    v = attrs_alloc(2);
+    attrs_put(v, 2, 0, str_right, r);
+    attrs_put(v, 2, 1, str_wrong, w);
+    push(v);
 }
 
 /* --- strings ---------------------------------------------------------------------------- */
 static void prim_stringlength(void)
 {
-    obj_t *s = force_pop_as(T_STRING);
+    obj_t *o, *s = force_pop_as(T_STRING, &o);
     push(new_int(AUX16(s)));
 }
 
 static void prim_substring(void)                /* start len s */
 {
-    uint16_t b = rsp, start, len, slen, end;
+    uint16_t start, len = 0, slen, end;
     int to_end = 0;
-    obj_t *s = force_pop_as(T_STRING), *v, *o;
+    obj_t *so, *s = force_pop_as(T_STRING, &so), *vo, *v, *r;
     int64_t x;
-    rpush(s);
-    v = force_pop_as(T_INT);                    /* len: negative means "to the end" */
+    rpush(so);
+    v = force_pop_as(T_INT, &vo);               /* len: negative means "to the end" */
     x = INTVAL(v);
     if (x < 0 || x > 0xFFFF) to_end = 1; else len = (uint16_t)x;
-    v = force_pop_as(T_INT);                    /* start */
+    v = force_pop_as(T_INT, &vo);               /* start */
     x = INTVAL(v);
     if (x < 0) err_exit(E_INDEX);
     s = deref_rpop();
@@ -461,10 +498,9 @@ static void prim_substring(void)                /* start len s */
     start = (uint16_t)x;
     if (to_end || (uint16_t)(start + len) < start || start + len > slen) end = slen;
     else end = start + len;
-    o = str_alloc(end - start);
-    memcpy(STRBYTES(o), STRBYTES(s) + start, end - start);
-    push(o);
-    (void)b;
+    r = str_alloc(end - start);
+    memcpy(STRBYTES(r), STRBYTES(s) + start, end - start);
+    push(r);
 }
 
 /* The INT v as a decimal STRING. */
@@ -489,9 +525,10 @@ static void concat_strings_sep_top(void);
 static void tostring_top(void)
 {
     uint16_t b = rsp, n, i;
-    obj_t *v = force_pop(), *m;
+    obj_t *vo, *v = 0;
+    vo = force_pop_view(&v);
     switch (v->tag) {
-    case T_STRING: push(v); return;
+    case T_STRING: push(vo); return;
     case T_INT:    push(int_to_str(INTVAL(v))); return;
     case T_BOOL:   if (BOOLVAL(v)) push(str_one); else push(str_alloc(0)); return;
     case T_NULL:   push(str_alloc(0)); return;
@@ -499,17 +536,15 @@ static void tostring_top(void)
     default:       type_err();
     }
     n = AUX16(v);
-    rpush(v);                                   /* source */
-    rpush(list_alloc(n));                       /* the converted elements */
-    for (i = 0; i < n; ++i) {
+    rpush(vo);                                  /* source */
+    for (i = 0; i < n; ++i) {                   /* the converted elements, on the stack */
         push(RELEM(b, i));
         tostring_top();
-        RELEM(b + 1, i) = pop();
     }
-    m = rstack[b + 1];
     rsp = b;
+    v = list_from_stack(n);
     push(str_space);
-    push(m);
+    push(v);
     concat_strings_sep_top();
 }
 
@@ -519,34 +554,36 @@ static void prim_tostring(void) { tostring_top(); }
 static void concat_strings_sep_top(void)
 {
     uint16_t b = rsp, n, i, total = 0, nsep, w = 0;
-    obj_t *sep, *l, *e, *o;
-    force_two(&sep, &l);
+    obj_t *sep, *l, *sepo, *lo, *e, *eo, *r;
+    force_two_orig(&sep, &l, &sepo, &lo);
     need(sep, T_STRING); need(l, T_LIST);
     n = AUX16(l);
-    rpush(sep);
-    rpush(l);
+    rpush(sepo);
+    rpush(lo);
     for (i = 0; i < n; ++i) {
         push(RELEM(b + 1, i));
-        e = force_pop_as(T_STRING);
+        e = force_pop_as(T_STRING, &eo);
         if ((uint16_t)(total + AUX16(e)) < total) nomem();
         total += AUX16(e);
     }
-    sep = deref(rstack[b]);
-    l = deref(rstack[b + 1]);
+    sepo = rstack[b];
+    lo = rstack[b + 1];
     rsp = b;
+    sep = deref(sepo);
     nsep = AUX16(sep);
     for (i = 1; i < n; ++i) {                   /* n-1 separators */
         if ((uint16_t)(total + nsep) < total) nomem();
         total += nsep;
     }
-    o = str_alloc(total);
+    r = str_alloc(total);
     for (i = 0; i < n; ++i) {
-        if (i) { memcpy(STRBYTES(o) + w, STRBYTES(sep), nsep); w += nsep; }
+        if (i) { sep = deref(sepo); memcpy(STRBYTES(r) + w, STRBYTES(sep), nsep); w += nsep; }
+        l = deref(lo);
         e = deref_follow(ELEMS(l)[i]);
-        memcpy(STRBYTES(o) + w, STRBYTES(e), AUX16(e));
+        memcpy(STRBYTES(r) + w, STRBYTES(e), AUX16(e));
         w += AUX16(e);
     }
-    push(o);
+    push(r);
 }
 
 static void prim_concatstringssep(void) { concat_strings_sep_top(); }
@@ -554,7 +591,7 @@ static void prim_concatstringssep(void) { concat_strings_sep_top(); }
 /* baseNameOf / dirOf on STRINGs, with Nix's edge cases. */
 static void prim_basenameof(void)
 {
-    obj_t *s = force_pop_as(T_STRING), *o;
+    obj_t *o, *s = force_pop_as(T_STRING, &o), *r;
     uint16_t n = AUX16(s), last, start;
     const char *p = STRBYTES(s);
     if (n == 0) { push(str_alloc(0)); return; }
@@ -566,14 +603,14 @@ static void prim_basenameof(void)
         if (start == 0) break;
         --start;
     }
-    o = str_alloc(last - start + 1);
-    memcpy(STRBYTES(o), p + start, last - start + 1);
-    push(o);
+    r = str_alloc(last - start + 1);
+    memcpy(STRBYTES(r), p + start, last - start + 1);
+    push(r);
 }
 
 static void prim_dirof(void)
 {
-    obj_t *s = force_pop_as(T_STRING), *o;
+    obj_t *o, *s = force_pop_as(T_STRING, &o), *r;
     uint16_t n = AUX16(s), j;
     const char *p = STRBYTES(s);
     if (n == 0) { push(str_dot); return; }
@@ -584,16 +621,17 @@ static void prim_dirof(void)
         --j;
     }
     if (j == 0) { push(str_slash); return; }
-    o = str_alloc(j);
-    memcpy(STRBYTES(o), p, j);
-    push(o);
+    r = str_alloc(j);
+    memcpy(STRBYTES(r), p, j);
+    push(r);
 }
 
 /* --- errors, forcing, types --------------------------------------------------------------- */
 static void throw_exit(uint8_t code)
 {
-    obj_t *s = force_pop_as(T_STRING);
-    *(obj_t **)RESULT_ADDR = s;                 /* the message travels in RESULT */
+    obj_t *so, *s = force_pop_as(T_STRING, &so);
+    *(obj_t **)RESULT_ADDR = so;                /* the message travels in RESULT */
+    (void)s;
     err_exit(code);
 }
 
@@ -615,7 +653,8 @@ static void prim_deepseq(void)
 
 static void prim_typeof(void)
 {
-    obj_t *v = force_pop();
+    obj_t *o, *v;
+    o = force_pop_view(&v);
     switch (v->tag) {
     case T_INT:    push(str_int); break;
     case T_BOOL:   push(str_bool); break;
@@ -630,7 +669,8 @@ static void prim_typeof(void)
 
 static void is_tag(uint8_t tag)
 {
-    obj_t *v = force_pop();
+    obj_t *o, *v;
+    o = force_pop_view(&v);
     push_bool(v->tag == tag);
 }
 
@@ -683,8 +723,6 @@ static void bitop(uint8_t which)
 }
 
 /* --- the table ---------------------------------------------------------------------------- */
-/* The arithmetic and comparison primops share the operators' code; run.c
- * exposes them for that. */
 void op_prim(void)
 {
     uint16_t id = *pc++;

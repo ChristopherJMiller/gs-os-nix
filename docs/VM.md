@@ -4,8 +4,8 @@ The bytecode VM, ported from `target/vm/*.s` to C compiled by ORCA/C
 ([TOOLCHAIN.md](TOOLCHAIN.md)). [BYTECODE.md](BYTECODE.md) says what it executes,
 [HEAP.md](HEAP.md) how values are laid out; this page says how the C program is
 shaped, where it lives, and how the port was verified. The assembly VM it replaced
-was removed at parity (commit 05ce616 is the last with both); `promote.s` and
-`card.s` remain as the reference for slice 4.
+was removed at parity: commit 05ce616 is the last with both, and `promote.s` and
+`card.s` — kept as the reference while slice 4 was ported — went with it.
 
 ## Memory map
 
@@ -24,7 +24,7 @@ bank 0
   $0BF0  GC_STRESS                       a2min sets it; the collector runs at every boundary
   $2000  the program                     code + globals, from omf2bin; ≤ $BFFF
          globals: value stack (4 KB), RSTACK (768 B), FSTACK (512 B), CATCH (12 × 16 B),
-                  CTAB (2 KB), CHUNK_INFO (128 × 4 B), the copy windows (4 × 256 B)
+                  CTAB (2 KB), CHUNK_INFO (128 × 4 B), the window table (64 × 6 B)
   $C000  never used: slot I/O, the card at $C0nX, then language-card RAM/ROM
 
 bank 1  NURSERY   $010000-$01FFFF   64 KB, bump-allocated
@@ -32,6 +32,7 @@ bank 2  STAGE     $020000-$02FFFF   the collector's to-space
 bank 3  the .nbc image               $030000, up to 64 KB (a2min --run-nbc puts it there)
 bank 4+ further code segments        ORCA/C `segment "prims";` etc., placed by omf2bin;
                                      the interpreter core stays in bank 0
+bank 5  WINDOWS   $050000-$05EFFF   the 60 KB copy ring: views of mature objects
 ```
 
 Bank 0's 40 KB were never going to hold the parser and the store layers, so
@@ -77,12 +78,35 @@ register, so keep pointers on RSTACK across a force) becomes a type rule: a C
 local of type `obj_t *` **must not be held across a call that can collect**;
 `rpush()`/`rpop()` are the only way to keep one, and the collector rewrites them.
 
+## Mature objects (slice 4)
+
+A promoted object lives on the card and is reached in three ways (HEAP.md "The VM
+and the two spaces" has the rules; this is where they land in the C):
+
+- **Reading:** `deref()` copies it into the window ring in bank 5 and returns the
+  copy — a *view*. Views are for reading; the code keeps the pointer it
+  dereferenced for anything it stores (`force_pop_view` hands out both), and
+  re-derefs inside long loops, since the ring turns over.
+- **Writing:** `store_field()` / `store_byte()` are the write barrier: a store
+  into a mature object promotes the value first (a collection with the value on
+  the stack as its root) and goes through the bus; the window copy is dropped.
+  Forcing a mature thunk blackholes it on the card and writes the update there.
+- **Searching:** `find_attr()` on a mature set is the card's `LOOKUP` verb, the
+  name compare, and a CPU scan of the copy if a hash collision misled the CAM.
+
+The collector promotes at every collection: the staging area's pointer fields are
+translated in place by `card = base + (offset − start)`, the whole area crosses
+the bus as one `DATA` burst into a `RESERVE`d block, and the roots — the value
+stack, `env`, the root stack, the force stack, the catch frames' environments and
+the constant tables — are rewritten to card addresses. Without a card the
+survivors are moved back into the nursery instead.
+
 ## What stays assembly
 
 `asm { }` blocks, in the C source, for exactly three things:
 
-1. **The card's ports** — 8-bit stores to `$C0nX` with `sep #$20`, as `card.s`
-   does; a 16-bit C store would write the next register too.
+1. **The card's ports** — 8-bit stores to `$C0nX` with `sep #$20`; a 16-bit C
+   store would write the next register too.
 2. **`memcpy`-shaped loops the collector runs** — `mvn` for the copy-back and the
    staging copy; C would loop a byte at a time.
 3. **The dispatch loop's opcode fetch**, if measurement says the C version is
@@ -161,6 +185,36 @@ the fixtures found one bug (see `main.c`: the load file's entry point is the
 first function of the first object, and `err_exit` was first). Then 39/39
 fixtures, 39/39 with a collection at every bytecode boundary, and **247/405 on
 the corpus** against the assembly's 246: the 64 KB nursery lets
-`eval-okay-ind-string` finish. Next: slice 4's promotion — the step
-that was in progress when the language changed, with `target/vm/promote.s` and
-`card.s` as its reference — and then the 2.5× measured above.
+`eval-okay-ind-string` finish. (Slice 4 then added a fixture of its own: 248/406.)
+
+**Slice 4 (2026-09-22): promotion to the card.** The collector's step C, the
+write barrier, mature reads through the window ring and `LOOKUP` on mature sets,
+all in C (`gc.c`, `data.c`, `card.c`), translated from the `promote.s` and
+`card.s` that slice 3 left behind. Measured with a collection — now a
+promotion — at every bytecode boundary, which puts every object of a program
+on the card within one instruction of its creation:
+
+| Fixture | normal: instructions / cycles / bus accesses | every boundary promotes |
+|---|---|---|
+| `eval-okay-lists` | 13,515 / 54,160 / 1 | 117,954 / 523,849 / 1,116 |
+| `eval-okay-attrs` | 49,439 / 199,670 / 1 | 400,465 / 1,784,888 / 3,181 |
+| `eval-okay-with` | 33,841 / 136,879 / 32 | 330,525 / 1,477,802 / 2,617 |
+| `eval-okay-tryeval` | 45,171 / 185,945 / 1 | 430,425 / 1,928,836 / 3,512 |
+
+Slice 4 cost 4,268 bytes of code (38,478 → 42,746: 30,058 in bank 0, 12,688
+of primops in bank 4) — the barrier, the translation pass, the three new
+verbs and the window ring bookkeeping (the ring itself is bank 5). Bank 0 now
+ends at $956A, so about 10 KB of it are left before the next thing has to become
+its own segment.
+
+The CAM's one correctness hazard has a fixture of its own:
+`eval-okay-hash-collision` uses two attribute names with the same djb2 hash
+(`getxolul`, `wswmfewd`), so `LOOKUP` matches both and returns the lower index —
+the wrong attribute, since names sort `getxolul` first. Getting 2 rather than 1
+out of it is proof the CPU-scan fallback ran. It only reaches that path once the
+set is mature, so the fixture earns its keep under `--run-nbc-gc-stress`.
+
+Every fixture answers correctly either way. In the normal runs the 64 KB nursery
+never fills on a fixture, so the bus sees only the card probe and the multiply
+verb; the corpus's larger tests are where promotion happens by itself. Next: the
+2.5× measured above.

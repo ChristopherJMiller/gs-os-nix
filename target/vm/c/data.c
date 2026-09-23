@@ -56,13 +56,86 @@ obj_t *attrs_alloc(uint16_t n)
     return o;
 }
 
+/* --- mature objects: the copy windows ----------------------------------------------- */
+/* A mature object is read by copying it through the bus into bank 5, which is
+ * used as a ring: copies are laid down one after another and forgotten
+ * wholesale when the ring turns over, so a view stays valid until ~60 KB of
+ * other mature objects have been copied. A direct-mapped table of recent copies
+ * makes the second deref of the same object free -- environments and closure
+ * bodies are read again and again. Copying the WHOLE object, rather than a fixed
+ * 256-byte window over it, is what keeps every accessor written for young
+ * objects valid on the copy -- including the three columns of a large set. */
+#define WIN_PTR(off) ((obj_t *)(YOUNG_TAG | WINDOW_BASE | (uint32_t)(uint16_t)(off)))
+#define NWIN 64
+static struct { obj_t *card; uint16_t off; } wins[NWIN];
+static uint16_t ring;
+
+static uint16_t win_slot(obj_t *p)
+{
+    uint32_t a = PBITS(p);
+    return (uint16_t)((a >> 2) ^ (a >> 8)) & (NWIN - 1);
+}
+
+void windows_invalidate(obj_t *p)
+{
+    uint16_t h = win_slot(p);
+    if (wins[h].card == p) wins[h].card = 0;
+}
+
+static obj_t *mature_view(obj_t *p)
+{
+    uint16_t h = win_slot(p), size;
+    obj_t hdr, *w;
+    if (wins[h].card == p) return WIN_PTR(wins[h].off);
+    card_read_at(PBITS(p), &hdr, 4);
+    size = obj_size(&hdr);
+    if (size > WINDOW_RING / 2) nomem();       /* two views must be able to coexist:
+                                                   equality compares two objects */
+    if ((uint16_t)(ring + size) > WINDOW_RING || (uint16_t)(ring + size) < ring) {
+        memset(wins, 0, sizeof wins);           /* the ring turns over */
+        ring = 0;
+    }
+    w = WIN_PTR(ring);
+    card_read_at(PBITS(p), w, size);
+    wins[h].card = p;
+    wins[h].off = ring;
+    ring += round4(size);
+    return w;
+}
+
 /* --- pointers and stacks ---------------------------------------------------------------- */
-/* Slice 1 handles young and static pointers only; a mature pointer or a null
- * is an error, never a guess. */
 obj_t *deref(obj_t *p)
 {
-    if (p == 0 || !IS_RAM(p)) badnbc();
-    return p;
+    if (p == 0) badnbc();
+    if (IS_RAM(p)) return p;
+    return mature_view(p);
+}
+
+/* The write barrier: a store into a mature object promotes the value first --
+ * a collection, with the value on the stack as a root -- and goes through the
+ * bus. Into a young object it is a plain store. `c` is the object, not a view. */
+void store_field(obj_t *c, uint16_t off, obj_t *v)
+{
+    if (IS_RAM(c)) { *(obj_t **)((uint8_t *)c + off) = v; return; }
+    if (IS_YOUNG(v)) { push(v); gc_collect(); v = pop(); }
+    card_write_at(PBITS(c) + off, &v, 4);
+    windows_invalidate(c);
+}
+
+void store_byte(obj_t *c, uint16_t off, uint8_t b)
+{
+    if (IS_RAM(c)) { ((uint8_t *)c)[off] = b; return; }
+    card_write_at(PBITS(c) + off, &b, 1);
+    windows_invalidate(c);
+}
+
+obj_t *force_pop_view(obj_t **view)
+{
+    obj_t *o;
+    force_top();
+    o = pop();
+    *view = deref(o);
+    return o;
 }
 
 obj_t *deref_follow(obj_t *p)
@@ -126,25 +199,40 @@ obj_t *str_concat(obj_t *a, obj_t *b)
 }
 
 /* --- attribute sets ----------------------------------------------------------------------- */
-/* Entry i of an ATTRS of n entries: hash, name, value. */
+/* Entry i of a fresh ATTRS of n entries: hash, name, value (originals). */
 void attrs_put(obj_t *set, uint16_t n, uint16_t i, obj_t *name, obj_t *value)
 {
-    HASHES(set)[i] = hash_str(name);
+    HASHES(set)[i] = hash_str(deref(name));
     ANAMES(set, n)[i] = name;
     AVALUES(set, n)[i] = value;
 }
 
-/* A linear scan of the hash column, then the name compare (HEAP.md: young
- * sets are searched by the CPU; LOOKUP serves promoted ones). */
+/* A linear scan of the hash column, then the name compare. */
+static int scan_attr(obj_t *sv, obj_t *nv, uint32_t h, uint16_t *ix)
+{
+    uint16_t n = AUX16(sv), i;
+    for (i = 0; i < n; ++i)
+        if (HASHES(sv)[i] == h && str_eq(deref(ANAMES(sv, n)[i]), nv)) { *ix = i; return 1; }
+    return 0;
+}
+
+/* `set` is the ORIGINAL pointer, `name` a view or an original. A young set is
+ * searched by the CPU (HEAP.md); a mature one by the card's LOOKUP, the 32-lane
+ * CAM, which returns a candidate index the name compare confirms. A hash
+ * collision on a different name falls back to the scan, so a collision can
+ * never lose an attribute. */
 int find_attr(obj_t *set, obj_t *name, uint16_t *ix)
 {
-    uint32_t h = hash_str(name);
-    uint16_t n = AUX16(set), i;
-    uint32_t *hashes = HASHES(set);
-    obj_t **names = ANAMES(set, n);
-    for (i = 0; i < n; ++i)
-        if (hashes[i] == h && str_eq(deref(names[i]), name)) { *ix = i; return 1; }
-    return 0;
+    obj_t *nv = deref(name), *sv;
+    uint32_t h = hash_str(nv), vaddr;
+    if (IS_MATURE(set)) {
+        uint16_t cand;
+        if (!card_lookup(PBITS(set), h, &cand, &vaddr)) return 0;
+        sv = deref(set);
+        if (cand < AUX16(sv) && str_eq(deref(ANAMES(sv, AUX16(sv))[cand]), nv)) { *ix = cand; return 1; }
+        return scan_attr(sv, nv, h, ix);
+    }
+    return scan_attr(deref(set), nv, h, ix);
 }
 
 /* --- ordering ------------------------------------------------------------------------------ */
@@ -185,13 +273,13 @@ static int cmp_lists(obj_t *a, obj_t *b)
  * bytes, or LISTs. */
 int cmp_values(void)
 {
-    obj_t *a, *b;
-    force_two(&a, &b);
+    obj_t *a, *b, *ao, *bo;
+    force_two_orig(&a, &b, &ao, &bo);
     if (a->tag != b->tag) type_err();
     switch (a->tag) {
     case T_INT:    return cmp64(a, b);
     case T_STRING: return str_cmp(a, b);
-    case T_LIST:   return cmp_lists(a, b);
+    case T_LIST:   return cmp_lists(ao, bo);
     default:       type_err(); return 1;
     }
 }
@@ -204,23 +292,24 @@ int values_equal(obj_t *a, obj_t *b)
 {
     uint16_t base = rsp, i, n;
     int r;
+    obj_t *av, *bv;
     rpush(a);                       /* a is a root while b is forced */
     push(b); force_top(); b = pop();
     rpush(b);                       /* b is a root while a is forced */
     push(rstack[base]); force_top(); a = pop();
     b = rstack[base + 1];
     rsp = base;
-    a = deref(a); b = deref(b);
-    if (a == b) return 1;
-    if (a->tag != b->tag) return 0;
-    switch (a->tag) {
-    case T_INT:    return INTVAL(a) == INTVAL(b);
-    case T_BOOL:   return BOOLVAL(a) == BOOLVAL(b);
+    if (a == b) return 1;           /* the same object (originals, not views) */
+    av = deref(a); bv = deref(b);
+    if (av->tag != bv->tag) return 0;
+    switch (av->tag) {
+    case T_INT:    return INTVAL(av) == INTVAL(bv);
+    case T_BOOL:   return BOOLVAL(av) == BOOLVAL(bv);
     case T_NULL:   return 1;
-    case T_STRING: return str_eq(a, b);
+    case T_STRING: return str_eq(av, bv);
     case T_LIST:
-        n = AUX16(a);
-        if (AUX16(b) != n) return 0;
+        n = AUX16(av);
+        if (AUX16(bv) != n) return 0;
         rpush(a); rpush(b);
         r = 1;
         for (i = 0; i < n; ++i)
@@ -228,8 +317,8 @@ int values_equal(obj_t *a, obj_t *b)
         rsp = base;
         return r;
     case T_ATTRS:
-        n = AUX16(a);
-        if (AUX16(b) != n) return 0;
+        n = AUX16(av);
+        if (AUX16(bv) != n) return 0;
         rpush(a); rpush(b);
         r = 1;
         for (i = 0; i < n; ++i) {
@@ -257,7 +346,7 @@ void deep_force_top(void)
     o = deref(peek());
     if (o->tag != T_LIST && o->tag != T_ATTRS) return;
     if (o->aux2 & AUX_MARK) return;             /* a cycle */
-    o->aux2 |= AUX_MARK;
+    store_byte(peek(), 3, (uint8_t)(o->aux2 | AUX_MARK));   /* on the card too, if mature */
     n = AUX16(o);
     rpush(peek());
     for (i = 0; i < n; ++i) {
@@ -267,6 +356,6 @@ void deep_force_top(void)
         pop();
     }
     o = deref(rstack[base]);
-    o->aux2 &= (uint8_t)~AUX_MARK;
+    store_byte(rstack[base], 3, (uint8_t)(o->aux2 & ~AUX_MARK));
     rsp = base;
 }

@@ -117,8 +117,12 @@ length compare equal by whole words.
 **Bit 7 of `aux2` (bit 23 of `aux`) is a transient visit mark.** The VM's deep
 force sets it on a `LIST` or `ATTRS` while descending into it and clears it on the
 way out, so a cyclic structure (`let as = { y = as; }`) terminates as Nix's
-`deepSeq` does. No real count reaches bit 23, nothing on the card runs while the
-CPU deep-forces, and no object is ever handed to the card with the mark set.
+`deepSeq` does. No real count reaches bit 23, and nothing on the card runs while
+the CPU deep-forces. A collection during the descent promotes the marked
+container with its mark set, and the way out clears it through the write
+barrier, so the card can hold a marked object — harmless while nothing
+card-side reads `aux2`, and one more reason the card-side tracer of slice 5 must
+mask it (see the discrepancy note below).
 
 ## Alignment and minimum size
 
@@ -142,12 +146,13 @@ promotion rather than an in-RAM semispace first.
 **Where values live.** Every allocation the VM makes is in the **nursery** —
 bank 1, 64 KB ([VM.md](VM.md)), where a young pointer is `$8001xxxx` and
 dereferences directly because the hardware ignores bit 31 — bump-allocated
-(`nfree`). Constants materialised from the `.nbc` image sit
-at the bottom of the nursery below a watermark and are never moved or scanned (they
-hold no pointers). The VM's own static objects (`true`, `false`, `null`, the type
-names) are in its binary and are recognised by address. Everything that survives a
-collection becomes **mature**: it is copied to the card and its pointer loses bit
-31.
+(`nfree`). Constants materialised from the `.nbc` image are roots like any other
+(the constant tables), so the first collection promotes them and later ones ignore
+them: nothing is pinned in the nursery, which is what lets the invariant below
+hold without exception. The VM's own static objects (`true`, `false`, `null`, the
+type names) are in its binary, in bank 0, and are neither young nor mature.
+Everything that survives a collection becomes **mature**: it is copied to the card
+and its pointer loses bit 31.
 
 **When a collection happens.** Only between two bytecode instructions: `run`
 checks `nfree` against a margin before every dispatch. At that point no zero-page
@@ -175,28 +180,39 @@ mature address and the nursery is empty again. Survivors cross the bus once, at
 about one access per byte; garbage never touches it.
 
 **Reading a mature object.** Bit 31 clear means "on the card". `deref` copies the
-object — header and up to 252 bytes of payload — through the card's address
-window into one of four **copy windows** (an LRU keyed by card address; four
-256-byte arrays in the VM's data), and
-returns the window's address, so every accessor written for young objects works
-unchanged on the copy. Fields past the window
-(long strings, big lists and sets) are read individually through the address port.
-A copy costs `1 + 4 + size` bus accesses; a hit costs nothing, which is what makes
-the four windows worth their 1 KB.
+whole object through the card's address register and `DATA` port into a **window**
+and returns the window's address, so every accessor written for young objects
+works unchanged on the copy — including the three columns of a large set. The
+windows are a 60 KB ring in bank 5 (`target/vm/c/data.c`): copies are laid down
+one after another and forgotten wholesale when the ring turns over, so a view
+stays valid until that much other mature data has been copied, and a
+direct-mapped table of the 64 most recent copies makes a repeated `deref` of the
+same object — an environment read at every variable, a closure body — free. A
+copy costs `4 + 4 + size` bus accesses (set `A0`, read the header, read the
+object). A view is never stored: the VM keeps the pointer it dereferenced, and
+stores that. An object larger than half the ring (30 KB) cannot be viewed at
+all and raises `E_NOMEM`: equality has to hold two views at once, so half the
+ring is the cap on a single mature string or list. Nothing in the
+corpus reaches it; raising it means a larger bank-5 ring.
 
-**Attribute lookup on a mature set** does not copy the set: it hands the search
-hash, the hash column's card address and the count to the **`LOOKUP` verb** (the
-32-lane CAM), copies only the candidate's name to confirm it, and reads the value
-pointer. This is the operation the CAM was built for, and slice 4 is where it gets
-measured on real programs instead of micro-benchmarks. Young sets are still a CPU
-hash scan.
+**Attribute lookup on a mature set** hands the set's card address and the search
+hash to the **`LOOKUP` verb** (the 32-lane CAM), which returns a candidate index;
+the VM confirms the candidate's name and, if a hash collision put a different name
+there, falls back to the CPU scan of the copy so a collision can never lose an
+attribute. This is the operation the CAM was built for. Young sets are a CPU hash
+scan.
 
 **Write barrier** (D6's rule, "a mature object never points into the nursery"): the
-two places the VM writes into an existing object are `ENV_SET` (a binding into its
+places the VM writes into an existing object are `ENV_SET` (a binding into its
 `let`'s environment, which may have been promoted while an earlier initialiser
-allocated) and the in-place update after forcing a thunk. When the target is
-mature, the value being stored is promoted first — a collection with a single root
-— and the store goes to the card through the address port.
+allocated), the in-place update after forcing a thunk (and the blackholing before),
+and the visit mark of a deep force. When the target is mature, the value being
+stored is promoted first — a collection, with the value on the stack as its root —
+and the store goes to the card through the address register. The primop loops that
+call back into Nix (`filter`, `partition`, `concatMap`, `listToAttrs`, `toString`
+on a list) would be a fourth place, because the container they fill could be
+promoted by a callback mid-loop; they collect their results on the value stack
+instead and build the container afterwards, when nothing runs bytecode any more.
 
 **A discrepancy this exposes, to resolve before the card's own collector runs:**
 the trace table below says `THUNK`/`LAMBDA` word 0 (the code pointer) is a heap

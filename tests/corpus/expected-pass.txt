@@ -13,6 +13,7 @@ fixtures/eval-okay-div-truncates
 fixtures/eval-okay-formals
 fixtures/eval-okay-function-equality
 fixtures/eval-okay-functor
+fixtures/eval-okay-hash-collision
 fixtures/eval-okay-inherit-and-escapes
 fixtures/eval-okay-int-min-wrap
 fixtures/eval-okay-int-min-wraps-down

@@ -2,9 +2,8 @@
  * memory model: code and these globals share bank 0; the nursery is bank 1,
  * the collector's staging bank 2, the .nbc image bank 3.
  *
- * Object layouts are HEAP.md's; the bytecode is BYTECODE.md's; the assembly
- * VM (target/vm/*.s) is the reference this was translated from, routine for
- * routine, so the two can be read side by side while both exist.
+ * Object layouts are HEAP.md's; the bytecode is BYTECODE.md's; it was
+ * translated routine for routine from the assembly VM (git: commit 05ce616).
  *
  * The one rule that matters: anything that runs bytecode -- run(), force_*,
  * do_call(), values_equal(), deep_force_top() -- may collect, and a collection
@@ -36,6 +35,8 @@
 #define IMAGE_BASE       0x00030000UL
 #define IMAGE_MAX        0xFFF0UL   /* the image must fit below APPLY_CODE */
 #define APPLY_CODE_OFF   0xFFF0U    /* main.c copies apply_code[] there at start */
+#define WINDOW_BASE      0x00050000UL   /* bank 5: copies of mature objects (data.c) */
+#define WINDOW_RING      0xF000U    /* the ring of copies; an object larger than half of it is E_NOMEM */
 
 #define GC_MARGIN        0x0800U    /* collect when less than this is free */
 
@@ -66,6 +67,8 @@ typedef struct obj {
 #define IS_YOUNG(p)  ((uint16_t)(PBITS(p) >> 16) == 0x8001U)   /* in the nursery */
 #define IS_STATIC(p) ((uint16_t)(PBITS(p) >> 16) == 0x8000U)   /* in this program */
 #define IS_RAM(p)    ((PBITS(p) & YOUNG_TAG) != 0)               /* dereferenceable */
+#define IS_MATURE(p) ((p) != 0 && !IS_RAM(p))                     /* on the card */
+#define IS_WINDOW(p) ((uint16_t)(PBITS(p) >> 16) == 0x8005U)   /* a copy of a mature object */
 #define LOW16(p)     ((uint16_t)PBITS(p))
 #define YOUNG_PTR(off) ((obj_t *)(YOUNG_TAG | NURSERY_BASE | (uint32_t)(uint16_t)(off)))
 #define STATIC_PTR(o)  ((obj_t *)(YOUNG_TAG | (uint32_t)(o)))
@@ -124,7 +127,7 @@ extern const uint8_t *pc;
 extern obj_t **ctab;
 extern obj_t *env;                  /* the current environment LIST, or 0 */
 extern uint16_t nfree;              /* nursery bump pointer (offset in bank 1) */
-extern uint16_t gc_water;           /* objects below this are pinned constants */
+extern uint16_t gc_water;           /* where the nursery starts (constants are promoted like anything else) */
 extern uint16_t slot_x;             /* the card's slot * $10, or 0 */
 
 extern obj_t *obj_true, *obj_false, *obj_null;   /* the shared singletons */
@@ -151,7 +154,22 @@ obj_t *attrs_alloc(uint16_t n);
 obj_t *deref_follow(obj_t *p);      /* checks, and follows INDIRECTs */
 obj_t *deref_pop(void);             /* deref(pop()) */
 obj_t *deref_rpop(void);            /* deref(rpop()) */
+/* deref: a pointer -> the address its object can be read at. Young and static
+ * objects are where they are; a mature object is copied through the bus into a
+ * window (data.c) and the window's address is returned. A window is a VIEW: it
+ * must never be stored -- not pushed, not put in a field -- and it is valid only
+ * until the ring has turned over, so re-deref inside long loops. Store the
+ * pointer you dereferenced, never its view. */
 obj_t *deref(obj_t *p);             /* checks the pointer; E_BADNBC otherwise */
+void   windows_invalidate(obj_t *p); /* after a write to the mature object p */
+uint16_t obj_size(const obj_t *hdr);    /* from a header (gc.c) */
+/* The write barrier (HEAP.md): a mature object never points into the nursery.
+ * Stores into a mature object go through these, which promote the value first
+ * (a collection) and write through the bus. */
+void   store_field(obj_t *container, uint16_t off, obj_t *value);
+void   store_byte(obj_t *container, uint16_t off, uint8_t v);
+/* Forcing and popping: the ORIGINAL pointer (to store) and its view (to read). */
+obj_t *force_pop_view(obj_t **view);        /* returns the original; *view = deref(original) */
 /* The hot helpers are macros: ORCA/C does not inline, and a call costs more
  * than the work. Arguments are evaluated more than once -- pass lvalues.
  * (deref stays a function: as a macro at ~200 sites it cost 12 KB of code
@@ -167,7 +185,7 @@ uint32_t hash_str(obj_t *s);        /* djb2 */
 int    str_eq(obj_t *a, obj_t *b);  /* 1 if equal */
 int    str_cmp(obj_t *a, obj_t *b); /* 0 less, 1 equal, 2 greater */
 obj_t *str_concat(obj_t *a, obj_t *b);
-int    find_attr(obj_t *set, obj_t *name, uint16_t *ix);
+int    find_attr(obj_t *set, obj_t *name, uint16_t *ix);   /* set: the ORIGINAL pointer (LOOKUP if mature) */
 void   attrs_put(obj_t *set, uint16_t n, uint16_t i, obj_t *name, obj_t *value);
 int    values_equal(obj_t *a, obj_t *b);   /* runs bytecode; 1 if equal */
 int    cmp_values(void);                   /* pops two; 0 less, 1 equal, 2 greater */
@@ -177,7 +195,8 @@ void   deep_force_top(void);
 void run(void);
 void force_top(void);
 void force_slot(uint16_t k);        /* k = 1 is the top */
-void force_two(obj_t **a, obj_t **b);
+void force_two(obj_t **a, obj_t **b);            /* views */
+void force_two_orig(obj_t **a, obj_t **b, obj_t **ao, obj_t **bo);   /* views and originals */
 void do_call(void);                 /* f x on the stack -> the value */
 void call_enter(void);
 obj_t *make_apply(obj_t *f, obj_t *x);
@@ -191,6 +210,10 @@ void gc_collect(void);
 /* --- card.c: the a2nix card -------------------------------------------------------- */
 void card_find(void);
 int  card_alu64(uint8_t op, const uint8_t *a, const uint8_t *b, uint8_t *r);
+void card_read_at(uint32_t addr, void *dst, uint16_t n);
+void card_write_at(uint32_t addr, const void *src, uint16_t n);
+uint32_t card_reserve(uint16_t n);
+int  card_lookup(uint32_t set, uint32_t h, uint16_t *ix, uint32_t *value);
 #define A_MUL 0x02
 #define A_DIV 0x03
 

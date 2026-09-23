@@ -56,13 +56,12 @@ void vm_entry(void)
     str_value   = STATIC_PTR(&value_s);
     vsp = rsp = fstack_n = catch_n = 0;
     env = 0;
-    nfree = 0x0010;                             /* offset 0 stays unallocated */
+    gc_water = nfree = 0x0010;                  /* offset 0 stays unallocated */
     prims_init();
     card_find();
     memcpy((void *)(IMAGE_BASE + APPLY_CODE_OFF), apply_code, sizeof apply_code);
     if (setjmp(top_jb) == 0) {
-        load();
-        gc_water = nfree;                       /* everything the loader made is pinned */
+        load();                                 /* its constants are roots, promoted like anything */
         run();                                  /* the entry chunk; RETURN brings us back */
         deep_force_top();
         *(obj_t **)RESULT_ADDR = pop();
@@ -87,7 +86,7 @@ void err_exit(uint8_t code)
         pc = c->pc;
         ctab = c->ctab;
         rsp = c->rsp;
-        while (fstack_n > c->fstack_n) { obj_t *t = fstack[--fstack_n]; deref(t)->tag = T_THUNK; }
+        while (fstack_n > c->fstack_n) { obj_t *t = fstack[--fstack_n]; store_byte(t, 0, T_THUNK); }
         longjmp(c->jb, 1);
     }
     *(volatile uint8_t *)RESULT_ERR_ADDR = code;
