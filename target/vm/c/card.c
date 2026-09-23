@@ -25,6 +25,7 @@
 #define REG_LEN   8
 
 #define CARD_ID   0xA2
+#define V_MEMCMP  0x22
 #define V_RESERVE 0x25
 #define V_LOOKUP  0x30
 #define V_ALU64   0x50
@@ -86,6 +87,18 @@ static void card_wait(void)
 static void set_a0(uint32_t a)
 {
     cw8(REG_ASEL, 0);
+    cw8(REG_APORT, a & 0xFF);
+    cw8(REG_APORT, (a >> 8) & 0xFF);
+    cw8(REG_APORT, (a >> 16) & 0xFF);
+    cw8(REG_APORT, (a >> 24) & 0xFF);
+}
+
+/* A1 <- a card address. Selecting a register rewinds the port index, so this
+ * is symmetric with set_a0. NB: LOOKUP returns its value pointer in A1, so read
+ * that before using A1 as a MEMCMP operand. */
+static void set_a1(uint32_t a)
+{
+    cw8(REG_ASEL, 1);
     cw8(REG_APORT, a & 0xFF);
     cw8(REG_APORT, (a >> 8) & 0xFF);
     cw8(REG_APORT, (a >> 16) & 0xFF);
@@ -186,6 +199,31 @@ int card_lookup(uint32_t set, uint32_t h, uint16_t *ix, uint32_t *value)
     *ix = cr8(REG_PPORT);
     *ix |= cr8(REG_PPORT) << 8;
     return 1;
+}
+
+/* MEMCMP: n bytes at card address a against n at b. -1, 0 or 1, like strcmp;
+ * 2 if the card refused (an unaligned operand), which callers read as "not
+ * equal" and is why the addresses passed here are always object payloads.
+ * One command replaces a byte-at-a-time compare over the bus, and it is what
+ * lets find_attr confirm a LOOKUP candidate without copying the set back. */
+int card_memcmp(uint32_t a, uint32_t b, uint16_t n)
+{
+    uint16_t st;
+    set_a0(a);
+    set_a1(b);
+    cw8(REG_CTRL, 0x08);                        /* rewind the port indices */
+    cw8(REG_LEN, n & 0xFF);
+    cw8(REG_LEN, n >> 8);
+    cw8(REG_LEN, 0);
+    cw8(REG_LEN, 0);
+    cw8(REG_CMD, V_MEMCMP);
+    do st = cr8(REG_CMD); while (!(st & (ST_DONE | ST_ERR)));
+    if (st & ST_ERR) {
+        cw8(REG_CTRL, 0x01);
+        return 2;
+    }
+    cw8(REG_PSEL, 0);
+    return (int8_t)cr8(REG_PPORT);
 }
 
 /* ALU64: P0 <- a, P1 <- b, P2 <- op, CMD <- ALU64, poll, P3 -> r.

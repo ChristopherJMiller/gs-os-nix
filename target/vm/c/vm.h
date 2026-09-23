@@ -208,7 +208,11 @@ uint32_t hash_str(obj_t *s);        /* djb2 */
 int    str_eq(obj_t *a, obj_t *b);  /* 1 if equal */
 int    str_cmp(obj_t *a, obj_t *b); /* 0 less, 1 equal, 2 greater */
 obj_t *str_concat(obj_t *a, obj_t *b);
-int    find_attr(obj_t *set, obj_t *name, uint16_t *ix);   /* set: the ORIGINAL pointer (LOOKUP if mature) */
+/* set is the ORIGINAL pointer, never a view. On a hit the VALUE comes back too,
+ * so no caller has to deref the set to read it -- which is what keeps a mature
+ * lookup independent of the set's size (docs/CARD-ISA.md, MEMCMP). */
+int    find_attr(obj_t *set, obj_t *name, uint16_t *ix, obj_t **val);
+int    has_attr(obj_t *set, obj_t *name);   /* when only the answer is wanted */
 void   attrs_put(obj_t *set, uint16_t n, uint16_t i, obj_t *name, obj_t *value);
 int    values_equal(obj_t *a, obj_t *b);   /* runs bytecode; 1 if equal */
 int    cmp_values(void);                   /* pops two; 0 less, 1 equal, 2 greater */
@@ -237,6 +241,7 @@ void card_read_at(uint32_t addr, void *dst, uint16_t n);
 void card_write_at(uint32_t addr, const void *src, uint16_t n);
 uint32_t card_reserve(uint16_t n);
 int  card_lookup(uint32_t set, uint32_t h, uint16_t *ix, uint32_t *value);
+int  card_memcmp(uint32_t a, uint32_t b, uint16_t n);   /* -1/0/1, or 2 if refused */
 #define A_MUL 0x02
 #define A_DIV 0x03
 

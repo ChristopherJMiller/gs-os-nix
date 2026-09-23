@@ -309,36 +309,34 @@ static void force_name_then_set(obj_t **name, obj_t **set)
 static void prim_hasattr(void)
 {
     obj_t *name, *set;
-    uint16_t ix;
     force_name_then_set(&name, &set);
-    push_bool(find_attr(set, name, &ix));
+    push_bool(has_attr(set, name));
 }
 
 static void prim_getattr(void)
 {
-    obj_t *name, *set, *sv;
+    obj_t *name, *set, *v;
     uint16_t ix;
     force_name_then_set(&name, &set);
-    if (!find_attr(set, name, &ix)) err_exit(E_NOATTR);
-    sv = deref(set);
-    push(AVALUES(sv, AUX16(sv))[ix]);
+    if (!find_attr(set, name, &ix, &v)) err_exit(E_NOATTR);
+    push(v);
 }
 
 static void prim_intersectattrs(void)           /* names of a that are in b, with b's values */
 {
-    obj_t *a, *b, *ao, *bo, *r;
+    obj_t *a, *b, *ao, *bo, *r, *v;
     uint16_t na, nb, i, j, k = 0;
     force_two_orig(&a, &b, &ao, &bo);
     need(a, T_ATTRS); need(b, T_ATTRS);
     na = AUX16(a); nb = AUX16(b);
     for (i = 0; i < na; ++i) {
         a = deref(ao);
-        if (find_attr(bo, ANAMES(a, na)[i], &j)) ++k;
+        if (has_attr(bo, ANAMES(a, na)[i])) ++k;
     }
     r = attrs_alloc(k);
     for (i = 0, k = 0; i < na; ++i) {
         a = deref(ao);
-        if (find_attr(bo, ANAMES(a, na)[i], &j)) { b = deref(bo); copy_entry(r, AUX16(r), k, b, nb, j); ++k; }
+        if (find_attr(bo, ANAMES(a, na)[i], &j, &v)) { b = deref(bo); copy_entry(r, AUX16(r), k, b, nb, j); ++k; }
     }
     push(r);
 }
@@ -410,7 +408,7 @@ static void insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, o
 static void prim_listtoattrs(void)              /* [ { name; value; } ... ] */
 {
     uint16_t b = rsp, n, i, cnt = 0, ix, at;
-    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *e, *eo, *nm, *no, *set;
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *e, *eo, *nm, *no, *set, *av;
     n = AUX16(l);
     rpush(lo);
     /* pass 1, running bytecode: (name, value) pairs onto the value stack */
@@ -418,14 +416,12 @@ static void prim_listtoattrs(void)              /* [ { name; value; } ... ] */
         push(RELEM(b, i));
         e = force_pop_as(T_ATTRS, &eo);
         rpush(eo);                              /* b+1: the element */
-        if (!find_attr(eo, str_name, &ix)) err_exit(E_NOATTR);
-        e = deref(eo);
-        push(AVALUES(e, AUX16(e))[ix]);
+        if (!find_attr(eo, str_name, &ix, &av)) err_exit(E_NOATTR);
+        push(av);
         nm = force_pop_as(T_STRING, &no);
         push(no);                               /* the name */
-        if (!find_attr(rstack[b + 1], str_value, &ix)) err_exit(E_NOATTR);
-        e = deref(rstack[b + 1]);
-        push(AVALUES(e, AUX16(e))[ix]);         /* the value, unforced */
+        if (!find_attr(rstack[b + 1], str_value, &ix, &av)) err_exit(E_NOATTR);
+        push(av);                               /* the value, unforced */
         rsp = b + 1;
     }
     rsp = b;

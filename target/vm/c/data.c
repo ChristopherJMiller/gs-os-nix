@@ -224,12 +224,45 @@ void attrs_put(obj_t *set, uint16_t n, uint16_t i, obj_t *name, obj_t *value)
 }
 
 /* A linear scan of the hash column, then the name compare. */
-static int scan_attr(obj_t *sv, obj_t *nv, uint32_t h, uint16_t *ix)
+static int scan_attr(obj_t *sv, obj_t *nv, uint32_t h, uint16_t *ix, obj_t **val)
 {
     uint16_t n = AUX16(sv), i;
     for (i = 0; i < n; ++i)
-        if (HASHES(sv)[i] == h && str_eq(deref(ANAMES(sv, n)[i]), nv)) { *ix = i; return 1; }
+        if (HASHES(sv)[i] == h && str_eq(deref(ANAMES(sv, n)[i]), nv)) {
+            *ix  = i;
+            *val = AVALUES(sv, n)[i];
+            return 1;
+        }
     return 0;
+}
+
+/* Is the STRING at card address `at` the same text as the search name, without
+ * touching the set it came from? Written for the MEMCMP experiment below and
+ * kept because it is the only caller of the verb; find_attr does NOT use it,
+ * for the reason recorded in CARD-ISA.md: the set is already in a window by the
+ * time a lookup happens, so reading fields back across the bus one at a time is
+ * strictly more expensive than the copy it was meant to avoid.
+ *
+ *
+ * The point of doing this here rather than in scan_attr is that it never touches
+ * the SET: a header read for the length, then either the card's MEMCMP (when the
+ * search name is itself mature, which a constant from the .nbc is after the
+ * first collection) or a view of just the candidate name. Either way the cost is
+ * independent of how many attributes the set has -- which is the whole reason
+ * LOOKUP did not pay (docs/CARD-ISA.md). */
+static int card_name_eq(uint32_t at, obj_t *name, obj_t *nv)
+{
+    uint32_t hdr;
+    uint16_t len = AUX16(nv);
+    card_read_at(at, &hdr, 4);
+    if ((uint8_t)hdr != T_STRING) return 0;
+    if ((uint16_t)((hdr >> 8) & 0xFFFFUL) != len) return 0;    /* lengths differ */
+    if (len == 0) return 1;
+    if (IS_MATURE(name))
+        return card_memcmp(at + 4, PBITS(name) + 4, len) == 0;
+    /* A young search name cannot be a MEMCMP operand -- the card cannot read CPU
+     * RAM -- so compare against a view of the candidate name alone. */
+    return str_eq(deref((obj_t *)at), nv);
 }
 
 /* `set` is the ORIGINAL pointer, `name` a view or an original. A young set is
@@ -237,7 +270,15 @@ static int scan_attr(obj_t *sv, obj_t *nv, uint32_t h, uint16_t *ix)
  * CAM, which returns a candidate index the name compare confirms. A hash
  * collision on a different name falls back to the scan, so a collision can
  * never lose an attribute. */
-int find_attr(obj_t *set, obj_t *name, uint16_t *ix)
+/* The set is the ORIGINAL pointer, never a view. On a hit both the index and
+ * the VALUE come back, so callers need not deref the set to read it -- on the
+ * card path nothing copies the set at all.
+ *
+ * Mature: the card's LOOKUP hands back the value pointer and a candidate index,
+ * the candidate's name is confirmed without copying the set (card_name_eq), and
+ * only a hash collision that misled the CAM falls through to a CPU scan of a
+ * copy, so a collision can never lose an attribute. Young: a CPU hash scan. */
+int find_attr(obj_t *set, obj_t *name, uint16_t *ix, obj_t **val)
 {
     obj_t *nv = deref(name), *sv;
     uint32_t h = hash_str(nv), vaddr;
@@ -245,10 +286,22 @@ int find_attr(obj_t *set, obj_t *name, uint16_t *ix)
         uint16_t cand;
         if (!card_lookup(PBITS(set), h, &cand, &vaddr)) return 0;
         sv = deref(set);
-        if (cand < AUX16(sv) && str_eq(deref(ANAMES(sv, AUX16(sv))[cand]), nv)) { *ix = cand; return 1; }
-        return scan_attr(sv, nv, h, ix);
+        if (cand < AUX16(sv) && str_eq(deref(ANAMES(sv, AUX16(sv))[cand]), nv)) {
+            *ix  = cand;
+            *val = (obj_t *)vaddr;      /* LOOKUP already dereferenced it */
+            return 1;
+        }
+        return scan_attr(sv, nv, h, ix, val);
     }
-    return scan_attr(deref(set), nv, h, ix);
+    return scan_attr(deref(set), nv, h, ix, val);
+}
+
+/* For the callers that only want to know whether the attribute is there. */
+int has_attr(obj_t *set, obj_t *name)
+{
+    uint16_t ix;
+    obj_t *val;
+    return find_attr(set, name, &ix, &val);
 }
 
 /* --- ordering ------------------------------------------------------------------------------ */

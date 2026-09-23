@@ -305,11 +305,51 @@ search would have found.
 > gives the verb no room. LOOKUP still has to hand the set back to the CPU so the
 > name can be confirmed against a hash candidate (docs/HEAP.md), which means a
 > whole-object copy the CPU scan would have paid for anyway — so the verb saves
-> the comparisons and keeps the copy. The way to make it pay at the sizes real
-> code uses is to confirm the name **on the card**, with the `MEMCMP` verb that is
-> already in this table and that the VM does not yet call; then a hit costs ~24
-> accesses and no copy at all. Recorded here rather than acted on, because it is a
-> slice-5 change to how mature sets are read (STATUS.md item 5).
+> the comparisons and keeps the copy. The obvious fix is to confirm the name **on
+> the card**, with the `MEMCMP` verb, and never copy the set at all.
+
+> ### That fix was built, measured, and made it worse
+>
+> `MEMCMP` was implemented, tested and wired into `find_attr`: `LOOKUP`'s
+> candidate index, a read of the set's header for the count, a read of the
+> candidate's name pointer, then `MEMCMP` against the search name — no copy of
+> the set. Measured, it **doubled** the verb's cost:
+>
+> | | LOOKUP's cost on the ten fixtures | verb's own bus cost per lookup | crossover |
+> |---|---:|---:|---|
+> | confirm from a copy | −244,812 cycles | +20 accesses | CAM wins at 128 |
+> | confirm with `MEMCMP` | −544,391 cycles | +66 accesses | CAM never wins |
+>
+> Two reasons, and the second is the general one:
+>
+> - **The copy was never avoidable there.** By the time `find_attr` runs, the
+>   caller has already dereferenced the set — `OP_SELECT` and friends need a view
+>   to check the tag is `ATTRS` at all (`force_two_orig`). So the set is in a
+>   window either way, and the window cache makes `find_attr`'s own `deref` of it
+>   a hit. The bus delta is a **constant +66 at every `n`**, which is that copy
+>   cancelling out in both configurations: proof from the measurement itself that
+>   nothing was saved.
+> - **Field-wise access is more expensive than bulk copy.** A 4-byte read costs
+>   4 accesses to set `A0` and 4 to move the data: **2 accesses per byte**. A
+>   `DATA` burst amortises the `A0` setup over the whole object, at ~1 access per
+>   byte. Reading three fields back across the bus therefore costs more than
+>   copying a five-attribute set whole. This is D5 turned on its own head: the
+>   bus wants *fewer, larger* transfers, and "read just the field you need" is
+>   exactly the single-dereference pattern D5 forbids.
+>
+> So the conclusion is stronger than "LOOKUP needs a better confirm step".
+> Because a mature set is copied into a window anyway and the copy is cached, a
+> **CPU-side search of it is very nearly free**, and there is nothing left for
+> the CAM to beat. `LOOKUP`'s fixed ~20 accesses cannot be recovered by any
+> change to how the name is confirmed.
+>
+> That puts two decisions in this document in conflict. D5's gate says a verb
+> that does not pay for its crossing is deleted; D8 names the attribute-set CAM
+> as the one place SIMD earns its gates. Deleting `LOOKUP` also deletes
+> `keycam.v` (~1400 LUT4), so the choice is Chris's, and it is recorded in
+> STATUS.md item 8 rather than taken here. `MEMCMP` itself stays: it is correct,
+> tested, mutation-tested, and a string compare over the bus is still the thing
+> it was designed for — `find_attr` simply is not a caller that benefits.
 
 `ALU64` exists because the 65816 has **no multiply or divide at all** and Nix integers
 are 64-bit. Operands `P0`/`P1` and the result `P3` are 8-byte little-endian integers in

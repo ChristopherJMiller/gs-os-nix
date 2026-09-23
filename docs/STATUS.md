@@ -105,12 +105,12 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
    filled it exactly — and answer wrongly in silence. Now the only failure is a
    loud `E_NOMEM`, and `WINDOW_MAX` caps a single viewable object at 20 KB
    ([HEAP.md](HEAP.md) “How long a view lives”).
-5. **Slice 5: builtins that touch the store, `import`, paths, floats.** Also
-   due here, and now with a measurement behind it: reading a large mature set by
-   COLUMN instead of copying it whole, which is what the struct-of-arrays layout
-   was designed for, what lifts `WINDOW_MAX` (item 4d), and what would make
-   `LOOKUP` pay at the sizes real code uses (item 8) — confirm the matched name
-   with the card's `MEMCMP` rather than copying the set to compare it on the CPU.
+5. **Slice 5: builtins that touch the store, `import`, paths, floats.**
+   **Not** column-wise reads of mature sets: that was tried and measured worse
+   (item 8). A 4-byte card read costs 2 bus accesses per byte against ~1 for a
+   burst, so reading fields back one at a time is dearer than copying the whole
+   object — which means `WINDOW_MAX` (item 4d) has to be lifted by a bigger
+   bank-5 ring, not by reading less.
 6. ~~The parser decision~~ **decided: `rnix`** (D16). The generator now parses all
    of Nix and refuses by feature; `just scoreboard` prints a histogram of the
    refused constructs, so pick the next slice from the top of that list.
@@ -127,9 +127,16 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
    was against a binary search *through the `DATA` port*, and the VM instead
    copies the set into a window once and scans it in RAM, so the CPU path pays
    nothing per comparison. The verb's own cost is a flat 20 bus accesses at any
-   `n`, which is the right hardware shape; what is missing is a way to confirm
-   the matched name without copying the set, i.e. the `MEMCMP` verb the VM does
-   not yet call. **`ALU64` is worth 0.1%** per program though 18x per multiply:
+   `n`, which is the right hardware shape. **The proposed fix was then built and
+   measured, and it made things worse:** confirming the name with the card's new
+   `MEMCMP` doubled the verb's cost (−244,812 → −544,391 cycles) because the set
+   is already in a window before `find_attr` runs — the caller needs a view to
+   check the tag — and because a 4-byte card read costs 2 bus accesses per byte
+   against ~1 for a burst. So a CPU search of the cached copy is nearly free and
+   the CAM has nothing to beat. **Decision needed (Chris):** D5 says a verb that
+   does not pay is deleted; D8 says the attrset CAM is the one place SIMD earns
+   its gates. Deleting `LOOKUP` deletes `keycam.v` too.
+   **`ALU64` is worth 0.1%** per program though 18x per multiply:
    Nix programs barely multiply. It stays because it is a capability, and the VM
    now also has a software 64-bit divide (`run.c alu_cpu`), which is what lets it
    run with no card at all.

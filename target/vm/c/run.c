@@ -143,7 +143,7 @@ void force_two(obj_t **a, obj_t **b)
  * is called through it: `s x` == `(s.__functor s) x`. */
 void call_enter(void)
 {
-    obj_t *f, *fo, *x, *e;
+    obj_t *f, *fo, *x, *e, *fv;
     uint16_t ix;
     for (;;) {
         force_slot(2);                          /* f, forced in place */
@@ -152,10 +152,9 @@ void call_enter(void)
         f = deref(fo);
         if (f->tag == T_LAMBDA) break;
         if (f->tag != T_ATTRS) type_err();
-        if (!find_attr(fo, str_functor, &ix)) type_err();
-        f = deref(fo);
+        if (!find_attr(fo, str_functor, &ix, &fv)) type_err();
         rpush(x);                               /* the argument, a root across the call */
-        push(AVALUES(f, AUX16(f))[ix]);         /* the functor, unforced */
+        push(fv);                               /* the functor, unforced */
         push(fo);                               /* the set, as its own first argument */
         do_call();                              /* g = s.__functor s */
         push(rpop());                           /* then g x */
@@ -225,6 +224,7 @@ static void closure(uint8_t tag)
 static void with_get(int strict)
 {
     uint16_t base = rsp, ix;
+    obj_t *wv;
     obj_t *cur, *set;
     force_top();
     need(deref(peek()), T_STRING);
@@ -241,12 +241,9 @@ static void with_get(int strict)
             so = pop();
             set = deref(so);
             need(set, T_ATTRS);
-            if (find_attr(so, rstack[base], &ix)) {
-                obj_t *v;
-                set = deref(so);
-                v = AVALUES(set, AUX16(set))[ix];
+            if (find_attr(so, rstack[base], &ix, &wv)) {
                 rsp = base;
-                push(v);
+                push(wv);
                 return;
             }
             cur = deref(rstack[base + 1]);
@@ -402,7 +399,7 @@ void op_arith(uint16_t op)
 void run(void)
 {
     uint16_t op, n, i, ix;
-    obj_t *a, *b, *o, *ao, *bo;
+    obj_t *a, *b, *o, *ao, *bo, *sv;
     for (;;) {
         /* the only place a collection can happen (gc_maybe, inlined) */
         if (*(volatile uint8_t *)GC_STRESS_ADDR ? nfree != gc_water : nfree >= NURSERY_END - GC_MARGIN)
@@ -489,14 +486,13 @@ void run(void)
         case OP_SELECT:
             force_two_orig(&a, &b, &ao, &bo);   /* the set, the key */
             need(a, T_ATTRS); need(b, T_STRING);
-            if (!find_attr(ao, bo, &ix)) err_exit(E_NOATTR);
-            a = deref(ao);
-            push(AVALUES(a, AUX16(a))[ix]);
+            if (!find_attr(ao, bo, &ix, &sv)) err_exit(E_NOATTR);
+            push(sv);
             break;
         case OP_TRY_SELECT:                     /* s k -> v | not-found (the null pointer) */
             force_two_orig(&a, &b, &ao, &bo);
             need(b, T_STRING);
-            if (a->tag == T_ATTRS && find_attr(ao, bo, &ix)) { a = deref(ao); push(AVALUES(a, AUX16(a))[ix]); }
+            if (a->tag == T_ATTRS && find_attr(ao, bo, &ix, &sv)) push(sv);
             else push(0);
             break;
         case OP_JMP_IF_NOTFOUND:
@@ -506,7 +502,7 @@ void run(void)
         case OP_HAS_ATTR:
             force_two_orig(&a, &b, &ao, &bo);
             need(b, T_STRING);
-            push_bool(a->tag == T_ATTRS && find_attr(ao, bo, &ix));
+            push_bool(a->tag == T_ATTRS && has_attr(ao, bo));
             break;
         case OP_UPDATE:
             force_two(&a, &b);

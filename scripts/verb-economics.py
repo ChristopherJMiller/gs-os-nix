@@ -34,13 +34,17 @@ import sys
 # name -> (environment overrides, what the row means)
 CONFIGS = [
     ("card, all verbs", {}, "the baseline: LOOKUP and ALU64 on the card"),
-    ("LOOKUP on the CPU", {"A2MIN_VERB_MASK": "1"}, "find_attr scans the copy instead"),
+    ("LOOKUP on the CPU", {"A2MIN_VERB_MASK": "1"},
+     "find_attr copies the set and scans it: no LOOKUP, and no MEMCMP either"),
     ("ALU64 on the CPU", {"A2MIN_VERB_MASK": "2"}, "ORCA/C's own 64-bit mul/div"),
     ("both on the CPU", {"A2MIN_VERB_MASK": "3"}, "the card holds memory, nothing else"),
     ("no card at all", {"A2MIN_NO_CARD": "1"}, "no promotion either: heap stays in RAM"),
 ]
 
-# Which mask bit each verb's row uses, for the per-verb verdict.
+# Which mask bit each verb's row uses, for the per-verb verdict. "LOOKUP" is the
+# whole card path for an attribute lookup -- the CAM plus the MEMCMP that
+# confirms its candidate -- against the CPU copying the set and scanning it,
+# because those are the two implementations that actually exist.
 VERBS = [("LOOKUP", "LOOKUP on the CPU"), ("ALU64", "ALU64 on the CPU")]
 
 STATS = re.compile(r"(\d+) instructions, (\d+) CPU cycles, (\d+) slot accesses")
