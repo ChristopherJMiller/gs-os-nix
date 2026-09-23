@@ -85,19 +85,30 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
    (decided with Chris: straight to D6, no in-RAM detour as a destination).
    (a) ~~precise roots~~ — every frame keeps its objects on a root stack; (b) ~~the
    Cheney collector at bytecode boundaries~~ — `gc.c`, staging in bank 2; `just
-   fixtures-gc` collects at every boundary and all 39 fixtures survive it, and
+   fixtures-gc` collects at every boundary and every fixture survives it, and
    `checks.scoreboard` runs that too; (c) ~~**promotion**~~ (2026-09-22, in C):
    the staging area streamed to the card (`RESERVE` + one `DATA` burst) with every
    pointer field translated, roots rewritten to mature addresses, mature reads
    through a window ring, `LOOKUP` for mature sets with a scan fallback on a hash
    collision (`eval-okay-hash-collision` is two names with one djb2 hash, so it
-   fails if the fallback does), and the write barrier for `ENV_SET`, thunk updates and deep-force
-   marks ([VM.md](VM.md) "Mature objects", [HEAP.md](HEAP.md)). Under GC stress
-   every boundary now promotes, so every object of a program is on the card within
-   one instruction of its creation, and the fixtures still all pass. Measuring the
-   CAM on real programs needs programs that promote by themselves — the corpus's
-   larger tests — and the verb-economics report per fixture (item 8).
-5. **Slice 5: builtins that touch the store, `import`, paths, floats.**
+   fails if the fallback does), and the write barrier for `ENV_SET`, thunk
+   updates and deep-force marks ([VM.md](VM.md) "Mature objects",
+   [HEAP.md](HEAP.md)). Under GC stress every boundary now promotes, so every
+   object of a program is on the card within one instruction of its creation,
+   and the fixtures still all pass. Measuring the CAM on real programs needs
+   programs that promote by themselves — the corpus's larger tests — and the
+   verb-economics report per fixture (item 8).
+   (d) ~~**view lifetime**~~ (2026-09-22): the window ring turns over at a
+   bytecode boundary and nowhere else, because that is the one moment no view is
+   live. The ring it replaced wrapped whenever it filled, which could lay a copy
+   on top of a view its caller was still reading — two 30 KB sets under `==`
+   filled it exactly — and answer wrongly in silence. Now the only failure is a
+   loud `E_NOMEM`, and `WINDOW_MAX` caps a single viewable object at 20 KB
+   ([HEAP.md](HEAP.md) “How long a view lives”).
+5. **Slice 5: builtins that touch the store, `import`, paths, floats.** Also
+   due here: reading a large mature set by COLUMN instead of copying it whole,
+   which is what the struct-of-arrays layout was designed for and what lifts
+   `WINDOW_MAX` (item 4d).
 6. ~~The parser decision~~ **decided: `rnix`** (D16). The generator now parses all
    of Nix and refuses by feature; `just scoreboard` prints a histogram of the
    refused constructs, so pick the next slice from the top of that list.

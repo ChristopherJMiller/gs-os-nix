@@ -377,6 +377,7 @@ void run(void)
         /* the only place a collection can happen (gc_maybe, inlined) */
         if (*(volatile uint8_t *)GC_STRESS_ADDR ? nfree != gc_water : nfree >= NURSERY_END - GC_MARGIN)
             gc_collect();
+        windows_maybe();        /* and the only place the window ring may turn over */
         op = fetch8();
         switch (op) {
         /* --- constants and singletons --- */

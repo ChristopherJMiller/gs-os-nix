@@ -58,17 +58,33 @@ obj_t *attrs_alloc(uint16_t n)
 
 /* --- mature objects: the copy windows ----------------------------------------------- */
 /* A mature object is read by copying it through the bus into bank 5, which is
- * used as a ring: copies are laid down one after another and forgotten
- * wholesale when the ring turns over, so a view stays valid until ~60 KB of
- * other mature objects have been copied. A direct-mapped table of recent copies
- * makes the second deref of the same object free -- environments and closure
- * bodies are read again and again. Copying the WHOLE object, rather than a fixed
- * 256-byte window over it, is what keeps every accessor written for young
- * objects valid on the copy -- including the three columns of a large set. */
+ * used as a ring: copies are laid down one after another and dropped wholesale
+ * when the ring turns over. The turnover happens at a BYTECODE BOUNDARY and
+ * nowhere else, because a boundary is the one moment no view is live (the same
+ * fact the collector relies on); so a view is valid for the whole instruction
+ * that took it, and never longer. Within an instruction the ring only bumps
+ * forward, and running out is E_NOMEM rather than a wrap onto a live view.
+ * A direct-mapped table of recent copies makes the second deref of the same
+ * object free -- environments and closure bodies are read again and again, and
+ * the table survives until the next turnover.
+ *
+ * Copying the WHOLE object, rather than a fixed 256-byte window over it, is
+ * what keeps every accessor written for young objects valid on the copy --
+ * including the three columns of a large set. WINDOW_MAX is the price: an
+ * object too big to view at all is E_NOMEM. */
 #define WIN_PTR(off) ((obj_t *)(YOUNG_TAG | WINDOW_BASE | (uint32_t)(uint16_t)(off)))
 #define NWIN 64
 static struct { obj_t *card; uint16_t off; } wins[NWIN];
-static uint16_t ring;
+uint16_t win_ring;              /* the bump pointer; the dispatch loop reads it */
+
+/* Drop every copy and start the ring again. Only ever called at a bytecode
+ * boundary (windows_maybe in run()), where no view is live -- which is what
+ * makes reusing the bytes safe. */
+void windows_turnover(void)
+{
+    memset(wins, 0, sizeof wins);
+    win_ring = 0;
+}
 
 static uint16_t win_slot(obj_t *p)
 {
@@ -89,17 +105,17 @@ static obj_t *mature_view(obj_t *p)
     if (wins[h].card == p) return WIN_PTR(wins[h].off);
     card_read_at(PBITS(p), &hdr, 4);
     size = obj_size(&hdr);
-    if (size > WINDOW_RING / 2) nomem();       /* two views must be able to coexist:
-                                                   equality compares two objects */
-    if ((uint16_t)(ring + size) > WINDOW_RING || (uint16_t)(ring + size) < ring) {
-        memset(wins, 0, sizeof wins);           /* the ring turns over */
-        ring = 0;
-    }
-    w = WIN_PTR(ring);
+    if (size > WINDOW_MAX) nomem();
+    /* The ring never wraps here: it is turned over at bytecode boundaries only,
+     * which leaves every instruction WINDOW_RING - WINDOW_FLOOR to spend. An
+     * instruction that wants more is E_NOMEM -- loud -- rather than wrapping
+     * onto a view it is still holding, which would answer wrongly in silence. */
+    if ((uint16_t)(win_ring + size) > WINDOW_RING) nomem();
+    w = WIN_PTR(win_ring);
     card_read_at(PBITS(p), w, size);
     wins[h].card = p;
-    wins[h].off = ring;
-    ring += round4(size);
+    wins[h].off = win_ring;
+    win_ring += size;                           /* obj_size is always a multiple of 4 */
     return w;
 }
 
@@ -346,8 +362,8 @@ void deep_force_top(void)
     o = deref(peek());
     if (o->tag != T_LIST && o->tag != T_ATTRS) return;
     if (o->aux2 & AUX_MARK) return;             /* a cycle */
+    n = AUX16(o);                               /* while the view is still fresh */
     store_byte(peek(), 3, (uint8_t)(o->aux2 | AUX_MARK));   /* on the card too, if mature */
-    n = AUX16(o);
     rpush(peek());
     for (i = 0; i < n; ++i) {
         o = deref(rstack[base]);

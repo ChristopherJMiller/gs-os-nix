@@ -184,16 +184,36 @@ whole object through the card's address register and `DATA` port into a **window
 and returns the window's address, so every accessor written for young objects
 works unchanged on the copy — including the three columns of a large set. The
 windows are a 60 KB ring in bank 5 (`target/vm/c/data.c`): copies are laid down
-one after another and forgotten wholesale when the ring turns over, so a view
-stays valid until that much other mature data has been copied, and a
-direct-mapped table of the 64 most recent copies makes a repeated `deref` of the
-same object — an environment read at every variable, a closure body — free. A
-copy costs `4 + 4 + size` bus accesses (set `A0`, read the header, read the
-object). A view is never stored: the VM keeps the pointer it dereferenced, and
-stores that. An object larger than half the ring (30 KB) cannot be viewed at
-all and raises `E_NOMEM`: equality has to hold two views at once, so half the
-ring is the cap on a single mature string or list. Nothing in the
-corpus reaches it; raising it means a larger bank-5 ring.
+one after another, and a direct-mapped table of the 64 most recent makes a
+repeated `deref` of the same object — an environment read at every variable, a
+closure body — free. A copy costs `4 + 4 + size` bus accesses (set `A0`, read
+the header, read the object). A view is never stored: the VM keeps the pointer
+it dereferenced, and stores that.
+
+**How long a view lives, and why it is a bytecode boundary.** The ring is
+dropped wholesale and restarted **only at a bytecode boundary** — the same
+moment the collector is allowed to run, and for the same reason: it is the one
+point at which no view is live. So a view is valid for exactly the instruction
+that took it. Within an instruction the ring only bumps forward; if it runs out,
+that is `E_NOMEM`.
+
+That rule is not a convenience, it is what makes the design sound. Several
+operations hold two views at once and read from both — equality descending
+through two attribute sets, `find_attr` comparing a name against a set — and a
+ring that wrapped whenever it happened to be full could lay a fresh copy on top
+of a view its caller was still reading, and answer wrongly *in silence*. Two
+sets of 30 KB each once filled the ring exactly, so the next name copy wrapped
+onto the first set's header. Turning the ring over only where no view exists
+removes the whole class: the failure that remains is loud and is a missing
+byte of ring, not a wrong answer.
+
+The price is two constants (`vm.h`): `WINDOW_MAX` (20 KB) is the largest object
+that can be viewed at all, and `WINDOW_FLOOR` (16 KB) is the ring position past
+which a boundary turns it over — which leaves every instruction 44 KB, more than
+the two `WINDOW_MAX` views plus names that the widest operation holds. A mature
+string or list bigger than `WINDOW_MAX` is `E_NOMEM`; nothing in the corpus is,
+and the real answer for large sets is to stop copying them whole and read single
+columns instead, which is what the struct-of-arrays layout above was for.
 
 **Attribute lookup on a mature set** hands the set's card address and the search
 hash to the **`LOOKUP` verb** (the 32-lane CAM), which returns a candidate index;
@@ -220,7 +240,11 @@ pointer, but the VM stores a bank-0 code address and a constant-table address
 there, which the card's `MARK` would chase into the heap. Promotion (this slice)
 never asks the card to trace, so it is safe for now; card-side collection (slice
 5) must either give code objects a heap representation or teach the tracer that
-word 0 of a closure is opaque. Recorded here so it cannot be forgotten.
+word 0 of a closure is opaque. Two more things become the card collector's
+problem the day it compacts: the window table caches copies by card address, so
+it must be flushed when addresses move (today a `RESERVE` never reuses one), and
+an object promoted mid-deep-force carries the `aux2` visit mark, which the
+tracer must mask out of the count. Recorded here so none of it can be forgotten.
 
 ## What the collector traces
 

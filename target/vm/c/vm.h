@@ -36,7 +36,14 @@
 #define IMAGE_MAX        0xFFF0UL   /* the image must fit below APPLY_CODE */
 #define APPLY_CODE_OFF   0xFFF0U    /* main.c copies apply_code[] there at start */
 #define WINDOW_BASE      0x00050000UL   /* bank 5: copies of mature objects (data.c) */
-#define WINDOW_RING      0xF000U    /* the ring of copies; an object larger than half of it is E_NOMEM */
+#define WINDOW_RING      0xF000U    /* the ring of copies of mature objects */
+#define WINDOW_MAX       0x5000U    /* the largest object that can be viewed at all */
+#define WINDOW_FLOOR     0x4000U    /* turn the ring over at a bytecode boundary past this,
+                                       so every instruction starts with WINDOW_RING -
+                                       WINDOW_FLOOR = 44 KB free: more than the 2 x
+                                       WINDOW_MAX + change any one of them can hold live
+                                       at once, so the ring NEVER wraps mid-instruction
+                                       and no live view is ever overwritten (data.c) */
 
 #define GC_MARGIN        0x0800U    /* collect when less than this is free */
 
@@ -157,11 +164,17 @@ obj_t *deref_rpop(void);            /* deref(rpop()) */
 /* deref: a pointer -> the address its object can be read at. Young and static
  * objects are where they are; a mature object is copied through the bus into a
  * window (data.c) and the window's address is returned. A window is a VIEW: it
- * must never be stored -- not pushed, not put in a field -- and it is valid only
- * until the ring has turned over, so re-deref inside long loops. Store the
- * pointer you dereferenced, never its view. */
+ * must never be stored -- not pushed, not put in a field -- and it is valid
+ * until the next BYTECODE BOUNDARY, which is where the ring turns over. So any
+ * loop that calls back into Nix must re-deref (prims.c RELEM), and anything
+ * that outlives the instruction is the pointer, never the view. */
 obj_t *deref(obj_t *p);             /* checks the pointer; E_BADNBC otherwise */
 void   windows_invalidate(obj_t *p); /* after a write to the mature object p */
+/* The ring turns over only at a bytecode boundary, where no view is live. The
+ * dispatch loop does the test itself; windows_turnover() is the rare case. */
+extern uint16_t win_ring;
+void   windows_turnover(void);
+#define windows_maybe() do { if (win_ring > WINDOW_FLOOR) windows_turnover(); } while (0)
 uint16_t obj_size(const obj_t *hdr);    /* from a header (gc.c) */
 /* The write barrier (HEAP.md): a mature object never points into the nursery.
  * Stores into a mature object go through these, which promote the value first

@@ -85,8 +85,11 @@ and the two spaces" has the rules; this is where they land in the C):
 
 - **Reading:** `deref()` copies it into the window ring in bank 5 and returns the
   copy — a *view*. Views are for reading; the code keeps the pointer it
-  dereferenced for anything it stores (`force_pop_view` hands out both), and
-  re-derefs inside long loops, since the ring turns over.
+  dereferenced for anything it stores (`force_pop_view` hands out both). A view
+  lasts exactly one bytecode instruction: the ring is turned over at boundaries
+  and nowhere else, so a loop that calls back into Nix re-derefs every time
+  round (`prims.c` `RELEM`). See HEAP.md “How long a view lives” for why the
+  alternative — wrapping whenever the ring filled — was a silent wrong answer.
 - **Writing:** `store_field()` / `store_byte()` are the write barrier: a store
   into a mature object promotes the value first (a collection with the value on
   the stack as its root) and goes through the bus; the window copy is dropped.
@@ -126,10 +129,12 @@ target/vm/c/
   main.c      entry (first in the link: omf2bin takes the first code segment's
               entry), the loader, result reporting, DIAG
   run.c       run(): dispatch, environments, calls, thunks, FORCE, catch frames
-  data.c      strings, lists, attribute sets, hashing, equality, deep force
+  data.c      strings, lists, attribute sets, hashing, equality, deep force,
+              the write barrier and the window ring for mature objects
   prims.c     the 48 primops
-  gc.c        the Cheney collector into bank 2, copy-back (later: promotion)
-  card.c      the driver: ALU64 now; RESERVE, DATA, LOOKUP with slice 4
+  gc.c        the Cheney collector into bank 2, then promotion to the card
+              (copy-back into the nursery when no card is present)
+  card.c      the driver: ALU64, RESERVE, DATA, LOOKUP
 ```
 
 `mkOrcaBinary { name = "cvm"; srcs = [ main.c run.c data.c prims.c gc.c card.c ]; }`
@@ -196,16 +201,26 @@ on the card within one instruction of its creation:
 
 | Fixture | normal: instructions / cycles / bus accesses | every boundary promotes |
 |---|---|---|
-| `eval-okay-lists` | 13,515 / 54,160 / 1 | 117,954 / 523,849 / 1,116 |
-| `eval-okay-attrs` | 49,439 / 199,670 / 1 | 400,465 / 1,784,888 / 3,181 |
-| `eval-okay-with` | 33,841 / 136,879 / 32 | 330,525 / 1,477,802 / 2,617 |
-| `eval-okay-tryeval` | 45,171 / 185,945 / 1 | 430,425 / 1,928,836 / 3,512 |
+| `eval-okay-lists` | 13,596 / 54,457 / 1 | 117,859 / 523,530 / 1,116 |
+| `eval-okay-attrs` | 49,697 / 200,616 / 1 | 400,243 / 1,784,154 / 3,181 |
+| `eval-okay-with` | 34,048 / 137,638 / 32 | 330,324 / 1,477,133 / 2,617 |
+| `eval-okay-tryeval` | 45,402 / 186,792 / 1 | 430,160 / 1,927,947 / 3,512 |
 
-Slice 4 cost 4,268 bytes of code (38,478 → 42,746: 30,058 in bank 0, 12,688
+Slice 4 cost 4,276 bytes of code (38,478 → 42,754: 30,066 in bank 0, 12,688
 of primops in bank 4) — the barrier, the translation pass, the three new
 verbs and the window ring bookkeeping (the ring itself is bank 5). Bank 0 now
-ends at $956A, so about 10 KB of it are left before the next thing has to become
+ends at $9572, so about 10 KB of it are left before the next thing has to become
 its own segment.
+
+Turning the window ring over at bytecode boundaries only — the rule that makes
+a view's lifetime a whole instruction, HEAP.md “How long a view lives” — costs a
+compare and a branch per dispatch, which the four fixtures above put at ≈0.5%
+(54,160 → 54,457 cycles on lists, 199,670 → 200,616 on attrs). Bus accesses did
+not move at all, in either column: these programs never fill 16 KB of ring, so
+they never turn it over and the copy cache is untouched. What that means is that
+the fixtures do NOT measure the one thing the rule could plausibly cost — more
+frequent turnovers re-copying objects the old ring would still have held — and
+the corpus's larger tests are where to look for it (item 8).
 
 The CAM's one correctness hazard has a fixture of its own:
 `eval-okay-hash-collision` uses two attribute names with the same djb2 hash
