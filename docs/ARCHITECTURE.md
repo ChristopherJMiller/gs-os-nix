@@ -119,6 +119,13 @@ needing an abstraction layer. Do not invent one.
   target/store/   store paths, NAR, ATerm, derivation identity
 ```
 
+The on-target code is written in **C, compiled by ORCA/C** (D18): the only gratis
+native-mode 65816 C compiler, run on the host by `sim/orcarun.cpp` — the 65816
+core a2min uses plus a host implementation of the GS/OS, ORCA-shell and Toolbox
+calls the compiler needs, so no ROM and no GS/OS are involved. `orcabuild` turns a
+`.c` file into the flat binary a2min runs; [TOOLCHAIN.md](TOOLCHAIN.md) has the
+pipeline. The dispatch loop, forcing and card I/O may stay inline assembly.
+
 The bytecode the VM runs is defined in [BYTECODE.md](BYTECODE.md): tvix's shape
 (stack VM, constant pool and code per chunk, explicit thunk placement, in-place
 update) with two 65816 adjustments recorded in [DECISIONS.md](DECISIONS.md) D17.

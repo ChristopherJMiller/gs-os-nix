@@ -333,6 +333,31 @@ start:
         adc     #0
         sta     NT_RESULT+76
 
+        ; 39: TSB -- ORs A into memory; Z reflects A AND M *before* the store
+        lda     #$0F0F
+        sta     $0A02
+        lda     #$F0F0
+        tsb     $0A02           ; $0A02 = $FFFF; $F0F0 & $0F0F = 0 so Z = 1
+        beq     @tsb_ok
+        lda     #$DEAD          ; Z should have been set
+        bra     @tsb_done
+@tsb_ok:
+        lda     $0A02
+@tsb_done:
+        sta     NT_RESULT+78
+
+        ; 40: TRB -- clears A's bits in memory; Z reflects A AND M before
+        lda     #$00FF
+        trb     $0A02           ; $0A02 = $FF00; $00FF & $FFFF != 0 so Z = 0
+        beq     @trb_bad
+        lda     $0A02
+        ora     #$0001          ; bit 0 records "Z was clear", as it should be
+        bra     @trb_done
+@trb_bad:
+        lda     #0
+@trb_done:
+        sta     NT_RESULT+80
+
         ; done: report, and leave the CPU as we found it
         sep     #$20
         .a8

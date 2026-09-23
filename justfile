@@ -167,7 +167,7 @@ m2: asm-headless build-a2min
 selftest: build-a2min (asm-test "native_test")
     ./sim/build_a2min/a2min --selftest target/build/native_test.bin
 
-# Prove the self-test can fail: break the interpreter 18 ways, expect 18 catches.
+# Prove the self-test can fail: break the interpreter 20 ways, expect 20 catches.
 mutation-a2min: (asm-test "native_test")
     ./scripts/mutation-a2min.sh
 
@@ -185,6 +185,36 @@ bench-mul64-native a="123456789" b="987654321": build-a2min (asm-test "mul64_nat
 # The D6 measurement: what fraction of allocated bytes crossed the bus?
 bench-nursery: build-a2min (asm-test "nursery_bench")
     ./sim/build_a2min/a2min --bench-nursery target/build/nursery_bench.bin
+
+# --- C toolchain (D18, docs/TOOLCHAIN.md) -------------------------------------
+# The devShell provides orcacc / orcalink / omf2bin / orcabuild / orcarun from the
+# flake (ORCA/C's release is fetched by `nix build .#orcac`). These recipes use the
+# tree's own harness source so a change to sim/orcarun.cpp is what runs.
+
+ORCARUN := "sim/build_orca/orcarun"
+
+# Build the harness that runs ORCA/C on this machine.
+build-orcarun:
+    mkdir -p sim/build_orca
+    $CXX -O2 -std=c++17 -Wall -Wextra -o {{ORCARUN}} sim/orcarun.cpp
+
+# Compile, link, flatten and run target/tests/smoke.c on a2min.
+orca-smoke: build-a2min
+    mkdir -p target/build
+    orcabuild -o target/build/smoke.bin -O target/tests/smoke.c
+    ./sim/build_a2min/a2min --run-bin target/build/smoke.bin
+
+# Run ORCA/C on one file with the call trace on, using the tree's harness.
+orca-trace file: build-orcarun
+    #!/usr/bin/env bash
+    set -euo pipefail
+    orca=$(nix build --no-link --print-out-paths .#orcac)/orca
+    work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+    base=$(basename {{file}}); base=${base%.*}
+    tr '\n' '\r' < {{file}} > "$work/$base.c#B00008"
+    {{ORCARUN}} --trace --orca "$orca" --map "0=$work" --sfile "$base.c" --dfile "$base" \
+        --lops 1 --merr 8 --minus i "$orca/Languages/cc#B5DB01" compile "$base.c" "keep=$base"
+    ls -la "$work"
 
 # --- L4: bytecode VM ---------------------------------------------------------
 

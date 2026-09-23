@@ -26,6 +26,63 @@ If one turns out wrong, correct it here and note the impact.
 - cc65's **C compiler is 6502-only**. There is no C or C++ backend for the 65816 in
   nixpkgs or upstream (`llvm-mos` is 6502 and absent from nixpkgs).
 
+### C compilers for the 65816 (surveyed 2026-09-22 for D18)
+
+- **No native-mode 65816 C compiler is open source.** LLVM-MOS has 24-bit
+  addressing for the 65816 but 16-bit register mode is an open issue; Rust has no
+  backend; cc65 is 6502-only. **Calypsi** (Linux, gratis, closed) and **WDC's**
+  (Windows, closed) emit native-mode code. Declined to stay free of closed binaries.
+- **ORCA/C** — <https://github.com/byteworksinc/ORCA-C>. Gratis; source on GitHub.
+  LICENSE: "grants you the right to use this source code privately, fork it, and
+  change it. You may not redistribute the code in any form other than submission
+  to this repository" — **not** OSI-free, so `nix/pkgs/orcac.nix` marks it unfree
+  and the flake allows that one name. `long long` since 2.2.0 (2023-07-30); C23
+  features in 2.3.0 B1 (2026-07-13). Release assets are `.2mg` images:
+  `ORCAC.230B1.2mg` = `sha256-6svoz7G+wJcg7CPo6D5AQvXw1kN+wHk/zgx3Z4ytRC4=`,
+  `ORCAC.221.2mg` = `sha256-OCR/w5UCcQh880sxdmYspC2Gaczz4prB/ercyyizKHo=`. The
+  image ships `Languages/cc`, `Languages/Linker`, `Libraries/{ORCALib,SysLib,
+  SysFloat}`, `Libraries/ORCACDefs/*.h`, `ORCA.Sys16` and the release notes — the
+  linker and libraries are in the free release, not only in Opus ][.
+- Byte Works' other repositories (same licence): `Shell`, `Linker`, `ORCALib`,
+  `SysLib`, `SysFloat`, `PasLib`, `DumpObj`, `MakeLib`. The shell and linker
+  *sources* were how the harness's call surface was pinned down.
+- **Golden Gate** (Kelvin Sherlock) runs ORCA tools on modern hosts by the same
+  method; $10, closed, source only for buyers. <https://juiced.gs/store/golden-gate/>,
+  manual <https://goldengate.gitlab.io/manual/> (prefix mapping: `13:` Libraries,
+  `15:` Shell, `16:` Languages, `17:` Utilities; `iix compile ... keep=`).
+- **GNO/ME** 2.0.6 is freeware with source (<https://github.com/GnoConsortium/gno>);
+  it is the fallback route (ORCA/C under GNO under MAME), unused.
+
+### The call surfaces the harness implements (sources)
+
+- **ORCA shell calls:** numbers and parameter blocks are `ORCACDefs/shell.h`
+  (class 0 `$0101`… and class 1 `$0141`…: GET_LINFO `$0101/$0141`, SET_LINFO
+  `$0102/$0142`, VERSION `$0107/$0147`, FASTFILE `$010E/$014E` …). Semantics:
+  `Shell/call.asm` (`GetLInfo`, `FastFile` actions 0 Load, 1 IndexedLoad,
+  2 LoadMemory, 3 Save, 4 AddFile, 5 Delete, 6 Remove, 7 Purge, 8 SetInfo; flags
+  `$8000` purge-on-Purge…). How the shell starts a program: `Shell/cmd.asm`
+  `Call` — `InitialLoad2`, a 4 KB default stack, DP = stack base, A = user ID,
+  X:Y = the command line prefixed by `BYTEWRKS`, `JSL` to the entry.
+- **GS/OS calls:** `ORCACDefs/gsos.h` (numbers and records). Both the inline form
+  (`JSL $E100A8`, `.word num`, `.long pb`) and the stack form (`$E100B0`) are used.
+- **Toolbox call numbers:** the `inline(0xNNNN, dispatcher)` declarations in
+  `ORCACDefs/{locator,memory,misctool,intmath,texttool}.h`; the Pascal runtime
+  (`PasLib/nl.asm`) reaches the console through SysLib's `SysCharOut`, which is a
+  GS/OS `WriteGS` on the refnum from `GetStdRefNum`.
+- **OMF:** headers per `DumpObj.cc` `GetHead`; **SUPER records** ($F7) per the
+  Linker's `out.asm` and 6502bench/CiderPress2 `OmfReloc.cs`: type 0 = RELOC2,
+  1 = RELOC3, 2–13 = INTERSEG1–12 (3-byte, segment in the patched data), 14–25 =
+  INTERSEG13–24 (2-byte), 26–37 = INTERSEG25–36 (2-byte, shift −16); body =
+  page-skip bytes (`$80|n`) and per-page patch counts. **Jump table** entries
+  (Linker `out.asm` `JumpTable`): userID, file, segment, offset, `JSL` loader —
+  14 bytes after an 8-byte header. **ExpressLoad** (Neil Parker,
+  <http://nparker.llx.com/a2/loader.html>): a dynamic data segment named
+  `~ExpressLoad`, first in the file, skipped by the harness.
+- **ORCA/C's own OS use** (`CC.pas`, `CCommon.pas`): VERSION must report a
+  version byte ≥ `'2'` (ASCII), GET_LINFO with 11 parameters, FastFile to read
+  the source and write `.root`/`.a`, `-i` skips the `.sym` file, `-p` silences
+  progress; flag letters map `a` → bit 31 … `z` → bit 6 (`flag_d = $10000000`).
+
 ## MAME card interface
 
 `device_a2bus_card_interface`, verified against tag **`mame0289`** — the version the

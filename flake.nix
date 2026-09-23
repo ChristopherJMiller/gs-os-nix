@@ -21,10 +21,21 @@
         };
         # Host-side, test-only fixture generator (D7, D16).
         nbc = self'.callPackage ./nix/pkgs/nbc.nix { };
+        # The C toolchain (D18, docs/TOOLCHAIN.md): ORCA/C's official release,
+        # the harness that runs it here, and the commands that wrap both.
+        orcac = self'.callPackage ./nix/pkgs/orcac.nix { };
+        orcarun = self'.callPackage ./nix/pkgs/orcarun.nix { };
+        orca-toolchain = self'.callPackage ./nix/pkgs/orca-toolchain.nix { };
+        mkOrcaBinary = self'.callPackage ./nix/lib/mkOrcaBinary.nix { };
       });
 
       forAll = f: nixpkgs.lib.genAttrs systems (system:
-        let pkgs = nixpkgs.legacyPackages.${system};
+        let pkgs = import nixpkgs {
+          inherit system;
+          # ORCA/C's licence permits use but not redistribution (nix/pkgs/orcac.nix);
+          # it is the one unfree package here, named explicitly.
+          config.allowUnfreePredicate = p: nixpkgs.lib.getName p == "orcac";
+        };
         in f {
           inherit system pkgs;
           ours = ourPackagesFor pkgs;
@@ -71,6 +82,7 @@
             # --- Apple II disk images (packaged here; absent from nixpkgs) ---
             ours.applecommander  # `ac`
             ours.cadius
+            ours.orca-toolchain  # orcacc / orcalink / omf2bin / orcabuild / orcarun (D18)
 
             # --- Build glue ---
             just                 # see ./justfile for the task list
@@ -304,6 +316,33 @@
             grep -q "MUTATION PASS" "$out"
           '';
 
+        # D18: the C toolchain end to end. ORCA/C compiles target/tests/smoke.c under
+        # orcarun, the ORCA linker links it, omf2bin flattens it, and a2min runs the
+        # result: the bytes it leaves in the result area are checked against values
+        # computed by hand. A compiler that produced wrong-but-plausible code would
+        # fail here, not in the VM port built on it.
+        orcac-smoke = pkgs.runCommandCC "check-orcac-smoke"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim .
+            chmod -R +w .
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            smoke=${ours.mkOrcaBinary { name = "smoke"; srcs = [ ./target/tests/smoke.c ]; }}
+            ./build/a2min --run-bin "$smoke/smoke.bin" | tee "$out"
+            grep -q '^status: \$01$' "$out"
+            # 42 = $002A at $0300; 12345 * 6789 = 83810205 = $04FED79D at $0302
+            grep -q '^result: 2A 00 9D D7 FE 04 ' "$out"
+            echo "ORCAC SMOKE PASS: C compiled by ORCA/C ran on a2min" | tee -a "$out"
+          '';
+
+        # The harness itself builds and its usage works; the package is what the
+        # devShell and mkOrcaBinary use.
+        orcarun = ours.orcarun;
+
         # Regressions for the silent-corruption bug class. Every bug found in this
         # card produced a plausible-looking wrong answer rather than a failure, so
         # each one gets a permanent named test (sim/regress_main.cpp).
@@ -392,6 +431,9 @@
         inherit (ours) verilated-card mame-a2nix;
         # The test-only fixture generator (D7/D16): `nix run .#nbc -- in.nix -o out.nbc`.
         inherit (ours) nbc;
+        # The C toolchain (D18): ORCA/C's release, the harness, and the wrapper
+        # commands. `nix build .#orcac` fetches the release for this machine.
+        inherit (ours) orcac orcarun orca-toolchain;
         default = ours.verilated-card;
       });
 

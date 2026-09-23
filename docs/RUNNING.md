@@ -31,9 +31,20 @@ because a skipped instruction would yield a wrong-but-plausible digest.
 The 65816 model is itself under test, since the L4 VM runs on it:
 
 ```sh
-just selftest          # 39 native-mode cases; expected values live in the harness
-just mutation-a2min    # break the interpreter 18 ways, expect 18 catches
+just selftest          # 41 native-mode cases; expected values live in the harness
+just mutation-a2min    # break the interpreter 20 ways, expect 20 catches
 just bench-mul64-native # the ALU64 gate, measured in the mode the VM uses
+```
+
+The interpreter itself is `sim/cpu65816.h`, shared with `sim/orcarun.cpp` — the
+harness that runs ORCA/C and the ORCA linker on this machine with no ROM and no
+GS/OS ([TOOLCHAIN.md](TOOLCHAIN.md)). So the same 65816 model both compiles the
+on-target C and runs it:
+
+```sh
+just orca-smoke        # compile, link and flatten target/tests/smoke.c; run it on a2min
+orcabuild -o x.bin x.c # any C file, from the devShell
+just orca-trace x.c    # the same compile with every OS/shell/Toolbox call printed
 ```
 
 ## What we are *not* doing

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Prove the native-mode self-test can actually FAIL.
 #
-# sim/a2min.cpp is the machine the L4 VM will be developed on. If its 65816 model is
-# wrong, every VM result is suspect -- and target/tests/native_test.s only guards
-# against that if it can tell a right interpreter from a wrong one. So this breaks
-# the interpreter in specific ways, one at a time, and asserts that `--selftest`
-# notices each one. A mutation that survives means the corresponding case is
-# decorative and must be fixed (see DECISIONS.md D14 for why this matters).
+# sim/cpu65816.h is the 65816 the L4 VM runs on -- and, through orcarun, the one
+# ORCA/C itself runs on. If its model is wrong, every VM result is suspect -- and
+# target/tests/native_test.s only guards against that if it can tell a right
+# interpreter from a wrong one. So this breaks the interpreter in specific ways,
+# one at a time, and asserts that `a2min --selftest` notices each one. A mutation
+# that survives means the corresponding case is decorative and must be fixed (see
+# DECISIONS.md D14 for why this matters).
 #
 # The whole card is Verilated once; each mutation then rebuilds only a2min.o via the
 # generated makefile, so the loop is seconds per mutation rather than minutes.
@@ -14,7 +15,8 @@
 # Every mutation is reverted afterwards, including on failure or interrupt.
 set -uo pipefail
 
-FILE=sim/a2min.cpp
+FILE=sim/cpu65816.h
+HARNESS=sim/a2min.cpp
 BIN=target/build/native_test.bin
 DIR=sim/build_mutation_a2min
 JOBS="${NIX_BUILD_CORES:-0}"
@@ -33,16 +35,17 @@ if [ ! -f "$BIN" ]; then
     ld65 -C target/tests/apple2.cfg -o "$BIN" target/build/native_test.o
 fi
 
-# Build the harness. Returns 2 if it does not compile.
+# Build the harness. Returns 2 if it does not compile. The generated makefile does
+# not track the header, so the harness source is touched to force a recompile.
 build() {
     if [ ! -f "$DIR/Va2nix_card.mk" ]; then
         rm -rf "$DIR"
         verilator --cc --exe --build -j "$JOBS" -Irtl --top-module a2nix_card \
             -Wall -Wno-DECLFILENAME \
             --Mdir "$DIR" -o a2min \
-            rtl/a2nix_card.v "$FILE" > /dev/null 2>&1 || return 2
+            rtl/a2nix_card.v "$HARNESS" > /dev/null 2>&1 || return 2
     else
-        touch "$FILE"
+        touch "$FILE" "$HARNESS"
         make -s -C "$DIR" -f Va2nix_card.mk > /dev/null 2>&1 || return 2
     fi
 }
@@ -54,7 +57,7 @@ run_suite() {
 }
 
 # mutate <name> <sed-expression>
-#   Applies the mutation to sim/a2min.cpp, expects the self-test to FAIL, reverts.
+#   Applies the mutation to sim/cpu65816.h, expects the self-test to FAIL, reverts.
 #
 # A pattern that does not match is a FAILURE, not a skip -- an inert mutation would
 # report "caught" forever while testing nothing. A mutation that does not compile is
@@ -97,58 +100,64 @@ echo
 echo "Each mutation breaks one 65816 feature; the self-test must catch it."
 
 mutate "(sr,S),Y ignores Y" \
-       's/cpu.sp + fetch8()))) + cpu.y) \& 0xFFFFFF;/cpu.sp + fetch8()))) + 0) \& 0xFFFFFF;/'
+       's/sp + fetch8()))) + y) \& 0xFFFFFF;/sp + fetch8()))) + 0) \& 0xFFFFFF;/'
 
 mutate "sr,S reads from the direct page" \
-       's/uint32_t ea_sr()        { return static_cast<uint16_t>(cpu.sp + fetch8()); }/uint32_t ea_sr()        { return static_cast<uint16_t>(cpu.dp + fetch8()); }/'
+       's/uint32_t ea_sr()        { return static_cast<uint16_t>(sp + fetch8()); }/uint32_t ea_sr()        { return static_cast<uint16_t>(dp + fetch8()); }/'
 
 mutate "[dp] ignores the bank byte" \
        's/ea_dp_long()   { return rd24(/ea_dp_long()   { return rd16(/'
 
 mutate "[dp],Y ignores Y" \
-       's/ea_dp_long_y() { return (rd24(static_cast<uint16_t>(cpu.dp + fetch8())) + cpu.y)/ea_dp_long_y() { return (rd24(static_cast<uint16_t>(cpu.dp + fetch8())) + 0)/'
+       's/ea_dp_long_y() { return (rd24(static_cast<uint16_t>(dp + fetch8())) + y)/ea_dp_long_y() { return (rd24(static_cast<uint16_t>(dp + fetch8())) + 0)/'
 
 mutate "long,X ignores X" \
-       's/ea_long_x()    { return (fetch24() + cpu.x)/ea_long_x()    { return (fetch24() + 0)/'
+       's/ea_long_x()    { return (fetch24() + x)/ea_long_x()    { return (fetch24() + 0)/'
 
 mutate "absolute addressing ignores DBR" \
-       's/uint32_t dbr_(uint16_t off) { return bank(cpu.dbr, off); }/uint32_t dbr_(uint16_t off) { return bank(0, off); }/'
+       's/uint32_t dbr_(uint16_t off) const { return bank(dbr, off); }/uint32_t dbr_(uint16_t off) const { return bank(0, off); }/'
 
 mutate "JSL does not push the program bank" \
-       's/                 push8(cpu.pbr); push16(static_cast<uint16_t>(cpu.pc - 1));/                 push16(static_cast<uint16_t>(cpu.pc - 1));/'
+       's/push8(pbr); push16(static_cast<uint16_t>(pc - 1));/push16(static_cast<uint16_t>(pc - 1));/'
 
 mutate "RTL does not restore the program bank" \
-       's/cpu.pc = static_cast<uint16_t>(pop16() + 1); cpu.pbr = pop8(); cyc = 6;/cpu.pc = static_cast<uint16_t>(pop16() + 1); pop8(); cyc = 6;/'
+       's/pc = static_cast<uint16_t>(pop16() + 1); pbr = pop8(); cyc = 6;/pc = static_cast<uint16_t>(pop16() + 1); pop8(); cyc = 6;/'
 
 mutate "JML stays in the current bank" \
-       's/case 0x5C: { const uint32_t t = fetch24(); cpu.pbr = t >> 16;/case 0x5C: { const uint32_t t = fetch24(); cpu.pbr = cpu.pbr;/'
+       's/case 0x5C: { const uint32_t t = fetch24(); pbr = t >> 16;/case 0x5C: { const uint32_t t = fetch24(); pbr = pbr;/'
 
 mutate "16-bit ROR rotates the carry into bit 7" \
-       's/(v >> 1) | (cin ? signA() : 0)/(v >> 1) | (cin ? 0x80 : 0)/'
+       's/(v_ >> 1) | (cin ? signA() : 0)/(v_ >> 1) | (cin ? 0x80 : 0)/'
 
 mutate "SEP #\$20 clears B" \
-       's/if (m8()) cpu.a = static_cast<uint16_t>((cpu.a \& 0xFF00) | (v \& 0xFF)); else cpu.a = v;/if (m8()) cpu.a = static_cast<uint16_t>(v \& 0xFF); else cpu.a = v;/'
+       's/if (m8()) a = static_cast<uint16_t>((a \& 0xFF00) | (v_ \& 0xFF)); else a = v_;/if (m8()) a = static_cast<uint16_t>(v_ \& 0xFF); else a = v_;/'
 
 mutate "XCE keeps 16-bit index registers" \
-       's/        if (cpu.e) { cpu.x \&= 0xFF; cpu.y \&= 0xFF; fix_sp(); }/        if (cpu.e) { fix_sp(); }/'
+       's/            if (e) { x \&= 0xFF; y \&= 0xFF; fix_sp(); }/            if (e) { fix_sp(); }/'
 
 mutate "REP cannot widen the index registers" \
-       's/        cpu.xf = p \& 0x10;/        cpu.xf = true;/'
+       's/            xf = p \& 0x10;/            xf = true;/'
 
 mutate "ADC carries out of bit 8 in 16-bit mode" \
-       's/    cpu.c = s > maskA();/    cpu.c = s > 0xFF;/'
+       's/        c = s > maskA();/        c = s > 0xFF;/'
 
 mutate "CMP compares the low byte only" \
-       's/    r \&= mask; mval \&= mask;/    r \&= 0xFF; mval \&= 0xFF;/'
+       's/        r \&= mask; mval \&= mask;/        r \&= 0xFF; mval \&= 0xFF;/'
 
 mutate "TCD is a no-op" \
-       's/case 0x5B: cpu.dp = cpu.a;/case 0x5B: cpu.dp = cpu.dp;/'
+       's/case 0x5B: dp = a;/case 0x5B: dp = dp;/'
 
 mutate "16-bit PLA pops a single byte" \
-       's/case 0x68: { const uint16_t v = m8() ? pop8() : pop16();/case 0x68: { const uint16_t v = pop8();/'
+       's/case 0x68: { const uint16_t v_ = m8() ? pop8() : pop16();/case 0x68: { const uint16_t v_ = pop8();/'
 
 mutate "MVN copies downward" \
        's/const int dir = (op == 0x54) ? 1 : -1;/const int dir = (op == 0x54) ? -1 : 1;/'
+
+mutate "TSB abs leaves memory unchanged" \
+       's/wrA(ea, (mv | getA()) \& maskA());  cyc += 4/wrA(ea, mv);  cyc += 4/'
+
+mutate "TRB abs leaves memory unchanged" \
+       's/wrA(ea, (mv \& ~getA()) \& maskA()); cyc += 4/wrA(ea, mv); cyc += 4/'
 
 echo
 echo "$pass mutations caught, $fail not caught"

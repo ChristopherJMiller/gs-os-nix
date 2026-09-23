@@ -336,3 +336,47 @@ Inline caches at bytecode sites (ARCHITECTURE.md) remain the plan for the lookup
 that actually hurt, which are attribute selections, not `let` variables.
 
 Full detail, including the thunk-placement table, is in [BYTECODE.md](BYTECODE.md).
+
+---
+
+## D18 — The on-target code moves from assembly to C, compiled by ORCA/C under our own harness
+
+**Context (2026-09-22).** The VM (`target/vm/*.s`) is the product, not a test, and
+by slice 4 it was ~5.5k lines of 65816 assembly with L5 and L6 still to write.
+Nearly every bug of the preceding days was an *assembly* bug — a carry clobbered by
+`CPY`, a branch out of range, a scratch register clobbered across a call, a frame
+offset off by one — the class a compiler removes. Chris asked whether it had to be
+assembly.
+
+**The facts, verified:** no native-mode 65816 C compiler is open source today.
+`cc65`'s C is 6502-only (8-bit, emulation mode — it would undo native mode).
+LLVM-MOS has 24-bit addressing for the 65816 but 16-bit register mode is still an
+open issue. Rust has no 65816 backend. The compilers that do emit native-mode code:
+**Calypsi** (Linux-native, gratis, closed), **WDC's** (Windows, closed), and
+**ORCA/C** — the historic IIgs compiler, gratis, source-available on GitHub with
+`long long` since 2.2.0 and C23 features in 2.3, under a licence that permits
+private use, forking and modification but **not redistribution**. Golden Gate, the
+layer that runs ORCA tools on modern hosts, is $10 and closed. GNO/ME, a shell
+environment ORCA/C runs under, is freeware with source.
+
+**Decision:** ORCA/C, run by **our own Golden-Gate-style harness**: `a2min`'s
+native-mode 65816 core plus a host implementation of the GS/OS file calls, the
+ORCA shell calls and the Toolbox subset that the compiler, linker and shell
+utilities use, with host directories mapped as the ORCA filesystem. This is the
+freest option that exists: ORCA/C's official release is fetched at build time for
+our own use (nothing is redistributed), the harness is ours, and — unlike running
+GS/OS under MAME — it needs **no ROM and no GS/OS**, so it builds in CI like
+anything else, fast and deterministically. GNO/ME under headless MAME (with the
+ROM and GS/OS as pinned fetches) is the fallback if ORCA/C leans on more of the
+system than its documentation suggests. Calypsi was declined to stay free of
+closed binaries; the fully-free-software ideal is not available today.
+
+**What carries over untouched:** BYTECODE.md, HEAP.md, the generator, the corpus,
+the fixtures, the GC-stress mode and the scoreboard — they verify the port. The
+dispatch/force/card-I/O core may remain inline assembly.
+
+**Follow-up recorded:** a *black-box re-implementation of a FOSS native-mode 65816
+C compiler* (or landing 16-bit mode in LLVM-MOS) is the way to remove the last
+non-free tool. It is a project of its own; STATUS.md tracks it.
+
+The pipeline itself is specified in [TOOLCHAIN.md](TOOLCHAIN.md).

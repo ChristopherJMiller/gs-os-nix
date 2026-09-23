@@ -34,6 +34,30 @@ implementation from a tribute.
 
 ## Next actions (L4)
 
+**Interrupt (2026-09-22, D18): the on-target code moves to C.** Before slice 4's
+promotion step continues, the toolchain changed: ORCA/C runs under our own
+Golden-Gate-style harness (`docs/TOOLCHAIN.md`), and the VM will be ported to C
+with the existing fixtures, corpus and GC-stress mode verifying the port. The
+assembly VM stays until the C one passes everything it does.
+
+1. ~~`nix/pkgs/orcac.nix`~~ **done** — the 2.3.0 B1 release, pinned, extracted
+   with cadius; the one unfree package, allowed by name.
+2. ~~`sim/orcarun.cpp`~~ **done** — `sim/cpu65816.h` is the core a2min and orcarun
+   share; the harness implements the GS/OS, ORCA-shell and Toolbox calls the
+   compiler and linker make (aborting on any other), loads OMF including SUPER
+   records and jump tables, and runs the real `cc` and `Linker` binaries.
+3. ~~`omf2bin`, `checks.orcac-smoke`~~ **done** — `target/tests/smoke.c` compiles,
+   links, flattens and runs on a2min with the right bytes (`just orca-smoke`).
+4. ~~`orcacc` / `orcalink` / `orcabuild`, `mkOrcaBinary`~~ **done** — in the
+   devShell and the flake (`nix/pkgs/orca-toolchain.nix`, `nix/lib/mkOrcaBinary.nix`).
+5. **Port the VM (`target/vm/*.c`)**, slice by slice against the scoreboard; then
+   resume slice 4 (promotion) in C. The assembly draft of promotion is kept as
+   `target/vm/promote.s` and the card driver as `target/vm/card.s` (neither is
+   included by `vm.s`) — they are the reference for the C versions.
+
+**Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
+mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
+
 The scoreboard reads **246 / 405**, and 133 of the rest are `unsupported` —
 refused by the lowering, not failed by the VM. Since the generator parses all of
 Nix (rnix), the refusals are by feature, and the histogram says what would move
@@ -97,6 +121,10 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
   to fail when the interpreter is broken. A wrong CPU model would make every VM
   result suspect, so this sits on the same footing as the RTL regressions.
 
+- **`checks.orcac-smoke`** — the C toolchain end to end (D18): ORCA/C under
+  `orcarun` compiles `target/tests/smoke.c`, the ORCA linker links it, `omf2bin`
+  flattens it, a2min runs it, and the bytes it leaves are checked against values
+  worked out by hand. The VM port is built on this, so a miscompile fails here first.
 - **`checks.verb-economics`** — every verb's measured MAME cycle cost vs. its 65816
   equivalent. A verb that doesn't pay for its bus crossing gets deleted.
 - **`checks.scoreboard`** — the headline metric. Every vendored tvix test is
@@ -119,5 +147,7 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
   must skip gracefully without them so CI stays green. GS/OS 6.0.x disk images are
   obtainable.
 - The MAME source build is a long one-off, cached afterward. Pin 0.281.
-- **65816 assembly volume is the real cost.** L4–L6 dominate the project; the card is a
-  small fraction of the work in any version.
+- **On-target code volume is the real cost.** L4–L6 dominate the project; the card is
+  a small fraction of the work in any version. D18 moved that code from assembly to
+  C (ORCA/C, gratis but not open source — the one unfree package, fetched per
+  machine); a FOSS native-mode 65816 C compiler is the long-term follow-up.
