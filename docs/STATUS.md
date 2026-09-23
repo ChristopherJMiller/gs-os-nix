@@ -8,7 +8,7 @@
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
 | **L2** | Card in a machine: register map, verilate, a2bus device, patched mame | **done — M2 achieved** (gated by the ROM-free harness; MAME glue written, needs a romset) |
 | **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, collector, CPU nursery | **done** — card side (memory engine, `DATA`/`TAG`, `ALLOC`/`RESERVE`, `FOLLOW`, `HASH_STREAM`, `LOOKUP`, `ALU64`, `MARK`/`COMPACT`) and the CPU-side nursery (`target/heap/nursery.s`: bump alloc, Cheney in RAM, one-burst promotion). D6 measured: `just bench-nursery` |
-| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — slice 1 done, scoreboard live.** `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it |
+| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — slice 1 done, scoreboard live.** `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM was ported to C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); the C VM passes **247 / 405** (one more than the assembly: its 64 KB nursery finishes `eval-okay-ind-string`), 0 fail, all 39 fixtures under GC stress; `checks.cvm-scoreboard` gates it. It is 2.5× slower and 3.4× larger than the assembly it replaces — measured, and the next optimisation targets are named in VM.md |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
 | **L6** | `NARHASH`, ATerm, `derivation` primop, string context | not started |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | not started |
@@ -50,10 +50,13 @@ assembly VM stays until the C one passes everything it does.
    links, flattens and runs on a2min with the right bytes (`just orca-smoke`).
 4. ~~`orcacc` / `orcalink` / `orcabuild`, `mkOrcaBinary`~~ **done** — in the
    devShell and the flake (`nix/pkgs/orca-toolchain.nix`, `nix/lib/mkOrcaBinary.nix`).
-5. **Port the VM (`target/vm/*.c`)**, slice by slice against the scoreboard; then
-   resume slice 4 (promotion) in C. The assembly draft of promotion is kept as
-   `target/vm/promote.s` and the card driver as `target/vm/card.s` (neither is
-   included by `vm.s`) — they are the reference for the C versions.
+5. ~~**Port the VM (`target/vm/c/`)**~~ **done** — one translation pass, then
+   the fixtures found the one bug (the load file's entry is the first function of
+   the first object): 39/39 fixtures, 39/39 under GC stress, 247/405 on the
+   corpus. The assembly draft of promotion is kept as `target/vm/promote.s` and
+   the card driver as `target/vm/card.s` — the reference for the C versions. Next:
+   **resume slice 4 (promotion) in C**, and the measured 2.5× cost of C
+   ([VM.md](VM.md) "Measured") is the first thing to attack after it.
 
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.

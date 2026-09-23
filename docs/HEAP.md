@@ -139,8 +139,10 @@ word after the bytes, so it is always a whole word the scanner can read directly
 This is D6 meeting the VM. Decided with Chris (2026-09-22): go straight to
 promotion rather than an in-RAM semispace first.
 
-**Where values live.** Every allocation the VM makes is in the **nursery**, bank 0,
-16 KB, bump-allocated (`nfree`). Constants materialised from the `.nbc` image sit
+**Where values live.** Every allocation the VM makes is in the **nursery** —
+bank 0, 16 KB in the assembly VM; **bank 1, 64 KB in the C VM** ([VM.md](VM.md)),
+where a young pointer is `$8001xxxx` and dereferences directly because the
+hardware ignores bit 31 — bump-allocated (`nfree`). Constants materialised from the `.nbc` image sit
 at the bottom of the nursery below a watermark and are never moved or scanned (they
 hold no pointers). The VM's own static objects (`true`, `false`, `null`, the type
 names) are in its binary and are recognised by address. Everything that survives a
@@ -174,9 +176,10 @@ about one access per byte; garbage never touches it.
 
 **Reading a mature object.** Bit 31 clear means "on the card". `deref` copies the
 object — header and up to 252 bytes of payload — through the card's address
-window into one of four **copy windows** in bank 0 (`$0400`–`$07FF`, an LRU keyed
-by card address), and returns the window's address, so every accessor written for
-young objects (`(t0),y`) works unchanged on the copy. Fields past the window
+window into one of four **copy windows** (an LRU keyed by card address; four
+256-byte arrays in the C VM's data, `$0400`–`$07FF` in the assembly draft), and
+returns the window's address, so every accessor written for young objects works
+unchanged on the copy. Fields past the window
 (long strings, big lists and sets) are read individually through the address port.
 A copy costs `1 + 4 + size` bus accesses; a hit costs nothing, which is what makes
 the four windows worth their 1 KB.

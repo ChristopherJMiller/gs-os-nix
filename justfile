@@ -204,6 +204,41 @@ orca-smoke: build-a2min
     orcabuild -o target/build/smoke.bin -O target/tests/smoke.c
     ./sim/build_a2min/a2min --run-bin target/build/smoke.bin
 
+# --- The VM in C (docs/VM.md) --------------------------------------------------
+CVM_SRCS := "target/vm/c/main.c target/vm/c/run.c target/vm/c/data.c target/vm/c/prims.c target/vm/c/gc.c target/vm/c/card.c"
+
+# Compile, link and flatten the C VM to target/build/cvm.bin.
+cvm:
+    mkdir -p target/build
+    orcabuild -o target/build/cvm.bin -O {{CVM_SRCS}}
+
+# Compile one .nix and run it on the C VM.
+run-nbc-c file: build-a2min cvm nbc-build
+    mkdir -p target/build
+    {{NBC}} {{file}} -o target/build/$(basename {{file}} .nix).nbc
+    ./sim/build_a2min/a2min --run-nbc-c target/build/cvm.bin target/build/$(basename {{file}} .nix).nbc
+
+# The corpus and the fixtures on the C VM; its own ratchet while it climbs.
+scoreboard-c *flags: build-a2min cvm nbc-build
+    python3 scripts/scoreboard.py --mode c --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
+        --vm target/build/cvm.bin --corpus tests/corpus/tvix --corpus tests/fixtures \
+        --build target/build/nbc --expected tests/corpus/expected-pass-c.txt {{flags}}
+
+scoreboard-c-update: (scoreboard-c "--update")
+
+# Just the fixtures on the C VM, normally and with a collection at every boundary.
+fixtures-c *flags: build-a2min cvm nbc-build
+    python3 scripts/scoreboard.py --mode c --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
+        --vm target/build/cvm.bin --corpus tests/fixtures \
+        --build target/build/nbc-c --expected tests/corpus/expected-pass-c.txt {{flags}}
+
+# With a collection at every boundary the C VM's tail-call fixture needs ~90M
+# cycles (docs/VM.md), so the budget is raised for this run only.
+fixtures-gc-c: build-a2min cvm nbc-build
+    A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py --mode c --nbc {{NBC}} \
+        --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
+        --build target/build/nbc-c --expected tests/corpus/expected-pass-c.txt --gc-stress
+
 # Run ORCA/C on one file with the call trace on, using the tree's harness.
 orca-trace file: build-orcarun
     #!/usr/bin/env bash

@@ -61,6 +61,9 @@ def main():
     ap.add_argument("--nbc", required=True, help="the fixture generator binary")
     ap.add_argument("--a2min", required=True)
     ap.add_argument("--vm", required=True, help="target/build/vm.bin")
+    ap.add_argument("--mode", choices=["asm", "c"], default="asm",
+                    help="which VM the binary is: the assembly one (image at $9000) "
+                         "or the C one (image in bank 3, DIAG block) -- docs/VM.md")
     ap.add_argument("--corpus", action="append", required=True)
     ap.add_argument("--build", required=True, help="where compiled fixtures go")
     ap.add_argument("--expected", required=True, help="the ratchet file")
@@ -70,6 +73,8 @@ def main():
                     help="collect the nursery at every bytecode boundary (slow; a collector test)")
     args = ap.parse_args()
     run_mode = "--run-nbc-gc-stress" if args.gc_stress else "--run-nbc"
+    if args.mode == "c":
+        run_mode = run_mode.replace("--run-nbc", "--run-nbc-c")
 
     os.makedirs(args.build, exist_ok=True)
     expected = set()

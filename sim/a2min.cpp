@@ -78,6 +78,9 @@ constexpr uint16_t RESULT_STAT = 0x0320;
 constexpr uint16_t SELFTEST_RESULT = 0x0400;    // the native self-test's word table
 constexpr uint32_t NBC_BASE    = 0x9000;        // where --run-nbc places the image (vm.s map)
 constexpr uint16_t NBC_MAX     = 0x2000;
+constexpr uint32_t NBC_BASE_C  = 0x030000;      // the C VM reads the image from bank 3 (docs/VM.md)
+constexpr size_t   NBC_MAX_C   = 0xFFF0;
+constexpr uint32_t DIAG        = 0x0310;        // the C VM's state on error (main.c diag_write)
 constexpr uint32_t VSTACK      = 0xB000;
 
 int card_slot = 4;
@@ -199,6 +202,25 @@ bool load_image(const char *bin_path, size_t *size_out = nullptr) {
     const std::vector<uint8_t> image((std::istreambuf_iterator<char>(bin)),
                                      std::istreambuf_iterator<char>());
     if (image.empty()) { std::fprintf(stderr, "%s is empty\n", bin_path); return false; }
+    // A multi-bank image from omf2bin (docs/TOOLCHAIN.md): "GSIM", a chunk count,
+    // then (address, length, bytes) per chunk. Anything else is a flat image at
+    // LOAD_ADDR; no raw program starts with those four bytes.
+    if (image.size() >= 6 && std::memcmp(image.data(), "GSIM", 4) == 0) {
+        size_t p = 4, total = 0;
+        const unsigned count = image[p] | (image[p + 1] << 8);
+        p += 2;
+        for (unsigned c = 0; c < count; ++c) {
+            if (p + 8 > image.size()) { std::fprintf(stderr, "%s: truncated GSIM chunk table\n", bin_path); return false; }
+            const uint32_t addr = image[p] | (image[p + 1] << 8) | (image[p + 2] << 16) | (static_cast<uint32_t>(image[p + 3]) << 24);
+            const uint32_t len  = image[p + 4] | (image[p + 5] << 8) | (image[p + 6] << 16) | (static_cast<uint32_t>(image[p + 7]) << 24);
+            p += 8;
+            if (p + len > image.size() || addr + len > RAM_BYTES) { std::fprintf(stderr, "%s: GSIM chunk at $%06X (%u bytes) does not fit\n", bin_path, addr, len); return false; }
+            std::memcpy(&ram[addr], &image[p], len);
+            p += len; total += len;
+        }
+        if (size_out) *size_out = total;
+        return true;
+    }
     for (size_t i = 0; i < image.size(); ++i) ram[LOAD_ADDR + i] = image[i];
     if (size_out) *size_out = image.size();
     return true;
@@ -216,12 +238,23 @@ void bring_up_card() {
 
 // RTS from the entry point returns to HALT_ADDR, so seed the stack accordingly, then
 // run to the halt or the budget.
+bool trace_on = false;   // --trace-cpu: every instruction to stderr
+
 bool run_to_halt(uint64_t budget = 50'000'000) {
+    // A2MIN_BUDGET overrides the cycle budget: GC-stress runs of the C VM need more.
+    if (const char *b = std::getenv("A2MIN_BUDGET")) budget = std::strtoull(b, nullptr, 0);
     cpu.reset(LOAD_ADDR);
     bus.halted = false;
     const uint16_t seed = HALT_ADDR - 1;
     cpu.push16(seed);
-    while (!bus.halted && cpu.cycles < budget) cpu.step();
+    while (!bus.halted && cpu.cycles < budget) {
+        if (trace_on)
+            std::fprintf(stderr, "%06X %02X %02X %02X %02X A=%04X X=%04X Y=%04X S=%04X D=%04X P=%02X\n", cpu.pcaddr(),
+                         ram[cpu.pcaddr() & 0xFFFFF], ram[(cpu.pcaddr() + 1) & 0xFFFFF],
+                         ram[(cpu.pcaddr() + 2) & 0xFFFFF], ram[(cpu.pcaddr() + 3) & 0xFFFFF],
+                         cpu.a, cpu.x, cpu.y, cpu.sp, cpu.dp, cpu.packP());
+        cpu.step();
+    }
     return bus.halted;
 }
 
@@ -361,7 +394,7 @@ std::string fmt_value(uint32_t ptr, int depth) {
     if (depth > 64) return "<DEEP>";
     if (ptr == 0) return "<NULLPTR>";
     if (!(ptr & 0x80000000u)) return "<MATURE>";
-    const uint32_t a = ptr & 0xFFFF;
+    const uint32_t a = ptr & 0xFFFFFF;  // bank 0 for the assembly VM, bank 1 for the C VM
     const uint8_t tag = ram[a];
     const uint32_t aux = (ram32(a) >> 8) & 0x3FFFFF;
     if (a + 4 + 12 * aux >= RAM_BYTES) return "<OOB>";
@@ -386,7 +419,7 @@ std::string fmt_value(uint32_t ptr, int depth) {
             std::string s = "{";
             for (uint32_t i = 0; i < aux; ++i) {
                 const uint32_t np = ram32(a + 4 + 8 * aux + 4 * i);
-                const std::string name = (np & 0x80000000u) ? nix_string_bytes(np & 0xFFFF) : "<MATURE>";
+                const std::string name = (np & 0x80000000u) ? nix_string_bytes(np & 0xFFFFFF) : "<MATURE>";
                 s += " " + (is_nix_identifier(name) ? name : quote_nix(name)) + " = " +
                      fmt_value(ram32(a + 4 + 4 * aux + 4 * i), depth + 1) + ";";
             }
@@ -408,7 +441,9 @@ std::string fmt_value(uint32_t ptr, int depth) {
 // prints the VM's answer in Nix syntax on a `result:` line (or `error: E_NAME`), which
 // is what scripts/scoreboard.py compares with the corpus's .exp files. The result
 // contract is BYTECODE.md "Result reporting".
-int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
+// `cvm` selects the C VM's contract (docs/VM.md): the image goes to bank 3 and
+// the error dump reads the DIAG block instead of the assembly VM's zero page.
+int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress, bool cvm) {
     if (!load_image(vm_path)) return 2;
     // The VM collects at every bytecode boundary when this byte is set (gc.s),
     // which turns every fixture into a collector test.
@@ -418,12 +453,13 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }
         const std::vector<uint8_t> nbc((std::istreambuf_iterator<char>(f)),
                                        std::istreambuf_iterator<char>());
-        if (nbc.empty() || nbc.size() > NBC_MAX) {
-            std::fprintf(stderr, "%s: %zu bytes; the VM accepts 1..%u\n", nbc_path, nbc.size(),
-                         static_cast<unsigned>(NBC_MAX));
+        const uint32_t base = cvm ? NBC_BASE_C : NBC_BASE;
+        const size_t max = cvm ? NBC_MAX_C : NBC_MAX;
+        if (nbc.empty() || nbc.size() > max) {
+            std::fprintf(stderr, "%s: %zu bytes; the VM accepts 1..%zu\n", nbc_path, nbc.size(), max);
             return 2;
         }
-        for (size_t i = 0; i < nbc.size(); ++i) ram[NBC_BASE + i] = nbc[i];
+        for (size_t i = 0; i < nbc.size(); ++i) ram[base + i] = nbc[i];
     }
     bring_up_card();
     const bool halted = run_to_halt();
@@ -445,14 +481,26 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         const uint8_t code = ram[RESULT_STAT + 1];
         const char *name = code < sizeof(names) / sizeof(names[0]) ? names[code] : "E_?";
         cpu.print_trace(stdout);
-        // Zero-page layout of target/vm/vm.s: pc $80, ctab $82, env $84, vsp $86,
-        // nfree $88. Keep in step with the .zeropage block there.
-        const uint32_t vsp = ram[0x86] | (ram[0x87] << 8);
-        std::printf("\n  vsp=%04X nfree=%04X env=%04X sp=%04X\n", vsp,
-                    ram[0x88] | (ram[0x89] << 8), ram[0x84] | (ram[0x85] << 8), cpu.sp);
-        for (uint32_t s = vsp; s > VSTACK && s > vsp - 12; s -= 4)
-            std::printf("  stack[%d] = %08X %s\n", static_cast<int>((vsp - s) / 4), ram32(s - 4),
-                        fmt_value(ram32(s - 4), 0).c_str());
+        if (cvm) {
+            // DIAG (target/vm/c/main.c): pc offset, vsp, rsp, nfree, fstack_n, catch_n,
+            // then the value stack's address, so the top entries can be printed.
+            const uint32_t dv = r16at(DIAG, 2), vbase = ram32(DIAG + 12);
+            std::printf("\n  pc=%04X vsp=%u rsp=%u nfree=%04X fstack=%u catch=%u sp=%04X\n",
+                        r16at(DIAG, 0), dv, r16at(DIAG, 4), r16at(DIAG, 6), r16at(DIAG, 8),
+                        r16at(DIAG, 10), cpu.sp);
+            for (uint32_t i = dv; i > 0 && i + 3 > dv; --i)
+                std::printf("  stack[%u] = %08X %s\n", dv - i, ram32(vbase + 4 * (i - 1)),
+                            fmt_value(ram32(vbase + 4 * (i - 1)), 0).c_str());
+        } else {
+            // Zero-page layout of target/vm/vm.s: pc $80, ctab $82, env $84, vsp $86,
+            // nfree $88. Keep in step with the .zeropage block there.
+            const uint32_t vsp = ram[0x86] | (ram[0x87] << 8);
+            std::printf("\n  vsp=%04X nfree=%04X env=%04X sp=%04X\n", vsp,
+                        ram[0x88] | (ram[0x89] << 8), ram[0x84] | (ram[0x85] << 8), cpu.sp);
+            for (uint32_t s = vsp; s > VSTACK && s > vsp - 12; s -= 4)
+                std::printf("  stack[%d] = %08X %s\n", static_cast<int>((vsp - s) / 4), ram32(s - 4),
+                            fmt_value(ram32(s - 4), 0).c_str());
+        }
         if (code == 0x09 || code == 0x0A)   // the message string travels in RESULT
             std::printf("error: %s %s\n", name, fmt_value(ram32(RESULT), 0).c_str());
         else
@@ -604,6 +652,7 @@ int bench_nursery(const char *bin_path) {
 
 int main(int argc, char **argv) {
     Verilated::commandArgs(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "--trace-cpu") { trace_on = true; --argc; ++argv; }
 
     if (argc >= 3 && std::string(argv[1]) == "--selftest")
         return selftest(argv[2]);
@@ -615,9 +664,13 @@ int main(int argc, char **argv) {
         return run_bin(argv[2]);
 
     if (argc >= 4 && std::string(argv[1]) == "--run-nbc")
-        return run_nbc(argv[2], argv[3], false);
+        return run_nbc(argv[2], argv[3], false, false);
     if (argc >= 4 && std::string(argv[1]) == "--run-nbc-gc-stress")
-        return run_nbc(argv[2], argv[3], true);
+        return run_nbc(argv[2], argv[3], true, false);
+    if (argc >= 4 && std::string(argv[1]) == "--run-nbc-c")
+        return run_nbc(argv[2], argv[3], false, true);
+    if (argc >= 4 && std::string(argv[1]) == "--run-nbc-c-gc-stress")
+        return run_nbc(argv[2], argv[3], true, true);
 
     if (argc >= 5 && (std::string(argv[1]) == "--bench-mul64" || std::string(argv[1]) == "--bench-mul64-native"))
         return bench_mul64(argv[2],

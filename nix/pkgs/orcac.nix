@@ -14,9 +14,21 @@
 { lib
 , stdenvNoCC
 , fetchurl
+, fetchFromGitHub
 , cadius
 }:
 
+let
+  # The release image is an update package: it ships only the headers ORCA/C
+  # changed. The rest (setjmp.h, the Toolbox headers, ...) come from the same
+  # release's tag in the repository, under the same licence.
+  repo = fetchFromGitHub {
+    owner = "byteworksinc";
+    repo = "ORCA-C";
+    rev = "53342ce6faa0f8f15a891ea44933f52d73a89457";   # tag orcac-230b1
+    hash = "sha256-FgNC0EqtU3WGC0BRcrL4Sqx14nyP5Wh7K99sHGG0sCY=";
+  };
+in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "orcac";
   version = "2.3.0b1";
@@ -42,6 +54,14 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     test -f "$out/orca/Languages/Linker#B5DB01"
     test -f "$out/orca/Libraries/ORCACDefs/stdint.h#B00008"
     test -f "$out/orca/Libraries/ORCALib#B20000"
+    # headers the image does not carry, from the repository at the same tag;
+    # CR line endings and the SRC/C type, as the image's own headers have
+    for h in ${repo}/ORCACDefs/*.h; do
+      n=$(basename "$h")
+      [ -e "$out/orca/Libraries/ORCACDefs/$n#B00008" ] && continue
+      tr -d '\r' < "$h" | tr '\n' '\r' > "$out/orca/Libraries/ORCACDefs/$n#B00008"
+    done
+    test -f "$out/orca/Libraries/ORCACDefs/setjmp.h#B00008"
     runHook postInstall
   '';
 

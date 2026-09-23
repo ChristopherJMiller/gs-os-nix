@@ -1732,21 +1732,61 @@ int omf2bin(const std::string &in, const std::string &out, uint32_t org) {
     //   clc xce rep #$30 tsc sta $03FE lda #$1FFF tcs jsl entry lda $03FE tcs sec xce rts
     const uint32_t stub_len = 23;
     uint32_t cursor = org + stub_len;
+    // Bank 0 holds the first segment (code and, in the small model, every global)
+    // and any data segment, below $C000 where the IIgs has its I/O space. Further
+    // code segments -- ORCA/C's `segment "name";` -- get banks of their own from
+    // bank 4 up; ORCA/C calls every function with JSL, and absolute addressing
+    // still means bank 0 because nothing changes the data bank register.
+    constexpr uint32_t BANK0_LIMIT = 0xC000, FIRST_CODE_BANK = 4;
+    uint32_t code_bank = FIRST_CODE_BANK, bank_cursor = 0;
+    bool first = true;                                            // the blank segment: code + globals
+    std::vector<std::pair<uint32_t, uint32_t>> extra;             // (address, size) outside bank 0
     Loaded L = load_omf(image, in, [&](const OmfSegment &s, uint32_t size, bool dpstack) {
         if (dpstack) return 0x0000u;                              // a2min programs bring their own DP
-        cursor = (cursor + 0xFF) & ~0xFFu;                        // page aligned
-        const uint32_t at = cursor;
-        if (at + size > 0x10000) fatal("omf2bin: segment '%s' does not fit in bank 0 below $10000", s.segname.c_str());
-        cursor += size;
+        const bool code = (s.kind & 0x1F) == 0x00;
+        const bool blank = first;                                 // (segment numbers start after ExpressLoad's)
+        first = false;
+        if (blank || !code) {
+            cursor = (cursor + 0xFF) & ~0xFFu;                    // page aligned
+            const uint32_t at = cursor;
+            if (at + size > BANK0_LIMIT)
+                fatal("omf2bin: segment '%s' (%u bytes) does not fit in bank 0 below $C000; "
+                      "move code into a `segment` of its own", s.segname.c_str(), size);
+            cursor += size;
+            return at;
+        }
+        if (size > 0x10000) fatal("omf2bin: segment '%s' is larger than a bank", s.segname.c_str());
+        if (bank_cursor + size > 0x10000) { ++code_bank; bank_cursor = 0; }
+        const uint32_t at = (code_bank << 16) | bank_cursor;
+        bank_cursor = (bank_cursor + size + 0xFF) & ~0xFFu;
+        extra.emplace_back(at, size);
         return at;
     });
     const uint8_t stub[stub_len] = { 0x18, 0xFB, 0xC2, 0x30, 0x3B, 0x8D, 0xFE, 0x03, 0xA9, 0xFF, 0x1F, 0x1B,
                                      0x22, static_cast<uint8_t>(L.entry), static_cast<uint8_t>(L.entry >> 8), static_cast<uint8_t>(L.entry >> 16),
                                      0xAD, 0xFE, 0x03, 0x1B, 0x38, 0xFB, 0x60 };
     for (uint32_t i = 0; i < stub_len; ++i) w8(org + i, stub[i]);
-    std::vector<uint8_t> bin(ram.begin() + org, ram.begin() + cursor);
+    std::vector<uint8_t> bin;
+    if (extra.empty()) {
+        // everything in bank 0: a flat image, loaded at org
+        bin.assign(ram.begin() + org, ram.begin() + cursor);
+    } else {
+        // "GSIM", a chunk count, then (address, length, bytes) per chunk
+        auto put32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) bin.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+        bin.insert(bin.end(), {'G', 'S', 'I', 'M'});
+        const unsigned count = 1 + static_cast<unsigned>(extra.size());
+        bin.push_back(count & 0xFF); bin.push_back(count >> 8);
+        put32(org); put32(cursor - org);
+        bin.insert(bin.end(), ram.begin() + org, ram.begin() + cursor);
+        for (const auto &e : extra) {
+            put32(e.first); put32(e.second);
+            bin.insert(bin.end(), ram.begin() + e.first, ram.begin() + e.first + e.second);
+        }
+    }
     if (!write_host_file(out, bin)) fatal("cannot write %s", out.c_str());
-    std::printf("omf2bin: %s -> %s: %zu bytes at $%04X, entry $%06X\n", in.c_str(), out.c_str(), bin.size(), org, L.entry);
+    std::printf("omf2bin: %s -> %s: %u bytes in bank 0 at $%04X", in.c_str(), out.c_str(), cursor - org, org);
+    for (const auto &e : extra) std::printf(", %u at $%06X", e.second, e.first);
+    std::printf(", entry $%06X\n", L.entry);
     return 0;
 }
 

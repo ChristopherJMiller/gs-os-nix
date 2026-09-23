@@ -343,6 +343,41 @@
         # devShell and mkOrcaBinary use.
         orcarun = ours.orcarun;
 
+        # The VM in C (docs/VM.md), on the same corpus, fixtures and collector
+        # stress as the assembly VM, against its own ratchet while it climbs.
+        # The ratchet self-test lives in `scoreboard`; the mechanism is shared.
+        cvm-scoreboard = pkgs.runCommandCC "check-cvm-scoreboard"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.nbc ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            cvm=${ours.mkOrcaBinary {
+              name = "cvm";
+              srcs = [ ./target/vm/c/main.c ./target/vm/c/run.c ./target/vm/c/data.c
+                       ./target/vm/c/prims.c ./target/vm/c/gc.c ./target/vm/c/card.c ];
+              includes = [ ./target/vm/c ];
+            }}
+            python3 scripts/scoreboard.py --mode c \
+              --nbc nbc --a2min ./build/a2min --vm "$cvm/cvm.bin" \
+              --corpus tests/corpus/tvix --corpus tests/fixtures \
+              --build build/nbc \
+              --expected tests/corpus/expected-pass-c.txt | tee "$out"
+            grep -q "^SCOREBOARD:" "$out"
+            # every fixture again with a collection at every bytecode boundary;
+            # the tail-call fixture needs ~90M cycles this way (VM.md)
+            A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py --mode c \
+              --nbc nbc --a2min ./build/a2min --vm "$cvm/cvm.bin" \
+              --corpus tests/fixtures --build build/gc \
+              --expected tests/corpus/expected-pass-c.txt --gc-stress \
+              | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
+          '';
+
         # Regressions for the silent-corruption bug class. Every bug found in this
         # card produced a plausible-looking wrong answer rather than a failure, so
         # each one gets a permanent named test (sim/regress_main.cpp).

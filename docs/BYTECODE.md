@@ -104,7 +104,8 @@ integer-heavy code from allocating.
 
 A **value** is a 32-bit pointer to a heap object. Pointers with bit 31 set point
 into the nursery (CPU RAM); the rest point at the card. Slice 1 of the VM allocates
-only in the nursery.
+only in the nursery. (In the C VM the registers above are C globals and the
+nursery is bank 1 — [VM.md](VM.md); the contract is the same.)
 
 An **environment** is an ordinary `LIST` object whose element 0 is the parent
 environment (or null) and whose elements `1..n` are the bindings, so

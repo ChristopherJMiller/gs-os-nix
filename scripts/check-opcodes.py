@@ -4,10 +4,11 @@
   docs/BYTECODE.md          the normative table       | `$01` | `CONST` | ...
   tools/nbc/src/opcodes.rs  the generator             pub const OP_CONST: u8 = 0x01;
   target/vm/opcodes.inc     the 65816 VM              OP_CONST        = $01
+  target/vm/c/opcodes.h     the C VM (D18)            #define OP_CONST        0x01
 
 A generator and a VM that disagree on one opcode would produce fixtures that run
 and return plausible wrong answers -- the failure mode this project guards against
-hardest -- so the three are diffed mechanically rather than trusted.
+hardest -- so the four are diffed mechanically rather than trusted.
 """
 import re
 import sys
@@ -15,6 +16,7 @@ import sys
 DOC = "docs/BYTECODE.md"
 RS = "tools/nbc/src/opcodes.rs"
 INC = "target/vm/opcodes.inc"
+H = "target/vm/c/opcodes.h"
 
 
 def from_doc(path):
@@ -58,33 +60,66 @@ def from_inc(path):
     return ops
 
 
+def from_h(path):
+    ops = {}
+    decl = re.compile(r"^#define OP_([A-Z_]+)\s+0x([0-9A-Fa-f]{2})\s*$")
+    with open(path) as f:
+        for line in f:
+            m = decl.match(line)
+            if m:
+                ops[m.group(1)] = int(m.group(2), 16)
+    return ops
+
+
+def prims_from_h(path, names):
+    """#define PRIM_LENGTH 0x00 /* 1 */ -- matched back like the .inc form."""
+    by_symbol = {n.replace("'", "").upper(): n for n in names}
+    prims = {}
+    decl = re.compile(r"^#define PRIM_([A-Z0-9_]+)\s+0x([0-9A-Fa-f]{2})\s*/\*\s*(\d+)\s*\*/\s*$")
+    with open(path) as f:
+        for line in f:
+            m = decl.match(line)
+            if m and m.group(1) in by_symbol:
+                prims[by_symbol[m.group(1)]] = (int(m.group(2), 16), int(m.group(3)))
+            elif m:
+                prims["PRIM_" + m.group(1)] = (int(m.group(2), 16), int(m.group(3)))
+    return prims
+
+
 def selftest():
-    """Prove the checker can fail: copy the three files, change one VM opcode
-    value, and expect a disagreement. A checker that cannot fail is decoration."""
+    """Prove the checker can fail: copy the four files, change one VM opcode
+    value (in each VM in turn), and expect a disagreement. A checker that cannot
+    fail is decoration."""
     import os
     import shutil
     import subprocess
     import tempfile
 
-    with tempfile.TemporaryDirectory() as tmp:
-        for p in (DOC, RS, INC):
-            os.makedirs(os.path.join(tmp, os.path.dirname(p)), exist_ok=True)
-            shutil.copyfile(p, os.path.join(tmp, p))
-        inc = os.path.join(tmp, INC)
-        with open(inc) as f:
-            text = f.read()
-        mutated = text.replace("OP_FORCE        = $41", "OP_FORCE        = $43")
-        if mutated == text:
-            print("selftest: PATTERN MISS -- update the mutation", file=sys.stderr)
-            return 1
-        with open(inc, "w") as f:
-            f.write(mutated)
-        rc = subprocess.run([sys.executable, os.path.abspath(__file__)], cwd=tmp,
-                            capture_output=True).returncode
-        if rc == 0:
-            print("selftest: SURVIVED -- a changed VM opcode was not caught", file=sys.stderr)
-            return 1
-    print("NBC OPCODES SELFTEST OK: a changed VM opcode is caught")
+    mutations = [
+        (INC, "OP_FORCE        = $41", "OP_FORCE        = $43"),
+        (H, "#define OP_FORCE        0x41", "#define OP_FORCE        0x43"),
+        (H, "#define PRIM_HEAD               0x01 /* 1 */", "#define PRIM_HEAD               0x01 /* 2 */"),
+    ]
+    for target, before, after in mutations:
+        with tempfile.TemporaryDirectory() as tmp:
+            for p in (DOC, RS, INC, H):
+                os.makedirs(os.path.join(tmp, os.path.dirname(p)), exist_ok=True)
+                shutil.copyfile(p, os.path.join(tmp, p))
+            path = os.path.join(tmp, target)
+            with open(path) as f:
+                text = f.read()
+            mutated = text.replace(before, after)
+            if mutated == text:
+                print(f"selftest: PATTERN MISS in {target} -- update the mutation", file=sys.stderr)
+                return 1
+            with open(path, "w") as f:
+                f.write(mutated)
+            rc = subprocess.run([sys.executable, os.path.abspath(__file__)], cwd=tmp,
+                                capture_output=True).returncode
+            if rc == 0:
+                print(f"selftest: SURVIVED -- a change in {target} was not caught", file=sys.stderr)
+                return 1
+    print("NBC OPCODES SELFTEST OK: a changed opcode or arity in either VM is caught")
     return 0
 
 
@@ -149,13 +184,14 @@ def main():
         return selftest()
 
     prim_doc = prims_from_doc(DOC)
-    prim_tables = {RS: prims_from_rs(RS), INC: prims_from_inc(INC, prim_doc.keys())}
+    prim_tables = {RS: prims_from_rs(RS), INC: prims_from_inc(INC, prim_doc.keys()),
+                   H: prims_from_h(H, prim_doc.keys())}
     if not prim_doc or any(not t for t in prim_tables.values()):
         print("primop table: parsed nothing from one source -- a pattern is stale", file=sys.stderr)
         return 1
     prim_bad = diff("primop", prim_doc, prim_tables)
 
-    tables = {DOC: from_doc(DOC), RS: from_rs(RS), INC: from_inc(INC)}
+    tables = {DOC: from_doc(DOC), RS: from_rs(RS), INC: from_inc(INC), H: from_h(H)}
     for name, t in tables.items():
         if not t:
             print(f"{name}: parsed no opcodes -- the pattern is stale", file=sys.stderr)
@@ -180,7 +216,7 @@ def main():
     if bad or prim_bad:
         print(f"NBC OPCODES FAIL: {bad + prim_bad} disagreement(s)", file=sys.stderr)
         return 1
-    print(f"NBC OPCODES OK: {len(ref)} opcodes and {len(prim_doc)} primops agree across {DOC}, {RS}, {INC}")
+    print(f"NBC OPCODES OK: {len(ref)} opcodes and {len(prim_doc)} primops agree across {DOC}, {RS}, {INC}, {H}")
     return 0
 
 
