@@ -54,6 +54,7 @@ tvix/nix_tests/eval-okay-eq
 tvix/nix_tests/eval-okay-foldlStrict-lazy-elements
 tvix/nix_tests/eval-okay-foldlStrict-lazy-initial-accumulator
 tvix/nix_tests/eval-okay-if
+tvix/nix_tests/eval-okay-ind-string
 tvix/nix_tests/eval-okay-let
 tvix/nix_tests/eval-okay-logic
 tvix/nix_tests/eval-okay-nested-with

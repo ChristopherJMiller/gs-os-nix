@@ -99,9 +99,8 @@ against it as `struct`s with explicit little-endian fields. The dispatch loop,
 - **`checks.orcarun`** — the harness package builds.
 - **`checks.a2min-native` + `checks.mutation-a2min`** now also cover the core ORCA/C
   itself runs on: a wrong 65816 would miscompile the VM *and* misrun it.
-- Everything that exists for the VM — fixtures, corpus scoreboard, GC-stress —
-  verifies the C port against the assembly one; the assembly VM stays in the tree
-  until the C VM passes every test it does.
+- Everything that existed for the assembly VM — fixtures, corpus scoreboard,
+  GC-stress — verified the C port against it; at parity the assembly was removed.
 
 ## Follow-up (STATUS.md)
 

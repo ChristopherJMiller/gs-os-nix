@@ -4,7 +4,7 @@ The 65816 VM (`target/vm/`) executes `.nbc` files. This document defines the fil
 format, the constant pool, the opcode set, and — the part that matters most for a
 lazy language — **where thunks are placed**. The host-side generator (`tools/nbc/`)
 and the VM must agree with it byte for byte; `checks.nbc-opcodes` asserts that the
-opcode table below, the generator's `opcodes.rs` and the VM's `opcodes.inc` are the
+opcode table below, the generator's `opcodes.rs` and the VM's `opcodes.h` are the
 same table.
 
 ## Where `.nbc` files come from, and where they never go
@@ -104,8 +104,8 @@ integer-heavy code from allocating.
 
 A **value** is a 32-bit pointer to a heap object. Pointers with bit 31 set point
 into the nursery (CPU RAM); the rest point at the card. Slice 1 of the VM allocates
-only in the nursery. (In the C VM the registers above are C globals and the
-nursery is bank 1 — [VM.md](VM.md); the contract is the same.)
+only in the nursery. (The registers above are C globals and the nursery is bank
+1 — [VM.md](VM.md).)
 
 An **environment** is an ordinary `LIST` object whose element 0 is the parent
 environment (or null) and whose elements `1..n` are the bindings, so

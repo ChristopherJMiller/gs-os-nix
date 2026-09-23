@@ -27,6 +27,14 @@
         orcarun = self'.callPackage ./nix/pkgs/orcarun.nix { };
         orca-toolchain = self'.callPackage ./nix/pkgs/orca-toolchain.nix { };
         mkOrcaBinary = self'.callPackage ./nix/lib/mkOrcaBinary.nix { };
+        # The VM itself (docs/VM.md): C, compiled by ORCA/C, flattened for a2min.
+        # `nix build .#cvm` -> result/cvm.bin. main.c must stay first.
+        cvm = self'.mkOrcaBinary {
+          name = "cvm";
+          srcs = [ ./target/vm/c/main.c ./target/vm/c/run.c ./target/vm/c/data.c
+                   ./target/vm/c/prims.c ./target/vm/c/gc.c ./target/vm/c/card.c ];
+          includes = [ ./target/vm/c ];
+        };
       });
 
       forAll = f: nixpkgs.lib.genAttrs systems (system:
@@ -108,7 +116,7 @@
         # `cargo test` (nix/pkgs/nbc.nix).
         nbc-tests = ours.nbc;
 
-        # The opcode table lives in BYTECODE.md, opcodes.rs and opcodes.inc. A
+        # The opcode table lives in BYTECODE.md, opcodes.rs and opcodes.h. A
         # disagreement between generator and VM would yield fixtures that run and
         # return plausible wrong answers, so the three are diffed mechanically.
         nbc-opcodes = pkgs.runCommand "check-nbc-opcodes"
@@ -139,32 +147,31 @@
         # dropping out of it fails the check, so the number can only rise. The
         # compiled fixtures are then purity-checked against their sources.
         scoreboard = pkgs.runCommandCC "check-scoreboard"
-          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 pkgs.cc65 ours.nbc ]; }
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.nbc ]; }
           ''
-            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/target ${self}/scripts ${self}/tools .
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/scripts .
             chmod -R +w .
             patchShebangs scripts
-            mkdir -p target/build
-            ca65 --cpu 65816 -I target/vm -o target/build/vm.o target/vm/vm.s
-            ld65 -C target/vm/vm.cfg -o target/build/vm.bin target/build/vm.o
             verilator --cc --exe --build -j $NIX_BUILD_CORES \
               -Irtl --top-module a2nix_card \
               -Wall -Wno-DECLFILENAME \
               --Mdir build -o a2min \
               rtl/a2nix_card.v sim/a2min.cpp
+            vm=${ours.cvm}/cvm.bin
             python3 scripts/scoreboard.py \
-              --nbc nbc --a2min ./build/a2min --vm target/build/vm.bin \
+              --nbc nbc --a2min ./build/a2min --vm "$vm" \
               --corpus tests/corpus/tvix --corpus tests/fixtures \
-              --build target/build/nbc \
+              --build build/nbc \
               --expected tests/corpus/expected-pass.txt | tee "$out"
             grep -q "^SCOREBOARD:" "$out"
-            ./scripts/fixture-purity.sh target/build/nbc | tee -a "$out"
+            ./scripts/fixture-purity.sh build/nbc | tee -a "$out"
 
             # The collector test: every local fixture again, with a nursery
             # collection at every bytecode boundary. A fixture that passes
-            # normally and fails here has a root the collector cannot see.
-            python3 scripts/scoreboard.py \
-              --nbc nbc --a2min ./build/a2min --vm target/build/vm.bin \
+            # normally and fails here has a root the collector cannot see. The
+            # tail-call fixture needs ~90M cycles this way (VM.md), hence the budget.
+            A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py \
+              --nbc nbc --a2min ./build/a2min --vm "$vm" \
               --corpus tests/fixtures --build build/gc \
               --expected tests/corpus/expected-pass.txt --gc-stress \
               | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
@@ -176,7 +183,7 @@
             echo "wrong" > ghost/eval-okay-let-forward.exp
             echo "ghost/eval-okay-let-forward" > ghost.txt
             if python3 scripts/scoreboard.py \
-                 --nbc nbc --a2min ./build/a2min --vm target/build/vm.bin \
+                 --nbc nbc --a2min ./build/a2min --vm "$vm" \
                  --corpus ghost --build build/ghost --expected ghost.txt \
                  > ghost.log 2>&1; then
               echo "scoreboard ratchet SURVIVED a planted regression" >&2; exit 1
@@ -343,41 +350,6 @@
         # devShell and mkOrcaBinary use.
         orcarun = ours.orcarun;
 
-        # The VM in C (docs/VM.md), on the same corpus, fixtures and collector
-        # stress as the assembly VM, against its own ratchet while it climbs.
-        # The ratchet self-test lives in `scoreboard`; the mechanism is shared.
-        cvm-scoreboard = pkgs.runCommandCC "check-cvm-scoreboard"
-          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.nbc ]; }
-          ''
-            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/scripts .
-            chmod -R +w .
-            patchShebangs scripts
-            verilator --cc --exe --build -j $NIX_BUILD_CORES \
-              -Irtl --top-module a2nix_card \
-              -Wall -Wno-DECLFILENAME \
-              --Mdir build -o a2min \
-              rtl/a2nix_card.v sim/a2min.cpp
-            cvm=${ours.mkOrcaBinary {
-              name = "cvm";
-              srcs = [ ./target/vm/c/main.c ./target/vm/c/run.c ./target/vm/c/data.c
-                       ./target/vm/c/prims.c ./target/vm/c/gc.c ./target/vm/c/card.c ];
-              includes = [ ./target/vm/c ];
-            }}
-            python3 scripts/scoreboard.py --mode c \
-              --nbc nbc --a2min ./build/a2min --vm "$cvm/cvm.bin" \
-              --corpus tests/corpus/tvix --corpus tests/fixtures \
-              --build build/nbc \
-              --expected tests/corpus/expected-pass-c.txt | tee "$out"
-            grep -q "^SCOREBOARD:" "$out"
-            # every fixture again with a collection at every bytecode boundary;
-            # the tail-call fixture needs ~90M cycles this way (VM.md)
-            A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py --mode c \
-              --nbc nbc --a2min ./build/a2min --vm "$cvm/cvm.bin" \
-              --corpus tests/fixtures --build build/gc \
-              --expected tests/corpus/expected-pass-c.txt --gc-stress \
-              | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
-          '';
-
         # Regressions for the silent-corruption bug class. Every bug found in this
         # card produced a plausible-looking wrong answer rather than a failure, so
         # each one gets a permanent named test (sim/regress_main.cpp).
@@ -469,6 +441,8 @@
         # The C toolchain (D18): ORCA/C's release, the harness, and the wrapper
         # commands. `nix build .#orcac` fetches the release for this machine.
         inherit (ours) orcac orcarun orca-toolchain;
+        # The VM (docs/VM.md): `nix build .#cvm` -> result/cvm.bin for a2min --run-nbc.
+        inherit (ours) cvm;
         default = ours.verilated-card;
       });
 

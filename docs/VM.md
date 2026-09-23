@@ -3,8 +3,9 @@
 The bytecode VM, ported from `target/vm/*.s` to C compiled by ORCA/C
 ([TOOLCHAIN.md](TOOLCHAIN.md)). [BYTECODE.md](BYTECODE.md) says what it executes,
 [HEAP.md](HEAP.md) how values are laid out; this page says how the C program is
-shaped, where it lives, and how the port is verified. The assembly VM stays in the
-tree until the C one passes every test it does.
+shaped, where it lives, and how the port was verified. The assembly VM it replaced
+was removed at parity (commit 05ce616 is the last with both); `promote.s` and
+`card.s` remain as the reference for slice 4.
 
 ## Memory map
 
@@ -28,7 +29,7 @@ bank 0
 
 bank 1  NURSERY   $010000-$01FFFF   64 KB, bump-allocated
 bank 2  STAGE     $020000-$02FFFF   the collector's to-space
-bank 3  the .nbc image               $030000, up to 64 KB (a2min --run-nbc-c puts it there)
+bank 3  the .nbc image               $030000, up to 64 KB (a2min --run-nbc puts it there)
 bank 4+ further code segments        ORCA/C `segment "prims";` etc., placed by omf2bin;
                                      the interpreter core stays in bank 0
 ```
@@ -96,8 +97,8 @@ name, so the two can be read side by side while both exist.
 ```
 target/vm/c/
   vm.h        object structs, tags, error codes, the register globals, RSTACK API
-  opcodes.h   OP_* / PRIM_* — the same table as opcodes.inc and opcodes.rs
-              (checks.nbc-opcodes diffs all four against BYTECODE.md)
+  opcodes.h   OP_* / PRIM_* — the same table as the generator's opcodes.rs
+              (checks.nbc-opcodes diffs both against BYTECODE.md)
   main.c      entry (first in the link: omf2bin takes the first code segment's
               entry), the loader, result reporting, DIAG
   run.c       run(): dispatch, environments, calls, thunks, FORCE, catch frames
@@ -140,18 +141,18 @@ code for no measurable speed, so it stayed a function.
 
 ## How the port is verified
 
-The assembly VM's tests are the C VM's tests, unchanged:
+The assembly VM's tests became the C VM's tests, unchanged:
 
-- `a2min --run-nbc-c <cvm.bin> <fixture.nbc>` (and `-gc-stress`) is `--run-nbc`
-  with the image at bank 3 and the DIAG block printed instead of the assembly
-  VM's zero page. The printer, the result contract and the error names are shared.
-- `scripts/scoreboard.py --mode c` runs the corpus and the fixtures on it.
-  `tests/corpus/expected-pass-c.txt` is the C VM's own ratchet while it climbs;
-  when it reaches the assembly VM's set, one file replaces the other and the
-  assembly VM is deleted.
-- `checks.cvm-scoreboard` gates it, including every fixture under GC stress.
-  a2min's cycle budget (50M) is raised for that run (`A2MIN_BUDGET`): with a
-  collection at every bytecode boundary the tail-call fixture needs ~90M.
+- `a2min --run-nbc <cvm.bin> <fixture.nbc>` (and `--run-nbc-gc-stress`) loads
+  the image into bank 3 and, on an error, prints the DIAG block `main.c` writes
+  (pc, the stack depths, `nfree`) and the top of the value stack.
+- `scripts/scoreboard.py` runs the corpus and the fixtures;
+  `tests/corpus/expected-pass.txt` is the ratchet. While the C VM climbed it had
+  a ratchet of its own; at parity that file replaced the assembly's.
+- `checks.scoreboard` gates it, including every fixture under GC stress and the
+  planted-regression self-test. a2min's cycle budget (50M) is raised for the
+  stress run (`A2MIN_BUDGET`): with a collection at every bytecode boundary the
+  tail-call fixture needs ~90M.
 
 **Status (2026-09-22): parity reached.** The whole assembly VM — dispatch,
 forcing, environments, calls, `with`, strings, lists, sets, equality, deep
@@ -160,7 +161,6 @@ the fixtures found one bug (see `main.c`: the load file's entry point is the
 first function of the first object, and `err_exit` was first). Then 39/39
 fixtures, 39/39 with a collection at every bytecode boundary, and **247/405 on
 the corpus** against the assembly's 246: the 64 KB nursery lets
-`eval-okay-ind-string` finish. `tests/corpus/expected-pass-c.txt` is the
-ratchet; `checks.cvm-scoreboard` gates it. Next: slice 4's promotion — the step
+`eval-okay-ind-string` finish. Next: slice 4's promotion — the step
 that was in progress when the language changed, with `target/vm/promote.s` and
 `card.s` as its reference — and then the 2.5× measured above.

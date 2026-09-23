@@ -76,12 +76,9 @@ constexpr uint16_t HALT_ADDR   = 0xFFFE;        // RTS from the entry point land
 constexpr uint16_t RESULT      = 0x0300;
 constexpr uint16_t RESULT_STAT = 0x0320;
 constexpr uint16_t SELFTEST_RESULT = 0x0400;    // the native self-test's word table
-constexpr uint32_t NBC_BASE    = 0x9000;        // where --run-nbc places the image (vm.s map)
-constexpr uint16_t NBC_MAX     = 0x2000;
-constexpr uint32_t NBC_BASE_C  = 0x030000;      // the C VM reads the image from bank 3 (docs/VM.md)
-constexpr size_t   NBC_MAX_C   = 0xFFF0;
-constexpr uint32_t DIAG        = 0x0310;        // the C VM's state on error (main.c diag_write)
-constexpr uint32_t VSTACK      = 0xB000;
+constexpr uint32_t NBC_BASE    = 0x030000;      // where --run-nbc places the image: bank 3 (docs/VM.md)
+constexpr size_t   NBC_MAX     = 0xFFF0;
+constexpr uint32_t DIAG        = 0x0310;        // the VM's state on error (target/vm/c/main.c diag_write)
 
 int card_slot = 4;
 
@@ -394,7 +391,7 @@ std::string fmt_value(uint32_t ptr, int depth) {
     if (depth > 64) return "<DEEP>";
     if (ptr == 0) return "<NULLPTR>";
     if (!(ptr & 0x80000000u)) return "<MATURE>";
-    const uint32_t a = ptr & 0xFFFFFF;  // bank 0 for the assembly VM, bank 1 for the C VM
+    const uint32_t a = ptr & 0xFFFFFF;  // young objects are in bank 1, statics in bank 0
     const uint8_t tag = ram[a];
     const uint32_t aux = (ram32(a) >> 8) & 0x3FFFFF;
     if (a + 4 + 12 * aux >= RAM_BYTES) return "<OOB>";
@@ -435,17 +432,16 @@ std::string fmt_value(uint32_t ptr, int depth) {
 
 // --- L4: run one .nbc fixture on the 65816 VM --------------------------------------
 //
-//   a2min --run-nbc <vm.bin> <fixture.nbc>
+//   a2min --run-nbc <cvm.bin> <fixture.nbc>
 //
-// Loads target/vm/vm.bin at $2000 and the fixture at NBC_BASE, runs to the halt, and
+// Loads the VM (target/vm/c, flattened by omf2bin) at $2000 and the fixture at
+// NBC_BASE in bank 3, runs to the halt, and
 // prints the VM's answer in Nix syntax on a `result:` line (or `error: E_NAME`), which
 // is what scripts/scoreboard.py compares with the corpus's .exp files. The result
 // contract is BYTECODE.md "Result reporting".
-// `cvm` selects the C VM's contract (docs/VM.md): the image goes to bank 3 and
-// the error dump reads the DIAG block instead of the assembly VM's zero page.
-int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress, bool cvm) {
+int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     if (!load_image(vm_path)) return 2;
-    // The VM collects at every bytecode boundary when this byte is set (gc.s),
+    // The VM collects at every bytecode boundary when this byte is set (gc.c),
     // which turns every fixture into a collector test.
     ram[0x0BF0] = gc_stress ? 1 : 0;
     {
@@ -453,13 +449,11 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress, bool cvm)
         if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }
         const std::vector<uint8_t> nbc((std::istreambuf_iterator<char>(f)),
                                        std::istreambuf_iterator<char>());
-        const uint32_t base = cvm ? NBC_BASE_C : NBC_BASE;
-        const size_t max = cvm ? NBC_MAX_C : NBC_MAX;
-        if (nbc.empty() || nbc.size() > max) {
-            std::fprintf(stderr, "%s: %zu bytes; the VM accepts 1..%zu\n", nbc_path, nbc.size(), max);
+        if (nbc.empty() || nbc.size() > NBC_MAX) {
+            std::fprintf(stderr, "%s: %zu bytes; the VM accepts 1..%zu\n", nbc_path, nbc.size(), NBC_MAX);
             return 2;
         }
-        for (size_t i = 0; i < nbc.size(); ++i) ram[base + i] = nbc[i];
+        for (size_t i = 0; i < nbc.size(); ++i) ram[NBC_BASE + i] = nbc[i];
     }
     bring_up_card();
     const bool halted = run_to_halt();
@@ -481,7 +475,7 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress, bool cvm)
         const uint8_t code = ram[RESULT_STAT + 1];
         const char *name = code < sizeof(names) / sizeof(names[0]) ? names[code] : "E_?";
         cpu.print_trace(stdout);
-        if (cvm) {
+        {
             // DIAG (target/vm/c/main.c): pc offset, vsp, rsp, nfree, fstack_n, catch_n,
             // then the value stack's address, so the top entries can be printed.
             const uint32_t dv = r16at(DIAG, 2), vbase = ram32(DIAG + 12);
@@ -491,15 +485,6 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress, bool cvm)
             for (uint32_t i = dv; i > 0 && i + 3 > dv; --i)
                 std::printf("  stack[%u] = %08X %s\n", dv - i, ram32(vbase + 4 * (i - 1)),
                             fmt_value(ram32(vbase + 4 * (i - 1)), 0).c_str());
-        } else {
-            // Zero-page layout of target/vm/vm.s: pc $80, ctab $82, env $84, vsp $86,
-            // nfree $88. Keep in step with the .zeropage block there.
-            const uint32_t vsp = ram[0x86] | (ram[0x87] << 8);
-            std::printf("\n  vsp=%04X nfree=%04X env=%04X sp=%04X\n", vsp,
-                        ram[0x88] | (ram[0x89] << 8), ram[0x84] | (ram[0x85] << 8), cpu.sp);
-            for (uint32_t s = vsp; s > VSTACK && s > vsp - 12; s -= 4)
-                std::printf("  stack[%d] = %08X %s\n", static_cast<int>((vsp - s) / 4), ram32(s - 4),
-                            fmt_value(ram32(s - 4), 0).c_str());
         }
         if (code == 0x09 || code == 0x0A)   // the message string travels in RESULT
             std::printf("error: %s %s\n", name, fmt_value(ram32(RESULT), 0).c_str());
@@ -664,13 +649,9 @@ int main(int argc, char **argv) {
         return run_bin(argv[2]);
 
     if (argc >= 4 && std::string(argv[1]) == "--run-nbc")
-        return run_nbc(argv[2], argv[3], false, false);
+        return run_nbc(argv[2], argv[3], false);
     if (argc >= 4 && std::string(argv[1]) == "--run-nbc-gc-stress")
-        return run_nbc(argv[2], argv[3], true, false);
-    if (argc >= 4 && std::string(argv[1]) == "--run-nbc-c")
-        return run_nbc(argv[2], argv[3], false, true);
-    if (argc >= 4 && std::string(argv[1]) == "--run-nbc-c-gc-stress")
-        return run_nbc(argv[2], argv[3], true, true);
+        return run_nbc(argv[2], argv[3], true);
 
     if (argc >= 5 && (std::string(argv[1]) == "--bench-mul64" || std::string(argv[1]) == "--bench-mul64-native"))
         return bench_mul64(argv[2],

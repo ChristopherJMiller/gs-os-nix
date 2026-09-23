@@ -3,19 +3,17 @@
 
   docs/BYTECODE.md          the normative table       | `$01` | `CONST` | ...
   tools/nbc/src/opcodes.rs  the generator             pub const OP_CONST: u8 = 0x01;
-  target/vm/opcodes.inc     the 65816 VM              OP_CONST        = $01
-  target/vm/c/opcodes.h     the C VM (D18)            #define OP_CONST        0x01
+  target/vm/c/opcodes.h     the VM (C, D18)           #define OP_CONST        0x01
 
 A generator and a VM that disagree on one opcode would produce fixtures that run
 and return plausible wrong answers -- the failure mode this project guards against
-hardest -- so the four are diffed mechanically rather than trusted.
+hardest -- so the three are diffed mechanically rather than trusted.
 """
 import re
 import sys
 
 DOC = "docs/BYTECODE.md"
 RS = "tools/nbc/src/opcodes.rs"
-INC = "target/vm/opcodes.inc"
 H = "target/vm/c/opcodes.h"
 
 
@@ -49,15 +47,6 @@ def from_rs(path):
     return ops
 
 
-def from_inc(path):
-    ops = {}
-    decl = re.compile(r"^OP_([A-Z_]+)\s*=\s*\$([0-9A-Fa-f]{2})\s*$")
-    with open(path) as f:
-        for line in f:
-            m = decl.match(line)
-            if m:
-                ops[m.group(1)] = int(m.group(2), 16)
-    return ops
 
 
 def from_h(path):
@@ -87,22 +76,21 @@ def prims_from_h(path, names):
 
 
 def selftest():
-    """Prove the checker can fail: copy the four files, change one VM opcode
-    value (in each VM in turn), and expect a disagreement. A checker that cannot
-    fail is decoration."""
+    """Prove the checker can fail: copy the three files, change one VM opcode
+    value and one arity, and expect a disagreement. A checker that cannot fail
+    is decoration."""
     import os
     import shutil
     import subprocess
     import tempfile
 
     mutations = [
-        (INC, "OP_FORCE        = $41", "OP_FORCE        = $43"),
         (H, "#define OP_FORCE        0x41", "#define OP_FORCE        0x43"),
         (H, "#define PRIM_HEAD               0x01 /* 1 */", "#define PRIM_HEAD               0x01 /* 2 */"),
     ]
     for target, before, after in mutations:
         with tempfile.TemporaryDirectory() as tmp:
-            for p in (DOC, RS, INC, H):
+            for p in (DOC, RS, H):
                 os.makedirs(os.path.join(tmp, os.path.dirname(p)), exist_ok=True)
                 shutil.copyfile(p, os.path.join(tmp, p))
             path = os.path.join(tmp, target)
@@ -119,7 +107,7 @@ def selftest():
             if rc == 0:
                 print(f"selftest: SURVIVED -- a change in {target} was not caught", file=sys.stderr)
                 return 1
-    print("NBC OPCODES SELFTEST OK: a changed opcode or arity in either VM is caught")
+    print("NBC OPCODES SELFTEST OK: a changed opcode or arity is caught")
     return 0
 
 
@@ -152,20 +140,6 @@ def prims_from_rs(path):
     return prims
 
 
-def prims_from_inc(path, names):
-    """PRIM_LENGTH = $00 ; 1 -- matched back to the Nix name by upper-casing it
-    and dropping the prime."""
-    by_symbol = {n.replace("'", "").upper(): n for n in names}
-    prims = {}
-    decl = re.compile(r"^PRIM_([A-Z0-9_]+)\s*=\s*\$([0-9A-Fa-f]{2})\s*;\s*(\d+)\s*$")
-    with open(path) as f:
-        for line in f:
-            m = decl.match(line)
-            if m and m.group(1) in by_symbol:
-                prims[by_symbol[m.group(1)]] = (int(m.group(2), 16), int(m.group(3)))
-            elif m:
-                prims["PRIM_" + m.group(1)] = (int(m.group(2), 16), int(m.group(3)))
-    return prims
 
 
 def diff(label, ref, tables):
@@ -184,14 +158,13 @@ def main():
         return selftest()
 
     prim_doc = prims_from_doc(DOC)
-    prim_tables = {RS: prims_from_rs(RS), INC: prims_from_inc(INC, prim_doc.keys()),
-                   H: prims_from_h(H, prim_doc.keys())}
+    prim_tables = {RS: prims_from_rs(RS), H: prims_from_h(H, prim_doc.keys())}
     if not prim_doc or any(not t for t in prim_tables.values()):
         print("primop table: parsed nothing from one source -- a pattern is stale", file=sys.stderr)
         return 1
     prim_bad = diff("primop", prim_doc, prim_tables)
 
-    tables = {DOC: from_doc(DOC), RS: from_rs(RS), INC: from_inc(INC), H: from_h(H)}
+    tables = {DOC: from_doc(DOC), RS: from_rs(RS), H: from_h(H)}
     for name, t in tables.items():
         if not t:
             print(f"{name}: parsed no opcodes -- the pattern is stale", file=sys.stderr)
@@ -216,7 +189,7 @@ def main():
     if bad or prim_bad:
         print(f"NBC OPCODES FAIL: {bad + prim_bad} disagreement(s)", file=sys.stderr)
         return 1
-    print(f"NBC OPCODES OK: {len(ref)} opcodes and {len(prim_doc)} primops agree across {DOC}, {RS}, {INC}, {H}")
+    print(f"NBC OPCODES OK: {len(ref)} opcodes and {len(prim_doc)} primops agree across {DOC}, {RS}, {H}")
     return 0
 
 

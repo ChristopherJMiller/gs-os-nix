@@ -204,40 +204,44 @@ orca-smoke: build-a2min
     orcabuild -o target/build/smoke.bin -O target/tests/smoke.c
     ./sim/build_a2min/a2min --run-bin target/build/smoke.bin
 
-# --- The VM in C (docs/VM.md) --------------------------------------------------
+# --- The VM (docs/VM.md): C, compiled by ORCA/C ---------------------------------
+# main.c stays first: the load file's entry point is the first function of the
+# first object.
 CVM_SRCS := "target/vm/c/main.c target/vm/c/run.c target/vm/c/data.c target/vm/c/prims.c target/vm/c/gc.c target/vm/c/card.c"
 
-# Compile, link and flatten the C VM to target/build/cvm.bin.
+# Compile, link and flatten the VM to target/build/cvm.bin.
 cvm:
     mkdir -p target/build
     orcabuild -o target/build/cvm.bin -O {{CVM_SRCS}}
 
-# Compile one .nix and run it on the C VM.
-run-nbc-c file: build-a2min cvm nbc-build
+# Compile one .nix and run it on the VM.
+run-nbc file: build-a2min cvm nbc-build
     mkdir -p target/build
     {{NBC}} {{file}} -o target/build/$(basename {{file}} .nix).nbc
-    ./sim/build_a2min/a2min --run-nbc-c target/build/cvm.bin target/build/$(basename {{file}} .nix).nbc
+    ./sim/build_a2min/a2min --run-nbc target/build/cvm.bin target/build/$(basename {{file}} .nix).nbc
 
-# The corpus and the fixtures on the C VM; its own ratchet while it climbs.
-scoreboard-c *flags: build-a2min cvm nbc-build
-    python3 scripts/scoreboard.py --mode c --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
+# THE HEADLINE METRIC: run the vendored tvix corpus and the fixtures on the VM
+# and count. tests/corpus/expected-pass.txt is the ratchet.
+scoreboard *flags: build-a2min cvm nbc-build
+    python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
         --vm target/build/cvm.bin --corpus tests/corpus/tvix --corpus tests/fixtures \
-        --build target/build/nbc --expected tests/corpus/expected-pass-c.txt {{flags}}
+        --build target/build/nbc --expected tests/corpus/expected-pass.txt {{flags}}
+    ./scripts/fixture-purity.sh target/build/nbc
 
-scoreboard-c-update: (scoreboard-c "--update")
+scoreboard-update: (scoreboard "--update")
 
-# Just the fixtures on the C VM, normally and with a collection at every boundary.
-fixtures-c *flags: build-a2min cvm nbc-build
-    python3 scripts/scoreboard.py --mode c --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
+# Just the fixtures, normally and with a collection at every boundary.
+fixtures *flags: build-a2min cvm nbc-build
+    python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
         --vm target/build/cvm.bin --corpus tests/fixtures \
-        --build target/build/nbc-c --expected tests/corpus/expected-pass-c.txt {{flags}}
+        --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt {{flags}}
 
-# With a collection at every boundary the C VM's tail-call fixture needs ~90M
-# cycles (docs/VM.md), so the budget is raised for this run only.
-fixtures-gc-c: build-a2min cvm nbc-build
-    A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py --mode c --nbc {{NBC}} \
+# With a collection at every boundary the tail-call fixture needs ~90M cycles
+# (docs/VM.md), so the budget is raised for this run only.
+fixtures-gc: build-a2min cvm nbc-build
+    A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py --nbc {{NBC}} \
         --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
-        --build target/build/nbc-c --expected tests/corpus/expected-pass-c.txt --gc-stress
+        --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress
 
 # Run ORCA/C on one file with the call trace on, using the tree's harness.
 orca-trace file: build-orcarun
@@ -269,42 +273,12 @@ nbc file: nbc-build
     {{NBC}} {{file}} -o target/build/$(basename {{file}} .nix).nbc
     {{NBC}} --dump target/build/$(basename {{file}} .nix).nbc
 
-# Assemble the 65816 VM (target/vm/vm.s) to target/build/vm.bin.
-asm-vm:
-    mkdir -p target/build
-    ca65 --cpu 65816 -I target/vm -o target/build/vm.o -l target/build/vm.lst target/vm/vm.s
-    ld65 -C target/vm/vm.cfg -o target/build/vm.bin -m target/build/vm.map target/build/vm.o
-    @ls -l target/build/vm.bin
-
-# Compile one .nix file and run it on the VM under a2min.
-run-nbc file: build-a2min asm-vm nbc-build
-    mkdir -p target/build
-    {{NBC}} {{file}} -o target/build/$(basename {{file}} .nix).nbc
-    ./sim/build_a2min/a2min --run-nbc target/build/vm.bin target/build/$(basename {{file}} .nix).nbc
-
-# THE HEADLINE METRIC: run the vendored tvix corpus on the VM and count.
-scoreboard *flags: build-a2min asm-vm nbc-build
-    python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
-        --vm target/build/vm.bin --corpus tests/corpus/tvix --corpus tests/fixtures \
-        --build target/build/nbc --expected tests/corpus/expected-pass.txt {{flags}}
-    ./scripts/fixture-purity.sh target/build/nbc
-
-# Claim newly passing tests in tests/corpus/expected-pass.txt (the ratchet).
-scoreboard-update: (scoreboard "--update")
-
-# The collector test: every local fixture with a nursery collection at EVERY
-# bytecode boundary (a2min --run-nbc-gc-stress). Slow, and merciless.
-fixtures-gc: build-a2min asm-vm nbc-build
-    python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
-        --vm target/build/vm.bin --corpus tests/fixtures \
-        --build target/build/nbc-gc --expected tests/corpus/expected-pass.txt --gc-stress
-
 # D7: the generator has no hashing code and no fixture smuggles a store path.
 purity:
     ./scripts/fixture-purity.sh --selftest
     ./scripts/fixture-purity.sh tests/fixtures target/build/nbc
 
-# The opcode table must be one table across BYTECODE.md, opcodes.rs, opcodes.inc.
+# The opcode table must be one table across BYTECODE.md, opcodes.rs, opcodes.h.
 opcodes:
     python3 scripts/check-opcodes.py
 

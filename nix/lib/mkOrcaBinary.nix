@@ -23,12 +23,15 @@ runCommand "orca-${name}"
   ''
     # Sources come in as store paths whose parent is the store root; orcacc picks
     # up a source's sibling headers, so give them a directory of their own first.
+    # In the order given: the load file's entry point is the first function of
+    # the first object, so the first source must stay first.
     mkdir -p src "$out"
+    list=""
     for s in $srcs; do
-      n=$(basename "$s"); cp "$s" "src/''${n#*-}"
+      n=$(basename "$s"); cp "$s" "src/''${n#*-}"; list="$list src/''${n#*-}"
     done
     orcabuild -o "$out/${name}.bin" --org ${org} \
       ${lib.optionalString optimize "-O"} \
       ${lib.concatMapStringsSep " " (d: "-I ${d}") includes} \
-      src/*.c
+      $list
   ''
