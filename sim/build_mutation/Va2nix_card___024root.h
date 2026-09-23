@@ -28,7 +28,7 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         VL_OUT8(mem_we,0,0);
         VL_OUT8(mem_wstrb,3,0);
         VL_OUT8(irq,0,0);
-        CData/*0:0*/ a2nix_card__DOT____VlemCall_0__is_ptr_field;
+        CData/*0:0*/ a2nix_card__DOT____VlemCall_2__is_ptr_field;
         CData/*1:0*/ a2nix_card__DOT__asel;
         CData/*1:0*/ a2nix_card__DOT__aidx;
         CData/*2:0*/ a2nix_card__DOT__psel;
@@ -52,12 +52,12 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         CData/*5:0*/ a2nix_card__DOT__fifo_count;
         CData/*0:0*/ a2nix_card__DOT__fifo_empty;
         CData/*0:0*/ a2nix_card__DOT__fifo_drain;
-        CData/*4:0*/ a2nix_card__DOT__mstate;
-        CData/*4:0*/ a2nix_card__DOT__mret;
+        CData/*5:0*/ a2nix_card__DOT__mstate;
+        CData/*5:0*/ a2nix_card__DOT__mret;
         CData/*7:0*/ a2nix_card__DOT__mbyte;
         CData/*7:0*/ a2nix_card__DOT__hops;
         CData/*0:0*/ a2nix_card__DOT__space_sel;
-        CData/*4:0*/ a2nix_card__DOT__gc_ret;
+        CData/*5:0*/ a2nix_card__DOT__gc_ret;
         CData/*0:0*/ a2nix_card__DOT__dw_pend;
         CData/*7:0*/ a2nix_card__DOT__dw_data;
         CData/*0:0*/ a2nix_card__DOT__pf_req;
@@ -131,10 +131,10 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         VL_OUT(mem_addr,31,0);
         VL_OUT(mem_wdata,31,0);
         VL_IN(mem_rdata,31,0);
+        IData/*31:0*/ a2nix_card__DOT____VlemCall_6__alloc_total;
+        IData/*31:0*/ a2nix_card__DOT____VlemCall_5__alloc_total;
         IData/*31:0*/ a2nix_card__DOT____VlemCall_4__alloc_total;
         IData/*31:0*/ a2nix_card__DOT____VlemCall_3__alloc_total;
-        IData/*31:0*/ a2nix_card__DOT____VlemCall_2__alloc_total;
-        IData/*31:0*/ a2nix_card__DOT____VlemCall_1__alloc_total;
         IData/*31:0*/ a2nix_card__DOT__obj_size__Vstatic__aux;
         IData/*31:0*/ a2nix_card__DOT__obj_size__Vstatic__s;
         IData/*31:0*/ a2nix_card__DOT__alloc_total__Vstatic__t;
@@ -145,9 +145,15 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         IData/*31:0*/ a2nix_card__DOT__mcur;
         IData/*31:0*/ a2nix_card__DOT__mword;
         IData/*31:0*/ a2nix_card__DOT__mcount;
-        IData/*31:0*/ a2nix_card__DOT__alloc_ptr;
+        IData/*31:0*/ a2nix_card__DOT__mc_pa;
     };
     struct {
+        IData/*31:0*/ a2nix_card__DOT__mc_pb;
+        IData/*31:0*/ a2nix_card__DOT__mc_rem;
+        IData/*31:0*/ a2nix_card__DOT__mc_aw;
+        IData/*31:0*/ a2nix_card__DOT__mc_cmp_a;
+        IData/*31:0*/ a2nix_card__DOT__mc_cmp_b;
+        IData/*31:0*/ a2nix_card__DOT__alloc_ptr;
         IData/*31:0*/ a2nix_card__DOT__gc_free;
         IData/*31:0*/ a2nix_card__DOT__gc_scan;
         IData/*31:0*/ a2nix_card__DOT__gc_root_at;
@@ -206,6 +212,8 @@ class alignas(VL_CACHE_LINE_BYTES) Va2nix_card___024root final {
         VlUnpacked<IData/*31:0*/, 16> a2nix_card__DOT__u_hash__DOT__u_core__DOT__w;
         VlUnpacked<QData/*63:0*/, 1> __VstlTriggered;
         VlUnpacked<QData/*63:0*/, 2> __VicoTriggered;
+    };
+    struct {
         VlUnpacked<QData/*63:0*/, 1> __VactTriggered;
         VlUnpacked<QData/*63:0*/, 1> __VnbaTriggered;
     };

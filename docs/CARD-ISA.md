@@ -177,7 +177,7 @@ end** of the byte string.
 | `$20` | `ALLOC` | `LEN` = size, `P0` = tag | `A1` = address of new object |
 | `$25` | `RESERVE` | `LEN` = bytes | `A1` = base of a headerless block; bumps the allocator |
 | `$21` | `FOLLOW` | `A0` | `A1` = first non-indirection in the chain |
-| `$22` | `MEMCMP` | `A0`, `A1`, `LEN` | `P0` = sign of comparison |
+| `$22` | `MEMCMP` | `A0`, `A1`, `LEN` (word-aligned) | `P0` byte 0 = sign: `$00`, `$01`, `$FF` |
 | `$23` | `MEMCPY` | `A0` → `A1`, `LEN` | — |
 | `$24` | `INSTANTIATE` | `A0` = template, `A1` = dest, `P0` = substitutions | wide structured heap write |
 | `$40` | `MARK` | `A0` = root list, `LEN` = count | marks reachable mature objects |
@@ -185,6 +185,22 @@ end** of the byte string.
 
 `FOLLOW` and `MEMCMP` exist because chains and searches amortize the bus crossing.
 A *single* dereference must stay on the CPU.
+
+`MEMCMP` compares a **word at a time**, which is why both addresses must be
+word-aligned — every string payload in the heap is, by construction
+([HEAP.md](HEAP.md)) — and an unaligned operand is `E_BADPARAM` rather than a
+quiet comparison of the word that happens to contain it. The bytes are weighed
+in **address order**, so the byte at `+0` is the most significant: a plain
+little-endian word compare would order two names by their last byte first, which
+is the sort of thing that corrupts a sorted-name merge without ever looking
+wrong. The final partial word is masked down to the bytes `LEN` covers, so the
+answer does not depend on the zero padding HEAP.md guarantees being present.
+`LEN` = 0 is equal.
+
+It earns its crossing twice over: one command replaces a byte-by-byte compare
+over the bus, and it is what lets the CPU confirm a `LOOKUP` candidate's name
+**without copying the attribute set back across the bus** — the copy that, as
+measured below, is what stopped `LOOKUP` from paying.
 
 **`MARK` and `COMPACT`** are the two halves of a Cheney semispace collection
 ([DECISIONS.md](DECISIONS.md) D15, layout in [HEAP.md](HEAP.md)):

@@ -168,6 +168,8 @@ VL_ATTR_COLD bool Va2nix_card___024root___trigger_anySet__stl(const VlUnpacked<Q
 }
 
 extern const VlWide<64>/*2047:0*/ Va2nix_card__ConstPool__CONST_h7be248c9_0;
+extern const VlWide<8>/*255:0*/ Va2nix_card__ConstPool__CONST_h7d0e7005_0;
+extern const VlUnpacked<IData/*31:0*/, 4> Va2nix_card__ConstPool__TABLE_ha3ff7d29_0;
 extern const VlWide<32>/*1023:0*/ Va2nix_card__ConstPool__CONST_h4c4fb9bc_0;
 
 VL_ATTR_COLD void Va2nix_card___024root___stl_sequent__TOP__0(Va2nix_card___024root* vlSelf) {
@@ -205,7 +207,10 @@ VL_ATTR_COLD void Va2nix_card___024root___stl_sequent__TOP__0(Va2nix_card___024r
     __VdfgRegularize_h6e95ff9d_0_42 = 0;
     CData/*7:0*/ __VdfgRegularize_h6e95ff9d_0_43;
     __VdfgRegularize_h6e95ff9d_0_43 = 0;
-    VlWide<3>/*95:0*/ __Vtemp_5;
+    IData/*31:0*/ __VdfgRegularize_h6e95ff9d_0_46;
+    __VdfgRegularize_h6e95ff9d_0_46 = 0;
+    IData/*31:0*/ __Vtemp_1;
+    VlWide<3>/*95:0*/ __Vtemp_6;
     CData/*31:0*/ __VExpandSel_Lsb_1;
     IData/*31:0*/ __VExpandSel_Lsb_2;
     IData/*31:0*/ __VExpandSel_Lsb_3;
@@ -298,6 +303,9 @@ VL_ATTR_COLD void Va2nix_card___024root___stl_sequent__TOP__0(Va2nix_card___024r
                                                          == 
                                                          (3U 
                                                           & (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__state))));
+    __Vtemp_1 = VL_MATCHMASKED_I(32, vlSelfRef.a2nix_card__DOT__mc_rem, Va2nix_card__ConstPool__CONST_h7d0e7005_0);
+    __VdfgRegularize_h6e95ff9d_0_46 = Va2nix_card__ConstPool__TABLE_ha3ff7d29_0
+        [__Vtemp_1];
     a2nix_card__DOT__u_alu__DOT__rem_shift[0U] = (((IData)(vlSelfRef.a2nix_card__DOT__u_alu__DOT__rem) 
                                                    << 1U) 
                                                   | (1U 
@@ -364,12 +372,38 @@ VL_ATTR_COLD void Va2nix_card___024root___stl_sequent__TOP__0(Va2nix_card___024r
                           & (0x38U == (IData)(vlSelfRef.a2nix_card__DOT__u_hash__DOT__bidx)))))
                 : ((IData)(vlSelfRef.a2nix_card__DOT__h_valid) 
                    & (IData)(vlSelfRef.__VdfgRegularize_h6e95ff9d_0_45))));
-    __Vtemp_5[0U] = (IData)(vlSelfRef.a2nix_card__DOT__u_alu__DOT__y);
-    __Vtemp_5[1U] = (IData)((vlSelfRef.a2nix_card__DOT__u_alu__DOT__y 
+    vlSelfRef.a2nix_card__DOT__mc_cmp_a = (__VdfgRegularize_h6e95ff9d_0_46 
+                                           & ((((0x0000ff00U 
+                                                 & (vlSelfRef.a2nix_card__DOT__mc_aw 
+                                                    << 8U)) 
+                                                | (0x000000ffU 
+                                                   & (vlSelfRef.a2nix_card__DOT__mc_aw 
+                                                      >> 8U))) 
+                                               << 0x00000010U) 
+                                              | ((0x0000ff00U 
+                                                  & (vlSelfRef.a2nix_card__DOT__mc_aw 
+                                                     >> 8U)) 
+                                                 | (vlSelfRef.a2nix_card__DOT__mc_aw 
+                                                    >> 0x00000018U))));
+    vlSelfRef.a2nix_card__DOT__mc_cmp_b = (__VdfgRegularize_h6e95ff9d_0_46 
+                                           & ((((0x0000ff00U 
+                                                 & (vlSelfRef.a2nix_card__DOT__mword 
+                                                    << 8U)) 
+                                                | (0x000000ffU 
+                                                   & (vlSelfRef.a2nix_card__DOT__mword 
+                                                      >> 8U))) 
+                                               << 0x00000010U) 
+                                              | ((0x0000ff00U 
+                                                  & (vlSelfRef.a2nix_card__DOT__mword 
+                                                     >> 8U)) 
+                                                 | (vlSelfRef.a2nix_card__DOT__mword 
+                                                    >> 0x00000018U))));
+    __Vtemp_6[0U] = (IData)(vlSelfRef.a2nix_card__DOT__u_alu__DOT__y);
+    __Vtemp_6[1U] = (IData)((vlSelfRef.a2nix_card__DOT__u_alu__DOT__y 
                              >> 0x00000020U));
-    __Vtemp_5[2U] = 0U;
+    __Vtemp_6[2U] = 0U;
     vlSelfRef.a2nix_card__DOT__u_alu__DOT__rem_ge = 
-        VL_GTE_W(3, a2nix_card__DOT__u_alu__DOT__rem_shift, __Vtemp_5);
+        VL_GTE_W(3, a2nix_card__DOT__u_alu__DOT__rem_shift, __Vtemp_6);
     __VExpandSel_Lsb_1 = (0x000000ffU & (((IData)(0xffU) 
                                           - ((IData)(vlSelfRef.a2nix_card__DOT__pidx) 
                                              << 3U)) 
@@ -1488,13 +1522,19 @@ VL_ATTR_COLD void Va2nix_card___024root___ctor_var_reset(Va2nix_card___024root* 
     vlSelf->a2nix_card__DOT__fifo_count = VL_SCOPED_RAND_RESET_I(6, __VscopeHash, 6481871503660582012ull);
     vlSelf->a2nix_card__DOT__fifo_empty = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 4215861405213650709ull);
     vlSelf->a2nix_card__DOT__fifo_drain = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 5867610991756810794ull);
-    vlSelf->a2nix_card__DOT__mstate = VL_SCOPED_RAND_RESET_I(5, __VscopeHash, 2084767621829822972ull);
-    vlSelf->a2nix_card__DOT__mret = VL_SCOPED_RAND_RESET_I(5, __VscopeHash, 12055193555070904377ull);
+    vlSelf->a2nix_card__DOT__mstate = VL_SCOPED_RAND_RESET_I(6, __VscopeHash, 2084767621829822972ull);
+    vlSelf->a2nix_card__DOT__mret = VL_SCOPED_RAND_RESET_I(6, __VscopeHash, 12055193555070904377ull);
     vlSelf->a2nix_card__DOT__mcur = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 10819052988648462457ull);
     vlSelf->a2nix_card__DOT__mword = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 13954621706123198975ull);
     vlSelf->a2nix_card__DOT__mbyte = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 15072977329513243586ull);
     vlSelf->a2nix_card__DOT__mcount = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 15279627756342156948ull);
     vlSelf->a2nix_card__DOT__hops = VL_SCOPED_RAND_RESET_I(8, __VscopeHash, 6643956462292493133ull);
+    vlSelf->a2nix_card__DOT__mc_pa = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 17147116780908097163ull);
+    vlSelf->a2nix_card__DOT__mc_pb = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 6982675563893211122ull);
+    vlSelf->a2nix_card__DOT__mc_rem = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 10855976341370207196ull);
+    vlSelf->a2nix_card__DOT__mc_aw = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 5175264287701894083ull);
+    vlSelf->a2nix_card__DOT__mc_cmp_a = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 18298130511644436298ull);
+    vlSelf->a2nix_card__DOT__mc_cmp_b = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 15711558810462519163ull);
     vlSelf->a2nix_card__DOT__alloc_ptr = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 4236271661694546670ull);
     vlSelf->a2nix_card__DOT__space_sel = VL_SCOPED_RAND_RESET_I(1, __VscopeHash, 6716395335599274348ull);
     vlSelf->a2nix_card__DOT__gc_free = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 14179313797444000413ull);
@@ -1507,7 +1547,7 @@ VL_ATTR_COLD void Va2nix_card___024root___ctor_var_reset(Va2nix_card___024root* 
     vlSelf->a2nix_card__DOT__gc_size = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 5603291750678736549ull);
     vlSelf->a2nix_card__DOT__gc_off = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 17473670252182967157ull);
     vlSelf->a2nix_card__DOT__gc_field = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 941174406622611664ull);
-    vlSelf->a2nix_card__DOT__gc_ret = VL_SCOPED_RAND_RESET_I(5, __VscopeHash, 2189250043817439679ull);
+    vlSelf->a2nix_card__DOT__gc_ret = VL_SCOPED_RAND_RESET_I(6, __VscopeHash, 2189250043817439679ull);
     vlSelf->a2nix_card__DOT__sc_hdr = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 8622431534943787927ull);
     vlSelf->a2nix_card__DOT__sc_size = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 258969023469610878ull);
     vlSelf->a2nix_card__DOT__from_base = VL_SCOPED_RAND_RESET_I(32, __VscopeHash, 1516777133870407128ull);

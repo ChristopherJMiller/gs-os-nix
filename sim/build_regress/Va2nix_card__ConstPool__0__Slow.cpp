@@ -33,6 +33,11 @@ extern const VlWide<64>/*2047:0*/ Va2nix_card__ConstPool__CONST_h7be248c9_0 = Vl
         0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 }};
 
+extern const VlWide<8>/*255:0*/ Va2nix_card__ConstPool__CONST_h7d0e7005_0 = VlWide<8>{{
+        0xffffffff, 0x00000001, 0xffffffff, 0x00000002,
+        0xffffffff, 0x00000003, 0x00000000, 0x00000000
+}};
+
 extern const VlWide<16>/*511:0*/ Va2nix_card__ConstPool__CONST_h93e1b771_0 = VlWide<16>{{
         0x00000000, 0x00000000, 0x00000000, 0x00000000,
         0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -54,4 +59,8 @@ extern const VlWide<32>/*1023:0*/ Va2nix_card__ConstPool__CONST_hd6b7ba52_0 = Vl
         0x00000000, 0x00000000, 0x00000000, 0x00000000,
         0x00000000, 0x00000000, 0x00000000, 0x00000000,
         0x00000000, 0x00000000, 0x00000000, 0x00000000
+}};
+
+extern const VlUnpacked<IData/*31:0*/, 4> Va2nix_card__ConstPool__TABLE_ha3ff7d29_0 = {{
+    0xff000000U, 0xffff0000U, 0xffffff00U, 0xffffffffU
 }};

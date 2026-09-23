@@ -489,6 +489,97 @@ std::uint8_t alu(std::uint8_t op, std::int64_t a, std::int64_t b, std::int64_t &
     return st;
 }
 
+// L3 MEMCMP: compare two heap regions card-side and report the sign.
+//
+// The verb exists so the CPU can confirm a LOOKUP candidate's name without
+// copying the whole attribute set back across the bus (docs/CARD-ISA.md).
+// Four properties matter beyond "equal strings compare equal":
+//
+//   - the sign must be in ADDRESS order, not little-endian word order. The
+//     memory port returns whole words, so a raw 32-bit compare gets the sign
+//     backwards for names differing in a low byte, and every sorted-name merge
+//     built on it would be wrong;
+//   - a difference in the LAST partial word must still be seen;
+//   - bytes beyond LEN must NOT be seen -- the caller's length is what decides,
+//     not the zero padding HEAP.md happens to guarantee;
+//   - an unaligned operand must be refused, because a word-at-a-time compare
+//     would silently answer about the word CONTAINING the address instead.
+void l3_memcmp() {
+    std::printf("L3 MEMCMP card-side comparison\n");
+
+    auto put = [](std::uint32_t at, const char *s, std::size_t n) {
+        for (std::size_t i = 0; i < n; ++i)
+            heap.poke(at + i, static_cast<std::uint8_t>(s[i]));
+    };
+    // Returns the sign, or -128 if the card reported an error.
+    auto cmp = [](std::uint32_t a, std::uint32_t b, std::uint32_t len) -> int {
+        bus->set_areg(0, a);
+        bus->set_areg(1, b);
+        bus->set_len(len);
+        bus->wr(R_CMD, V_MEMCMP);
+        const std::uint8_t st = bus->wait_verb();
+        if (st & ST_ERR) { bus->wr(R_CTRL, CTRL_RESET); return -128; }
+        std::uint8_t p0 = 0;
+        bus->read_pslot(0, &p0, 1);
+        return static_cast<std::int8_t>(p0);
+    };
+
+    const std::uint32_t A = 0xB000, B = 0xB100, C = 0xB200;
+
+    put(A, "attribute_name\0\0", 16);
+    put(B, "attribute_name\0\0", 16);
+    check(cmp(A, B, 14) == 0, "MEMCMP reports 0 for equal regions",
+          "a LOOKUP candidate's name never confirming, so every promoted "
+          "attribute set would look empty");
+
+    // "abcd" and "abdc" differ at byte 2, so in address order "abcd" is the
+    // SMALLER. Read as little-endian words they are 0x64636261 and 0x63646261,
+    // which makes "abcd" the LARGER -- opposite signs, so this pair is what
+    // catches a raw word compare.
+    put(A, "abcd", 4);
+    put(B, "abdc", 4);
+    check(cmp(A, B, 4) < 0 && cmp(B, A, 4) > 0,
+          "MEMCMP orders by ADDRESS order, so the byte at +0 is most significant",
+          "comparing the raw little-endian words, which sorts names by their "
+          "last byte first and corrupts every sorted-name merge");
+
+    // A difference in the final partial word must be seen...
+    put(A, "aaaaa", 5);
+    put(B, "aaaab", 5);
+    check(cmp(A, B, 5) < 0, "MEMCMP sees a difference in the last partial word",
+          "stopping at the last whole word, so two names differing only in "
+          "their tail would compare equal");
+
+    // ...and bytes past LEN must not be: same first four, differ at byte 4.
+    check(cmp(A, B, 4) == 0, "MEMCMP ignores bytes beyond LEN",
+          "reading the final word unmasked, so a short name would be decided "
+          "by whatever follows it in the heap");
+
+    // The mask must hold even when the bytes past LEN are not padding: three
+    // significant bytes, differing in the fourth byte of the same word.
+    put(A, "aaaX", 4);
+    put(B, "aaaY", 4);
+    check(cmp(A, B, 3) == 0, "MEMCMP masks the bytes past LEN in a partial word",
+          "comparing the whole final word, so a three-byte name would be "
+          "decided by whichever byte happens to follow it");
+
+    check(cmp(A, B, 0) == 0, "MEMCMP of zero bytes is equal",
+          "an empty-name compare hanging the card or reporting a difference");
+
+    // More than one word, differing only in the third.
+    put(A, "0123456789abXdef", 16);
+    put(B, "0123456789abYdef", 16);
+    check(cmp(A, B, 16) < 0, "MEMCMP walks past the first word",
+          "comparing only the first four bytes, which would confirm the wrong "
+          "attribute for any name sharing a prefix");
+
+    put(C, "abcd", 4);
+    check(cmp(A + 1, C, 4) == -128 && cmp(A, C + 2, 4) == -128,
+          "MEMCMP refuses an unaligned operand",
+          "comparing the aligned word that CONTAINS the address, which would "
+          "answer about bytes the caller never asked about");
+}
+
 void l3_alu64() {
     std::printf("L3 ALU64 64-bit integer arithmetic\n");
 
@@ -831,6 +922,7 @@ int main(int argc, char **argv) {
     r5_init_abandons_partial_message();
     r6_errors_surface();
     l3_lookup();
+    l3_memcmp();
     l3_alu64();
     l3_gc();
     l3_reserve();

@@ -78,6 +78,7 @@ module a2nix_card (
                      V_ALLOC       = 8'h20,
                      V_FOLLOW      = 8'h21,
                      V_RESERVE     = 8'h25,
+                     V_MEMCMP      = 8'h22,
                      V_LOOKUP      = 8'h30,
                      V_MARK        = 8'h40,
                      V_COMPACT     = 8'h41,
@@ -267,45 +268,67 @@ module a2nix_card (
     // One engine owns the memory port, so every verb that touches the heap shares a
     // single read microsequence (issue, then latch) rather than each rolling its own.
     // A read costs 2 cycles; at 48 card cycles per bus access that is invisible.
-    localparam [4:0] M_IDLE       = 5'd0,
-                     M_RD_LATCH   = 5'd1,   // mem_addr presented; sample mem_rdata
-                     M_PF_DONE    = 5'd2,
-                     M_STREAM     = 5'd3,
-                     M_STREAM_PUT = 5'd4,
-                     M_ALLOC_HDR  = 5'd5,
-                     M_FOLLOW     = 5'd6,
-                     M_FOLLOW_TAG = 5'd7,
-                     M_FOLLOW_PTR = 5'd8,
-                     M_LK_CNT     = 5'd10,  // assemble the ATTRS attribute count
-                     M_LK_CB      = 5'd11,
-                     M_LK_BATCH   = 5'd12,  // start a batch of up to CAM_WIDTH lanes
-                     M_LK_LOAD    = 5'd13,  // fill the CAM from the key-hash column
-                     M_LK_HB      = 5'd14,
-                     M_LK_CAM     = 5'd15,  // present the key; hit or next batch
-                     M_LK_VAL     = 5'd16,  // read the matched value pointer
+    localparam [5:0] M_IDLE       = 6'd0,
+                     M_RD_LATCH   = 6'd1,   // mem_addr presented; sample mem_rdata
+                     M_PF_DONE    = 6'd2,
+                     M_STREAM     = 6'd3,
+                     M_STREAM_PUT = 6'd4,
+                     M_ALLOC_HDR  = 6'd5,
+                     M_FOLLOW     = 6'd6,
+                     M_FOLLOW_TAG = 6'd7,
+                     M_FOLLOW_PTR = 6'd8,
+                     M_LK_CNT     = 6'd10,  // assemble the ATTRS attribute count
+                     M_LK_CB      = 6'd11,
+                     M_LK_BATCH   = 6'd12,  // start a batch of up to CAM_WIDTH lanes
+                     M_LK_LOAD    = 6'd13,  // fill the CAM from the key-hash column
+                     M_LK_HB      = 6'd14,
+                     M_LK_CAM     = 6'd15,  // present the key; hit or next batch
+                     M_LK_VAL     = 6'd16,  // read the matched value pointer
                      // --- Cheney collector (docs/DECISIONS.md D15) ---
-                     M_GC_ROOT     = 5'd17, // next root from the root list
-                     M_GC_ROOT_RD  = 5'd18,
-                     M_GC_ROOT_WB  = 5'd19, // write the root's new address back
-                     M_GC_EVAC     = 5'd20, // evacuate gc_obj -> gc_new
-                     M_GC_EVAC_HDR = 5'd21,
-                     M_GC_EVAC_FWD = 5'd22, // already copied: take the forwarding ptr
-                     M_GC_COPY     = 5'd23, // copy one word per 3 cycles
-                     M_GC_COPY_WR  = 5'd24,
-                     M_GC_COPY_FWD = 5'd25, // leave a forwarding pointer behind
-                     M_GC_SCAN     = 5'd26, // Cheney scan of to-space
-                     M_GC_SCAN_HDR = 5'd27,
-                     M_GC_SCAN_F   = 5'd28, // next payload word; trace if a pointer
-                     M_GC_SCAN_FRD = 5'd29,
-                     M_GC_SCAN_WB  = 5'd30;
+                     M_GC_ROOT     = 6'd17, // next root from the root list
+                     M_GC_ROOT_RD  = 6'd18,
+                     M_GC_ROOT_WB  = 6'd19, // write the root's new address back
+                     M_GC_EVAC     = 6'd20, // evacuate gc_obj -> gc_new
+                     M_GC_EVAC_HDR = 6'd21,
+                     M_GC_EVAC_FWD = 6'd22, // already copied: take the forwarding ptr
+                     M_GC_COPY     = 6'd23, // copy one word per 3 cycles
+                     M_GC_COPY_WR  = 6'd24,
+                     M_GC_COPY_FWD = 6'd25, // leave a forwarding pointer behind
+                     M_GC_SCAN     = 6'd26, // Cheney scan of to-space
+                     M_GC_SCAN_HDR = 6'd27,
+                     M_GC_SCAN_F   = 6'd28, // next payload word; trace if a pointer
+                     M_GC_SCAN_FRD = 6'd29,
+                     M_GC_SCAN_WB  = 6'd30,
+                     // MEMCMP walks both operands a word at a time (docs/CARD-ISA.md)
+                     M_MC_A        = 6'd31, // present the A-side word
+                     M_MC_B        = 6'd32, // save it, present the B-side word
+                     M_MC_CMP      = 6'd33; // compare, then advance or answer
 
-    reg [4:0]  mstate;
-    reg [4:0]  mret;          // state to resume after a generic read latches
+    reg [5:0]  mstate;
+    reg [5:0]  mret;          // state to resume after a generic read latches
     reg [31:0] mcur;          // working address
     reg [31:0] mword;         // word most recently read
     reg [7:0]  mbyte;         // the addressed byte of that word
     reg [31:0] mcount;        // bytes left to stream
     reg [7:0]  hops;          // FOLLOW chain length so far
+    reg [31:0] mc_pa, mc_pb;  // MEMCMP: the two cursors
+    reg [31:0] mc_rem;        // MEMCMP: bytes still to compare
+    reg [31:0] mc_aw;         // MEMCMP: the A-side word, held while B is read
+
+    // MEMCMP compares in ADDRESS order, so byte +0 is the most significant; the
+    // last word is masked down to the bytes LEN actually covers.
+    function [31:0] mc_mask(input [31:0] rem);
+        case (rem)
+            32'd1:   mc_mask = 32'hFF00_0000;
+            32'd2:   mc_mask = 32'hFFFF_0000;
+            32'd3:   mc_mask = 32'hFFFF_FF00;
+            default: mc_mask = 32'hFFFF_FFFF;
+        endcase
+    endfunction
+    wire [31:0] mc_cmp_a = { mc_aw[7:0], mc_aw[15:8], mc_aw[23:16], mc_aw[31:24] }
+                           & mc_mask(mc_rem);
+    wire [31:0] mc_cmp_b = { mword[7:0], mword[15:8], mword[23:16], mword[31:24] }
+                           & mc_mask(mc_rem);
     reg [31:0] alloc_ptr;     // bump allocator
 
     // --- Collector state ---
@@ -320,7 +343,7 @@ module a2nix_card (
     reg [31:0] gc_size;      // its size in bytes
     reg [31:0] gc_off;       // copy offset
     reg [31:0] gc_field;     // payload word index while scanning
-    reg [4:0]  gc_ret;       // where EVAC returns to: the root path or the scan path
+    reg [5:0]  gc_ret;       // where EVAC returns to: the root path or the scan path
     // The object under SCAN has its own header/size. EVAC is nested inside the scan
     // loop and loads gc_hdr/gc_size for the object it copies; if the scan shared
     // those, returning from evacuating a list's first element would leave the loop
@@ -602,6 +625,56 @@ module a2nix_card (
                 M_FOLLOW_PTR: begin
                     mcur   <= mword;    // pointers are stored little-endian
                     mstate <= M_FOLLOW;
+                end
+
+                // --- MEMCMP: LEN bytes at A0 against LEN bytes at A1, sign in P0.
+                // A word at a time, which is the whole point of the verb: one
+                // command replaces a byte-by-byte compare over the bus. The bytes
+                // are compared in ADDRESS order, so the byte at +0 is the most
+                // significant -- a plain little-endian word compare would order
+                // two strings wrongly. The final partial word is masked, so the
+                // answer does not depend on HEAP.md's zero padding being there. ---
+                M_MC_A: begin
+                    if (mc_rem == 32'd0) begin
+                        pslot[0] <= 256'd0;                 // nothing to compare: equal
+                        busy     <= 1'b0;
+                        done     <= 1'b1;
+                        mstate   <= M_IDLE;
+                    end else begin
+                        mem_addr <= mc_pa;
+                        mret     <= M_MC_B;
+                        mstate   <= M_RD_LATCH;
+                    end
+                end
+
+                M_MC_B: begin
+                    mc_aw    <= mword;                      // hold A while B is read
+                    mem_addr <= mc_pb;
+                    mret     <= M_MC_CMP;
+                    mstate   <= M_RD_LATCH;
+                end
+
+                M_MC_CMP: begin
+                    if (mc_cmp_a == mc_cmp_b) begin
+                        if (mc_rem <= 32'd4) begin
+                            pslot[0] <= 256'd0;
+                            busy     <= 1'b0;
+                            done     <= 1'b1;
+                            mstate   <= M_IDLE;
+                        end else begin
+                            mc_pa  <= mc_pa + 32'd4;
+                            mc_pb  <= mc_pb + 32'd4;
+                            mc_rem <= mc_rem - 32'd4;
+                            mstate <= M_MC_A;
+                        end
+                    end else begin
+                        // $01 for A > B, $FF for A < B: a signed byte the caller
+                        // reads from P0 byte 0, like strcmp's sign.
+                        pslot[0] <= { (mc_cmp_a > mc_cmp_b) ? 8'h01 : 8'hFF, 248'd0 };
+                        busy     <= 1'b0;
+                        done     <= 1'b1;
+                        mstate   <= M_IDLE;
+                    end
                 end
 
                 // --- LOOKUP: the attribute count is the header's aux field, i.e.
@@ -967,6 +1040,30 @@ module a2nix_card (
                                         areg[1]   <= alloc_ptr;
                                         alloc_ptr <= alloc_ptr + alloc_total(len) - 32'd4;
                                         done      <= 1'b1;
+                                    end
+                                end
+
+                                // MEMCMP: compare LEN bytes at A0 against LEN
+                                // bytes at A1 and report the sign in P0. It earns
+                                // its crossing by amortizing a whole string
+                                // comparison into one verb -- and by letting the
+                                // CPU confirm a LOOKUP candidate's name without
+                                // copying the set back across the bus
+                                // (docs/CARD-ISA.md, docs/HEAP.md).
+                                V_MEMCMP: begin
+                                    // Word-aligned operands only. Every string
+                                    // payload in the heap is word-aligned by
+                                    // construction (docs/HEAP.md), and requiring it
+                                    // is what lets the verb compare whole words.
+                                    if (areg[0][1:0] != 2'b00 || areg[1][1:0] != 2'b00) begin
+                                        err     <= 1'b1;
+                                        errcode <= E_BADPARAM;
+                                    end else begin
+                                        mc_pa  <= areg[0];
+                                        mc_pb  <= areg[1];
+                                        mc_rem <= len;
+                                        busy   <= 1'b1;
+                                        mstate <= M_MC_A;
                                     end
                                 end
 

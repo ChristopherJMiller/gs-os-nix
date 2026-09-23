@@ -193,6 +193,28 @@ mutate "GC roots not written back" rtl/a2nix_card.v \
 mutate "RESERVE adds a header's worth of padding" rtl/a2nix_card.v \
        's/                                        alloc_ptr <= alloc_ptr + alloc_total(len) - 32.d4;/                                        alloc_ptr <= alloc_ptr + alloc_total(len);/'
 
+# MEMCMP: compare the raw little-endian words instead of reversing them into
+# address order. Names then sort by their LAST byte first, so every merge of two
+# sorted attribute sets silently reorders -- and the sign is right often enough
+# to look fine.
+mutate "MEMCMP compares little-endian words, not address order" rtl/a2nix_card.v \
+       's/{ mc_aw\[7:0\], mc_aw\[15:8\], mc_aw\[23:16\], mc_aw\[31:24\] }/mc_aw/; s/{ mword\[7:0\], mword\[15:8\], mword\[23:16\], mword\[31:24\] }/mword/'
+
+# MEMCMP: stop masking the final partial word, so the comparison runs past LEN
+# into whatever follows the string in the heap.
+mutate "MEMCMP reads past LEN in the last word" rtl/a2nix_card.v \
+       's/            32.d3:   mc_mask = 32.hFFFF_FF00;/            32'"'"'d3:   mc_mask = 32'"'"'hFFFF_FFFF;/'
+
+# MEMCMP: answer after the first word, so any two names sharing a four-byte
+# prefix confirm as equal -- plausibly the wrong attribute.
+mutate "MEMCMP stops after the first word" rtl/a2nix_card.v \
+       '/M_MC_CMP: begin/,/mstate <= M_MC_A;/ s/if (mc_rem <= 32.d4) begin/if (1) begin/'
+
+# MEMCMP: accept an unaligned operand and compare the word that contains it,
+# answering about bytes the caller never asked about.
+mutate "MEMCMP accepts an unaligned operand" rtl/a2nix_card.v \
+       's/if (areg\[0\]\[1:0\] != 2.b00 || areg\[1\]\[1:0\] != 2.b00) begin/if (1'"'"'b0) begin/'
+
 echo
 echo "$pass mutations caught, $fail not caught"
 [ "$fail" -eq 0 ] || exit 1
