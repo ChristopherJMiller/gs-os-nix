@@ -105,12 +105,45 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
    filled it exactly — and answer wrongly in silence. Now the only failure is a
    loud `E_NOMEM`, and `WINDOW_MAX` caps a single viewable object at 20 KB
    ([HEAP.md](HEAP.md) “How long a view lives”).
-5. **Slice 5: builtins that touch the store, `import`, paths, floats.**
+5. **Slice 5.** The histogram's "path literal 35" is misleading, and measuring
+   it changed what this slice is. There are **45** tests whose first refusal is
+   a path literal, and they split three ways:
+
+   - **23 of them open with `with import ./lib.nix;`** — what they need is
+     `import`, not paths. The imported files (`lib.nix`, `imported.nix`,
+     `imported2.nix`) are vendored, so the generator can resolve the import at
+     lowering time: parse that file, compile it as its own chunk, and reference
+     it. No VM change, no paths at runtime, ~23 tests. The one thing it must get
+     right is that an imported file is evaluated in an **empty scope**, and the
+     IR's names are symbolic (resolved in `compiler.rs`), so inlining its IR
+     would let it capture the importer's `let` and `with` bindings — a silent
+     wrong answer. So an import compiles to a **closed thunk**: a new opcode for
+     `THUNK { code = chunk, env = 0 }`, where a stray `ENV_GET` is a loud
+     `E_BADNBC` rather than a capture. `import` also has to be refused if the
+     name is bound anywhere in the file, since the lowering has no scope
+     tracking to tell a shadowed `import` from the builtin.
+   - **~12 are paths as values** — `dirOf`, `baseNameOf`, `toString`, `+`, path
+     antiquotation. Reachable, and their expected values are stable: they use
+     **absolute** literals (`/foo/bar`, `/bin`), and tvix substitutes a fixed
+     `/pwd/lang` and `/fake-home` for relative and home paths, which is what
+     keeps the fixtures machine-independent under D7 — the generator has to do
+     the same rather than resolve against the real directory. Needs `T_PATH`
+     (defined in vm.h, used nowhere) wired through: `typeOf`, equality,
+     `toString`, `dirOf`/`baseNameOf`, and `+`, which **normalises** (`/bin + "/"`
+     is `/bin`, `/bin + "bar"` is `/binbar`, `/bin + /bin` is `/bin/bin`).
+   - **~10 need real file I/O** — `readFile`, `readDir`, `pathExists`,
+     `hashFile`, `builtins.path`. Those belong with the store (L6) and GS/OS,
+     not here.
+
    **Not** column-wise reads of mature sets: that was tried and measured worse
    (item 8). A 4-byte card read costs 2 bus accesses per byte against ~1 for a
    burst, so reading fields back one at a time is dearer than copying the whole
    object — which means `WINDOW_MAX` (item 4d) has to be lifted by a bigger
    bank-5 ring, not by reading less.
+
+   Also still in this slice: floats (23 tests), which need a decision first —
+   ORCA/C's `double` is SANE-based, and whether to use it or carry software
+   floats changes what a float costs and whether the card ever sees one.
 6. ~~The parser decision~~ **decided: `rnix`** (D16). The generator now parses all
    of Nix and refuses by feature; `just scoreboard` prints a histogram of the
    refused constructs, so pick the next slice from the top of that list.
