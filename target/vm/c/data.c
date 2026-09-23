@@ -241,7 +241,7 @@ int find_attr(obj_t *set, obj_t *name, uint16_t *ix)
 {
     obj_t *nv = deref(name), *sv;
     uint32_t h = hash_str(nv), vaddr;
-    if (IS_MATURE(set)) {
+    if (IS_MATURE(set) && !verb_off(VERB_NO_LOOKUP)) {
         uint16_t cand;
         if (!card_lookup(PBITS(set), h, &cand, &vaddr)) return 0;
         sv = deref(set);

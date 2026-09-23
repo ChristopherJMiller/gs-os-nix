@@ -75,7 +75,9 @@ build-card:
 test-card: build-card
     ./{{CARD_DIR}}/card_test {{VECTORS}}
 
-# Print just the verb-economics numbers (the D5 gate).
+# For the same question asked of real programs, see `just verb-economics`.
+
+# The card-side micro-benchmark: bus accesses per verb (the D5 gate).
 economics: build-card
     @./{{CARD_DIR}}/card_test {{VECTORS}} | grep -E "bus accesses|cost:"
 
@@ -243,6 +245,15 @@ fixtures-gc: build-a2min cvm nbc-build
         --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
         --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress
 
+# Promotion at every boundary is the default, because without it nothing on a
+# fixture is ever mature and LOOKUP is never called at all (scripts/verb-economics.py).
+
+# Price each card verb against the CPU doing the same work, on real programs.
+verb-economics *flags: build-a2min cvm nbc-build
+    python3 scripts/verb-economics.py --a2min ./sim/build_a2min/a2min \
+        --vm target/build/cvm.bin --nbc-dir target/build/nbc-fixtures \
+        --only "{{VERB_WORKLOAD}}" --nbc {{NBC}} --crossover 8,32,64,128 {{flags}}
+
 # Run ORCA/C on one file with the call trace on, using the tree's harness.
 orca-trace file: build-orcarun
     #!/usr/bin/env bash
@@ -258,6 +269,11 @@ orca-trace file: build-orcarun
 # --- L4: bytecode VM ---------------------------------------------------------
 
 NBC := "tools/nbc/target/release/nbc"
+
+# The fixtures that actually reach a card verb: attribute lookups for LOOKUP,
+# 64-bit multiply and divide for ALU64. Five configurations x every fixture
+# under GC stress would be an hour for no extra information.
+VERB_WORKLOAD := "attrs.nbc,attr-builtins.nbc,with.nbc,with-captured.nbc,hash-collision.nbc,functor.nbc,tryeval.nbc,carry-chain.nbc,div-truncates.nbc,int-min-wrap.nbc"
 
 # Build the test-only .nbc fixture generator (Rust, no dependencies; D7/D16).
 nbc-build:

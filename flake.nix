@@ -192,6 +192,43 @@
             echo "ratchet self-test: a planted regression is caught" | tee -a "$out"
           '';
 
+        # The verb gate (DECISIONS.md, CARD-ISA.md): a verb must be justified by a
+        # measured comparison against the 65816 doing the same work, or it gets
+        # deleted. `just economics` does that card-side on synthetic operands;
+        # this does it on real programs, by running the same fixtures with each
+        # verb forced onto its CPU path (vm.h VERB_NO_*).
+        #
+        # It is also a correctness check, and that is the part that can fail:
+        # moving one operation to the CPU must not change any answer. If the
+        # card's LOOKUP and the CPU's scan, or ALU64 and ORCA/C's own long-long
+        # helpers, ever disagree, one of them is wrong -- and a wrong answer
+        # matters far more than the cycle counts this check prints.
+        verb-economics = pkgs.runCommandCC "check-verb-economics"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.nbc ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            # The fixtures that actually reach a verb: attribute lookups for
+            # LOOKUP, 64-bit multiply and divide for ALU64. Five configurations
+            # times every fixture under GC stress would be an hour for no more
+            # information (justfile VERB_WORKLOAD is the same list).
+            mkdir -p build/nbc
+            for f in attrs attr-builtins with with-captured hash-collision \
+                     functor tryeval carry-chain div-truncates int-min-wrap; do
+              nbc "tests/fixtures/eval-okay-$f.nix" -o "build/nbc/$f.nbc"
+            done
+            python3 scripts/verb-economics.py \
+              --a2min ./build/a2min --vm ${ours.cvm}/cvm.bin \
+              --nbc-dir build/nbc --nbc nbc --crossover 8,32,64,128 | tee "$out"
+            grep -q "^VERB ECONOMICS OK" "$out"
+          '';
+
         # M1: the RTL's store paths must be byte-identical to upstream nix.
         #
         # The vectors are a CHECKED-IN golden artifact rather than generated here,

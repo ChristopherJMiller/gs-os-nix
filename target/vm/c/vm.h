@@ -24,7 +24,17 @@
 #define DIAG_ADDR        0x0310UL   /* the VM's state on error, see diag_write() */
 #define RESULT_STAT_ADDR 0x0320UL   /* $01 done, $FF error */
 #define RESULT_ERR_ADDR  0x0321UL
-#define GC_STRESS_ADDR   0x0BF0UL   /* a2min sets it: collect at every boundary */
+/* The two harness flags. They were at $0BF0, which is inside the C stack's
+ * range ($0400..$1FFF): a deep enough recursion would have overwritten them,
+ * silently turning GC stress off or a masked verb back on -- the second of
+ * which would quietly corrupt a measurement. $0330 is below the stack floor. */
+#define GC_STRESS_ADDR   0x0330UL   /* a2min sets it: collect at every boundary */
+#define VERB_MASK_ADDR   0x0331UL   /* a2min sets it: verbs to refuse and do on the CPU
+                                       instead, so checks.verb-economics can price each
+                                       one on a real program (docs/CARD-ISA.md) */
+#define VERB_NO_LOOKUP   0x01U
+#define VERB_NO_ALU64    0x02U
+#define verb_off(bit)    (*(volatile uint8_t *)VERB_MASK_ADDR & (bit))
 #define STACK_MIN        0x0500U    /* the C stack (S) must stay above this */
 
 #define YOUNG_TAG        0x80000000UL

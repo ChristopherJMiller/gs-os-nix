@@ -20,8 +20,9 @@ by bank and reached through 32-bit pointers, which ORCA/C dereferences with
 bank 0
   $0300  RESULT / status / error         the harness contract (BYTECODE.md)
   $0310  DIAG                            the VM's state on error: pc, chunk, vsp, rsp, nfree, depth
+  $0330  GC_STRESS / VERB_MASK           a2min sets them: collect at every boundary;
+                                         refuse a card verb and do it on the CPU
   $0400  C stack, growing down from $1FFF   7 KB: frames and direct-page locals
-  $0BF0  GC_STRESS                       a2min sets it; the collector runs at every boundary
   $2000  the program                     code + globals, from omf2bin; ≤ $BFFF
          globals: value stack (4 KB), RSTACK (768 B), FSTACK (512 B), CATCH (12 × 16 B),
                   CTAB (2 KB), CHUNK_INFO (128 × 4 B), the window table (64 × 6 B)
@@ -53,6 +54,14 @@ Two consequences, both recorded in HEAP.md:
 - **The nursery is four times larger** than the assembly VM's 16 KB — the two
   corpus tests that exhausted it (`eval-okay-tail-call-1`, the long-string one) get
   another chance without any change to the collector.
+
+Three ceilings a program can hit, all of them a loud `E_NOMEM` rather than a
+wrong answer: `CTAB_N` = **512 constants** across all chunks (a 256-attribute
+literal set needs 512 — 256 names and 256 integers — and so fails at load,
+which is what stopped the `LOOKUP` crossover measurement at 128); `WINDOW_MAX` =
+**20 KB** for a single mature object that has to be viewed; and the nursery's
+64 KB between collections. All three are a constant in `vm.h`, and bank 0 has
+room to raise the first.
 
 The C stack is the 65816 stack: ORCA/C allocates a function's locals below the
 stack pointer and points the direct-page register at them (`tsc / sbc / tcs / phd

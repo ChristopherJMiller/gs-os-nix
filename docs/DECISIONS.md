@@ -79,8 +79,22 @@ memory layout and wide-stack design. Algorithms only — no York Lava, no GHC in
 Therefore offload **chains, searches, and high-volume streaming** — never a single
 dereference. This killed the original "card is memory behind a window" design.
 
-**Gate adopted:** `checks.verb-economics` measures each verb's MAME cycle cost against
+**Gate adopted:** `checks.verb-economics` measures each verb's cycle cost against
 its 65816 equivalent. A verb that doesn't pay for its crossing is deleted.
+
+**The gate now exists and has already changed an answer (2026-09-23).** It runs
+the corpus with each verb forced onto the VM's own CPU path and diffs the
+cycles. `LOOKUP`, the verb this project was most confident about, turns out not
+to pay below ~70 attributes — because its 2.7x was measured against a binary
+search *through the `DATA` port*, and the VM the project actually built copies a
+mature set into a window once and scans it in RAM, paying nothing per
+comparison. So D5 applied to the software as well as the hardware, and in doing
+so undercut a verb: the CPU side got good enough that the crossing stopped
+paying. The verb is not deleted, because its cost is a flat 20 accesses at any
+`n` — the right shape — and the fix is on the software side (confirm the matched
+name with `MEMCMP` instead of copying the set). Details in
+[CARD-ISA.md](CARD-ISA.md); the same run priced `ALU64` at 0.1% per program
+against 18x per multiply.
 
 ---
 

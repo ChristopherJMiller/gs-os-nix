@@ -106,18 +106,33 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
    loud `E_NOMEM`, and `WINDOW_MAX` caps a single viewable object at 20 KB
    ([HEAP.md](HEAP.md) “How long a view lives”).
 5. **Slice 5: builtins that touch the store, `import`, paths, floats.** Also
-   due here: reading a large mature set by COLUMN instead of copying it whole,
-   which is what the struct-of-arrays layout was designed for and what lifts
-   `WINDOW_MAX` (item 4d).
+   due here, and now with a measurement behind it: reading a large mature set by
+   COLUMN instead of copying it whole, which is what the struct-of-arrays layout
+   was designed for, what lifts `WINDOW_MAX` (item 4d), and what would make
+   `LOOKUP` pay at the sizes real code uses (item 8) — confirm the matched name
+   with the card's `MEMCMP` rather than copying the set to compare it on the CPU.
 6. ~~The parser decision~~ **decided: `rnix`** (D16). The generator now parses all
    of Nix and refuses by feature; `just scoreboard` prints a histogram of the
    refused constructs, so pick the next slice from the top of that list.
 7. **`eval-fail` corpus.** Vendor it once the VM's error reporting is worth scoring;
    `E_INFREC` already matches Nix for `let x = x; in x`, and `E_THROW` carries
    the message.
-8. **Verb economics on real programs.** `a2min --run-nbc` prints cycles and slot
-   accesses per fixture; turn that into `checks.verb-economics` with the corpus
-   as the workload instead of micro-benchmarks.
+8. ~~**Verb economics on real programs**~~ **done** (2026-09-23) —
+   `checks.verb-economics` runs the same fixtures with each verb forced onto its
+   CPU path (`vm.h VERB_NO_*`, set by `A2MIN_VERB_MASK`) and diffs the cycles, so
+   the gate is answered on real programs rather than micro-benchmarks. It is also
+   a correctness check: moving an operation to the CPU must not change an answer.
+   Two results, both in [CARD-ISA.md](CARD-ISA.md):
+   **`LOOKUP` does not pay below ~70 attributes** — the 2.7x it was justified by
+   was against a binary search *through the `DATA` port*, and the VM instead
+   copies the set into a window once and scans it in RAM, so the CPU path pays
+   nothing per comparison. The verb's own cost is a flat 20 bus accesses at any
+   `n`, which is the right hardware shape; what is missing is a way to confirm
+   the matched name without copying the set, i.e. the `MEMCMP` verb the VM does
+   not yet call. **`ALU64` is worth 0.1%** per program though 18x per multiply:
+   Nix programs barely multiply. It stays because it is a capability, and the VM
+   now also has a software 64-bit divide (`run.c alu_cpu`), which is what lets it
+   run with no card at all.
 
 ## Resuming
 

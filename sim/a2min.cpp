@@ -456,7 +456,15 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     if (!load_image(vm_path)) return 2;
     // The VM collects at every bytecode boundary when this byte is set (gc.c),
     // which turns every fixture into a collector test.
-    ram[0x0BF0] = gc_stress ? 1 : 0;
+    ram[0x0330] = gc_stress ? 1 : 0;
+    // A2MIN_VERB_MASK makes the VM refuse card verbs and do them on the CPU
+    // instead (vm.h VERB_*), which is how checks.verb-economics prices a verb on
+    // a real program; A2MIN_NO_CARD hides the card altogether, so card_find()
+    // comes up empty and promotion falls back to an in-RAM collection.
+    if (const char *m = std::getenv("A2MIN_VERB_MASK"))
+        ram[0x0331] = static_cast<uint8_t>(std::strtoul(m, nullptr, 0));
+    if (const char *n = std::getenv("A2MIN_NO_CARD"))
+        if (n[0] == '1') card_slot = -1;        // no slot decodes, so the scan finds nothing
     {
         std::ifstream f(nbc_path, std::ios::binary);
         if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }

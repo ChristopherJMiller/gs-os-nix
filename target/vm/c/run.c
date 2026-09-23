@@ -266,14 +266,44 @@ static void binary_ints(obj_t **a, obj_t **b)
     need(*b, T_INT);
 }
 
-/* MUL and DIV go to the card's ALU64 (CARD-ISA.md, the D5 measurement). */
+/* The CPU's own 64-bit multiply and divide, for a machine with no card and for
+ * checks.verb-economics, which prices ALU64 by masking it off. ORCA/C's own
+ * long-long helpers do the work; the sign is applied to unsigned magnitudes
+ * rather than trusted to the compiler, because C89 leaves the direction of
+ * negative division implementation-defined and CARD-ISA.md requires truncation
+ * toward zero. */
+static void alu_cpu(uint8_t op, const void *pa, const void *pb, uint8_t *out)
+{
+    int64_t x, y;
+    uint64_t ax, ay, q;
+    int neg;
+    memcpy(&x, pa, 8);
+    memcpy(&y, pb, 8);
+    if (op == A_MUL) {
+        q = (uint64_t)x * (uint64_t)y;          /* low 64 bits, signed or not */
+        memcpy(out, &q, 8);
+        return;
+    }
+    if (y == 0) err_exit(E_DIVZERO);
+    neg = (x < 0) != (y < 0);
+    ax = (x < 0) ? (uint64_t)0 - (uint64_t)x : (uint64_t)x;
+    ay = (y < 0) ? (uint64_t)0 - (uint64_t)y : (uint64_t)y;
+    q  = ax / ay;
+    if (neg) q = (uint64_t)0 - q;               /* unsigned, so INT64_MIN is fine */
+    memcpy(out, &q, 8);
+}
+
+/* MUL and DIV go to the card's ALU64 (CARD-ISA.md, the D5 measurement) when
+ * there is one and the verb is not masked off. */
 static void alu(uint8_t op)
 {
     obj_t *a, *b, *r;
     uint8_t out[8];
     binary_ints(&a, &b);
-    if (slot_x == 0) err_exit(E_NOCARD);
-    if (card_alu64(op, PAYLOAD(a), PAYLOAD(b), out)) err_exit(E_DIVZERO);
+    if (slot_x == 0 || verb_off(VERB_NO_ALU64))
+        alu_cpu(op, PAYLOAD(a), PAYLOAD(b), out);
+    else if (card_alu64(op, PAYLOAD(a), PAYLOAD(b), out))
+        err_exit(E_DIVZERO);
     r = alloc(12);
     SET_HDR(r, T_INT, 0);
     memcpy(PAYLOAD(r), out, 8);

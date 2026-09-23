@@ -260,6 +260,41 @@ search would have found.
 > access (docs/HEAP.md), and cost no area: the byte-assembly registers the engine
 > needed simply disappeared.
 
+> ### Measured again, on real programs: LOOKUP does not pay below ~70 attributes
+>
+> The 2.7x above is against a 65816 **binary search through the `DATA` port** — one
+> bus access per comparison. That is not the implementation the VM ended up with.
+> `deref` copies a mature object into a window in one burst and the VM then scans
+> it **in RAM at full speed** (VM.md, HEAP.md), so the CPU path pays for the set
+> once and nothing per comparison. Measured against *that*
+> (`checks.verb-economics`, a promotion at every bytecode boundary so the set is
+> mature), selecting the last of `n` attributes:
+>
+> | `n` | LOOKUP | CPU scan of the copy | LOOKUP's own bus cost |
+> |---:|---:|---:|---:|
+> | 8 | 372,515 | 366,617 | +20 |
+> | 32 | 1,095,831 | 1,092,285 | +20 |
+> | 64 | 2,053,367 | 2,052,957 | +20 |
+> | 128 | 3,968,439 | 3,974,301 | +20 |
+>
+> The crossover is between 64 and 128. The verb's own cost is a flat **20 bus
+> accesses** — set `A0`, four hash bytes, the command, the poll, `A1`, the index —
+> no matter how large the set, which is exactly the property the CAM was built for;
+> what changes with `n` is only the scan it replaces. On the corpus as it stands
+> the verb is a small net **loss** (-1.7% of cycles over ten fixtures), because
+> Nix's own test programs have attribute sets of two to five.
+>
+> That is not an argument for deleting it, and it is not a correction to the
+> hardware: 20 accesses for any `n` is the right shape. It says the *software*
+> gives the verb no room. LOOKUP still has to hand the set back to the CPU so the
+> name can be confirmed against a hash candidate (docs/HEAP.md), which means a
+> whole-object copy the CPU scan would have paid for anyway — so the verb saves
+> the comparisons and keeps the copy. The way to make it pay at the sizes real
+> code uses is to confirm the name **on the card**, with the `MEMCMP` verb that is
+> already in this table and that the VM does not yet call; then a hit costs ~24
+> accesses and no copy at all. Recorded here rather than acted on, because it is a
+> slice-5 change to how mature sets are read (STATUS.md item 5).
+
 `ALU64` exists because the 65816 has **no multiply or divide at all** and Nix integers
 are 64-bit. Operands `P0`/`P1` and the result `P3` are 8-byte little-endian integers in
 byte-array slots (byte 0 is the LSB); `P2` byte 0 selects the operation:
@@ -308,6 +343,23 @@ polling `DONE`, cannot see. `INT64_MIN / -1`, which C leaves undefined, wraps to
 > `a2min` emulated faithfully: **`CPX` clobbers the carry** a multi-byte `ADC` chain
 > depends on, and **`abs,X` adds X unsigned**, so the "count from `$F8`" idiom needs
 > its base `$F8` *below* the target, not 8 above it.
+
+> ### Measured again, on real programs: ALU64 is worth 0.1%
+>
+> 18x per multiply is right, and it buys almost nothing: over ten corpus fixtures
+> (`checks.verb-economics`) masking ALU64 off and letting ORCA/C's own long-long
+> helpers do the work costs **0.1% of cycles**. Nix's test programs barely
+> multiply — they build attribute sets and force thunks.
+>
+> That is not a case for deleting the verb. `ALU64` is the one entry in this table
+> that exists for **capability**, not throughput: without it the VM would need a
+> software 64-bit divide anyway, and it now has one (`run.c alu_cpu`, ~700 bytes of
+> bank 0, correct at `INT64_MIN` because it applies the sign to unsigned
+> magnitudes rather than trusting C89's implementation-defined direction). The
+> verb's real value is that a program which *does* multiply — hashing, base32,
+> arithmetic-heavy Nix — gets 18x on the operation that would otherwise dominate
+> it. The honest summary is that the gate is passed per-operation and is nearly
+> invisible per-program, and both numbers belong here.
 
 `DFASTEP` walks the lexer DFA table. A lexer is the one genuinely tight loop in
 parsing, so this is what makes L5 self-hosting affordable — the grammar itself stays
