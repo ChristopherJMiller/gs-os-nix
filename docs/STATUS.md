@@ -198,15 +198,23 @@ number rises by widening the lowering and the VM together, one slice at a time
      instruction. Computed imports, interpolated import paths, a shadowed
      `import`, `import` used as a value, and import cycles are all refused by
      name rather than guessed.
-   - **~12 are paths as values** — `dirOf`, `baseNameOf`, `toString`, `+`, path
-     antiquotation. Reachable, and their expected values are stable: they use
-     **absolute** literals (`/foo/bar`, `/bin`), and tvix substitutes a fixed
-     `/pwd/lang` and `/fake-home` for relative and home paths, which is what
-     keeps the fixtures machine-independent under D7 — the generator has to do
-     the same rather than resolve against the real directory. Needs `T_PATH`
-     (defined in vm.h, used nowhere) wired through: `typeOf`, equality,
-     `toString`, `dirOf`/`baseNameOf`, and `+`, which **normalises** (`/bin + "/"`
-     is `/bin`, `/bin + "bar"` is `/binbar`, `/bin + /bin` is `/bin/bin`).
+   - ~~**~12 are paths as values**~~ **done** (2026-09-24): the generator
+     makes each path literal absolute and canonical (Nix's `canonPath`) and emits
+     it as a new constant kind, `$05 PATH` (BYTECODE.md). Relative and home paths
+     resolve against the fixture convention `/pwd/lang` and `/fake-home`, never
+     the disk (D7). The VM has `T_PATH` in `typeOf`, `==`, `<`, `toString`,
+     `dirOf` (a path's directory is a path) and `baseNameOf` (a string), and
+     `path + string` / `path + path` canonicalise again at run time
+     (`data.c path_join`). `obj_size` had no case for `T_PATH`, which has no
+     context word, so a promoted path would have been truncated to 4 bytes.
+     `eval-okay-paths` is long enough to catch that under GC stress, and two
+     mutations prove it. Five corpus tests pass. Still refused: path
+     antiquotation (`./a/${b}`). And **string + path and `"${path}"` are type
+     errors until L6**, because in Nix they copy the path into the store and put
+     it in the string's context.
+   - **Next: string coercion of attribute sets** (`__toString`, `outPath`).
+     `eval-okay-coerce-opadd` needs it, and so does M4: interpolating a
+     derivation (`"${drv}"`) is an `outPath` coercion.
    - **~10 need real file I/O** — `readFile`, `readDir`, `pathExists`,
      `hashFile`, `builtins.path`. Those belong with the store (L6) and GS/OS,
      not here.

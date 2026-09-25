@@ -48,6 +48,11 @@ fn write_chunk(ch: &Chunk) -> Vec<u8> {
                 out.extend_from_slice(&(s.len() as u16).to_le_bytes());
                 out.extend_from_slice(s.as_bytes());
             }
+            Const::Path(s) => {
+                out.push(K_PATH);
+                out.extend_from_slice(&(s.len() as u16).to_le_bytes());
+                out.extend_from_slice(s.as_bytes());
+            }
         }
     }
     out.extend_from_slice(&ch.code);
@@ -104,6 +109,12 @@ pub fn read(b: &[u8]) -> Result<Image, String> {
                     consts.push(Const::Str(String::from_utf8_lossy(s).into_owned()));
                     p += 3 + len;
                 }
+                Some(&K_PATH) => {
+                    let len = u16_at(b, p + 1)? as usize;
+                    let s = b.get(p + 3..p + 3 + len).ok_or("truncated path constant")?;
+                    consts.push(Const::Path(String::from_utf8_lossy(s).into_owned()));
+                    p += 3 + len;
+                }
                 Some(k) => return Err(format!("unknown constant kind {k:#04x}")),
                 None => return Err("truncated constant".into()),
             }
@@ -123,6 +134,7 @@ pub fn disassemble(img: &Image) -> String {
             match k {
                 Const::Int(v) => s.push_str(&format!("  k{ki} = INT {v}\n")),
                 Const::Str(v) => s.push_str(&format!("  k{ki} = STRING {v:?}\n")),
+                Const::Path(v) => s.push_str(&format!("  k{ki} = PATH {v}\n")),
             }
         }
         let mut pc = 0;

@@ -79,6 +79,9 @@ pub enum Expr {
     /// A string: literal parts and `${…}` interpolations, escapes and indentation
     /// already resolved by rnix. A plain literal is a single `Lit` part.
     Str(Vec<StrPart>),
+    /// A path literal, already absolute and canonical (front.rs canon_path):
+    /// relative paths resolve against the fixture convention, not the disk.
+    Path(String),
     List(Vec<Expr>),
     /// Static keys only, unsorted here; the compiler sorts by bytes.
     AttrSet(Vec<(String, Pos, Expr)>),

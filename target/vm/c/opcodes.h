@@ -113,6 +113,7 @@
 /* Constant kinds are heap tags (docs/HEAP.md). */
 #define K_INT           0x01
 #define K_STRING        0x04
+#define K_PATH          0x05
 
 /* Error codes reported at $0321 when the status byte is $FF. */
 #define E_BADOP         0x01

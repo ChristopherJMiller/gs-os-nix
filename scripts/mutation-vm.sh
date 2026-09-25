@@ -37,7 +37,7 @@ set -uo pipefail
 
 A2MIN="$1"
 NBC="$2"
-FIXTURES="eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations"
+FIXTURES="eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths"
 MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1"
 SRCS="main.c run.c data.c prims.c gc.c card.c"      # link order: main.c first
 WORK=$(mktemp -d)
@@ -153,6 +153,15 @@ mutate "string + keeps its views across a collecting reserve" run.c \
 
 mutate "map keeps its view across a collecting reserve" prims.c \
        's/    if (nursery_reserve_n(n, 32, 4)) l = view_top_as(T_LIST);/    nursery_reserve_n(n, 32, 4);/'
+
+# Paths (BYTECODE.md "Constants"): a PATH has no context word, so the collector
+# must size it itself -- the 8-byte default truncates any path longer than 4
+# bytes when it is promoted -- and `+` must canonicalise as Nix does.
+mutate "a PATH is sized by the 8-byte default" gc.c \
+       's/^    case T_PATH:   return n ? round4(n) + 4 : 8;    \/\* no context word (HEAP.md) \*\///'
+
+mutate "path + keeps .. components" data.c \
+       's/        if (len == 2 \&\& PCH(start) == '"'"'.'"'"' \&\& PCH(start + 1) == '"'"'.'"'"') {/        if (0) {/'
 
 echo
 echo "$pass mutations caught, $fail not caught"

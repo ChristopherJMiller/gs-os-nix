@@ -14,6 +14,8 @@ use crate::opcodes::*;
 pub enum Const {
     Int(i64),
     Str(String),
+    /// An absolute, canonical path (front.rs canon_path).
+    Path(String),
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -269,6 +271,7 @@ impl Compiler {
     fn strict(&mut self, e: &Expr, chunk: usize) -> Result<(), Unsupported> {
         match e {
             Expr::Int(v) => self.emit_const(chunk, Const::Int(*v))?,
+            Expr::Path(p) => self.emit_const(chunk, Const::Path(p.clone()))?,
             Expr::Var(name, pos) => match self.resolve(name, *pos)? {
                 Binding::Literal(op) => self.emit(chunk, op),
                 Binding::Global(g) => self.emit_builtin(g, *pos, chunk)?,
@@ -574,7 +577,7 @@ impl Compiler {
     /// as the value it already is, anything else as a thunk in its own chunk.
     fn lazy(&mut self, e: &Expr, chunk: usize) -> Result<(), Unsupported> {
         match e {
-            Expr::Int(_) | Expr::Lambda(..) => return self.strict(e, chunk),
+            Expr::Int(_) | Expr::Path(_) | Expr::Lambda(..) => return self.strict(e, chunk),
             Expr::Str(parts) if matches!(parts.as_slice(), [] | [StrPart::Lit(_)]) => {
                 return self.strict(e, chunk)
             }

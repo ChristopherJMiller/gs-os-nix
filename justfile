@@ -182,8 +182,8 @@ quiet-clock: build-a2min cvm nbc-build asm-headless
     ./scripts/quiet-clock.sh ./sim/build_a2min/a2min target/build/cvm.bin \
         target/build/nbc-fixtures target/build/storepath_demo_headless.bin {{VECTORS}}
 
-# Prove the collector fixtures can fail: break the remembered set six ways, the
-# minimum object size two and the nursery reserves four. Mutates a copy, never the tree.
+# Prove the collector fixtures can fail: break the remembered set six ways, object
+# sizes three, the nursery reserves four and path + once. Mutates a copy, never the tree.
 mutation-vm: build-a2min nbc-build
     ./scripts/mutation-vm.sh ./sim/build_a2min/a2min {{NBC}}
 

@@ -143,6 +143,12 @@ static void load(void)
                 memcpy(STRBYTES(o), q + 3, len);
                 q += 3 + len;
                 break;
+            case K_PATH:                        /* already canonical: the generator did it */
+                len = rd16(q + 1);
+                o = path_alloc(len);
+                memcpy(STRBYTES(o), q + 3, len);
+                q += 3 + len;
+                break;
             default:
                 badnbc();
             }

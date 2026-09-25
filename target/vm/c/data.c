@@ -42,6 +42,58 @@ obj_t *str_alloc(uint16_t len)
     return o;
 }
 
+/* A PATH of len bytes (HEAP.md): header, the bytes zero-padded, and no context
+ * word -- a path is not a string until it is coerced, which copies it to the
+ * store (L6). At least 8 bytes, like every object. */
+obj_t *path_alloc(uint16_t len)
+{
+    uint16_t r = round4(len);
+    obj_t *o;
+    if (r < len) nomem();
+    o = alloc(r ? r + 4 : 8);
+    SET_HDR(o, T_PATH, len);
+    if (r) *(uint32_t *)(PAYLOAD(o) + r - 4) = 0;
+    return o;
+}
+
+/* canonPath(a ++ b) as a new PATH: Nix's `path + string` and `path + path`
+ * (the second path's text is appended as it is: /bin + /bin is /bin/bin).
+ * Components that are empty or `.` are dropped, `..` removes the one before it
+ * (and stops at the root), and there is no trailing slash except on `/`
+ * itself: /bin + "/" is /bin, /foo/bar + "/../xyzzy/." is /foo/xyzzy. The
+ * generator does the same to literals (tools/nbc front.rs canon_path).
+ *
+ * a and b may be views; nothing here collects. The caller has reserved room
+ * for the longest result, na + nb + 1 bytes, and the slack is given back. */
+obj_t *path_join(const char *a, uint16_t na, const char *b, uint16_t nb)
+{
+    uint16_t n = na + nb, i = 0, j, w = 0, start, len, size;
+    obj_t *o = path_alloc(n + 1);
+    char *d = STRBYTES(o);
+#define PCH(k) ((k) < na ? a[k] : b[(k) - na])
+    while (i < n) {
+        while (i < n && PCH(i) == '/') ++i;
+        if (i >= n) break;
+        start = i;
+        while (i < n && PCH(i) != '/') ++i;
+        len = i - start;
+        if (len == 1 && PCH(start) == '.') continue;
+        if (len == 2 && PCH(start) == '.' && PCH(start + 1) == '.') {
+            while (w > 0 && d[--w] != '/') ;           /* drop the last component */
+            continue;
+        }
+        d[w++] = '/';
+        for (j = start; j < i; ++j) d[w++] = PCH(j);
+    }
+#undef PCH
+    if (w == 0) d[w++] = '/';
+    size = obj_size(o);                                 /* as allocated, for n + 1 */
+    SET_HDR(o, T_PATH, w);
+    for (j = w; j < round4(w); ++j) d[j] = 0;           /* zero padding, as path_alloc */
+    if ((uint16_t)(LOW16(o) + size) == nfree) nfree = LOW16(o) + obj_size(o);   /* give back the slack */
+    return o;
+}
+
 obj_t *list_alloc(uint16_t n)
 {
     obj_t *o = alloc(n ? 4 + 4 * n : 8);          /* >= 8: see obj_size (gc.c) */
@@ -402,7 +454,7 @@ int cmp_values(void)
     if (a->tag != b->tag) type_err();
     switch (a->tag) {
     case T_INT:    return cmp64(a, b);
-    case T_STRING: return str_cmp(a, b);
+    case T_STRING: case T_PATH: return str_cmp(a, b);    /* paths order by their bytes, as Nix does */
     case T_LIST:   return cmp_lists(ao, bo);
     default:       type_err(); return 1;
     }
@@ -430,7 +482,7 @@ int values_equal(obj_t *a, obj_t *b)
     case T_INT:    return INTVAL(av) == INTVAL(bv);
     case T_BOOL:   return BOOLVAL(av) == BOOLVAL(bv);
     case T_NULL:   return 1;
-    case T_STRING: return str_eq(av, bv);
+    case T_STRING: case T_PATH: return str_eq(av, bv);   /* a path never equals a string: tags differ */
     case T_LIST:
         n = AUX16(av);
         if (AUX16(bv) != n) return 0;

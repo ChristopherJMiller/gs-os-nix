@@ -84,6 +84,15 @@ copying the tag straight into the header:
 |---|---|---|
 | `$01` | `INT` | 8 bytes, signed |
 | `$04` | `STRING` | `u16` length, then the bytes (no terminator) |
+| `$05` | `PATH` | `u16` length, then the bytes: absolute and already canonical |
+
+A path literal is resolved by the generator, never by the VM: made absolute,
+then canonicalised as Nix's `canonPath` does (no `.` or empty components, `..`
+resolved and clamped at the root, no trailing slash except `/`). A relative
+path resolves against `/pwd/lang` and `~` against `/fake-home`, the convention
+Nix's language tests and the tvix corpus are written against, so no fixture
+carries the generating machine's directories (D7). `import` is the exception:
+it reads a real file relative to the importer ("Imports" below).
 
 Booleans and `null` are not constants: they are opcodes that push shared singleton
 objects. Chunks (thunk and lambda bodies) are not constants either — `THUNK` names

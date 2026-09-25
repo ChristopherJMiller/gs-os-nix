@@ -59,6 +59,7 @@ pub const OP_CLOSED_THUNK: u8 = 0x44;
 /// Constant kinds are heap tags (docs/HEAP.md).
 pub const K_INT: u8 = 0x01;
 pub const K_STRING: u8 = 0x04;
+pub const K_PATH: u8 = 0x05;
 
 /// Primops: (Nix name, id, arity). BYTECODE.md "Primops" is normative and
 /// target/vm/opcodes.inc must agree; checks.nbc-opcodes diffs all three.

@@ -143,6 +143,7 @@ uint16_t obj_size(const obj_t *o)
     switch (o->tag) {
     case T_INT: case T_THUNK: case T_LAMBDA: case T_BLACKHOLE: return 12;
     case T_STRING: return round4(n) + 8;
+    case T_PATH:   return n ? round4(n) + 4 : 8;    /* no context word (HEAP.md) */
     case T_LIST:   return n ? 4 + 4 * n : 8;
     case T_ATTRS:  return n ? 4 + 12 * n : 8;
     default:       return 8;                    /* BOOL, NULL, INDIRECT */

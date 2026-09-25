@@ -1,0 +1,1 @@
+[ /nix/store/some-fairly-long-directory-name/bin/tool /pwd/lang/file.nix /fake-home/config "path" true false "/nix/store/some-fairly-long-directory-name/bin/tool" /nix/store/some-fairly-long-directory-name/bin "path" "tool" /nix/store/some-fairly-long-directory-name/extra/path / true true ]

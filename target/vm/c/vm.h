@@ -228,6 +228,8 @@ void badnbc(void);
 obj_t *alloc(uint16_t size);        /* size a multiple of 4, >= 8 */
 obj_t *new_int(int64_t v);
 obj_t *str_alloc(uint16_t len);     /* a STRING with a null context, padded */
+obj_t *path_alloc(uint16_t len);    /* a PATH, no context word (HEAP.md) */
+obj_t *path_join(const char *a, uint16_t na, const char *b, uint16_t nb);   /* canonPath(a ++ b); caller reserves na+nb+1 */
 obj_t *list_alloc(uint16_t n);
 obj_t *attrs_alloc(uint16_t n);
 obj_t *deref_follow(obj_t *p);      /* checks, and follows INDIRECTs */

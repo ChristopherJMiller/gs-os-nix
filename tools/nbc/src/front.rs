@@ -15,6 +15,34 @@ use crate::ast::{unsupported, BinOp, Expr, Param, Pos, StrPart, Unsupported};
 use rnix::ast::{self, AstNode, BinOpKind, HasEntry, LiteralKind, UnaryOpKind};
 use std::path::{Path, PathBuf};
 
+/// Where relative and home path VALUES resolve: the convention Nix's own
+/// language tests (and tvix's corpus) are written against, so the expected
+/// outputs match and no fixture carries this machine's directories (D7).
+/// Imports are different: they read a real file, relative to the importer.
+pub const FIXTURE_PWD: &str = "/pwd/lang";
+pub const FIXTURE_HOME: &str = "/fake-home";
+
+/// Nix's canonPath: absolute, no `.` or empty components, `..` resolved (and
+/// clamped at the root), no trailing slash except for `/` itself. The VM's
+/// path `+` does the same at run time (target/vm/c/data.c path_join).
+pub fn canon_path(p: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for c in p.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            c => parts.push(c),
+        }
+    }
+    if parts.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", parts.join("/"))
+    }
+}
+
 /// Parse a file, so `import ./other.nix` can be resolved relative to it. The
 /// generator resolves imports itself; the VM has no parser and no filesystem
 /// (docs/BYTECODE.md "Imports").
@@ -113,6 +141,20 @@ impl<'a> Lower<'a> {
         let line = before.matches('\n').count() + 1;
         let col = before.rsplit('\n').next().map(|l| l.chars().count()).unwrap_or(0) + 1;
         Pos { line, col }
+    }
+
+    /// A path literal as a value: joined to `base` if relative, then made
+    /// canonical, as Nix does when it parses one. Interpolated paths
+    /// (`./a/${b}`) are not yet supported and are refused by name.
+    fn path_value(&self, node: &impl AstNode, text: &str, base: Option<&str>) -> Result<Expr, Unsupported> {
+        if text.contains("${") {
+            return self.refuse(node, "path antiquotation");
+        }
+        let joined = match base {
+            Some(b) => format!("{b}/{text}"),
+            None => text.to_string(),
+        };
+        Ok(Expr::Path(canon_path(&joined)))
     }
 
     fn refuse<T>(&self, node: &impl AstNode, what: &str) -> Result<T, Unsupported> {
@@ -436,9 +478,15 @@ impl<'a> Lower<'a> {
             }
             // Everything below is real Nix the VM cannot run yet. Named, so the
             // scoreboard can say which feature would move the most tests.
-            ast::Expr::PathAbs(n) => self.refuse(n, "path literal"),
-            ast::Expr::PathRel(n) => self.refuse(n, "path literal"),
-            ast::Expr::PathHome(n) => self.refuse(n, "path literal"),
+            // A path VALUE resolves against the fixture convention (FIXTURE_PWD,
+            // FIXTURE_HOME), never the disk: the expected outputs are written
+            // that way, and a fixture must not carry this machine's paths (D7).
+            ast::Expr::PathAbs(n) => self.path_value(n, &n.to_string(), None),
+            ast::Expr::PathRel(n) => self.path_value(n, &n.to_string(), Some(FIXTURE_PWD)),
+            ast::Expr::PathHome(n) => {
+                let text = n.to_string();
+                self.path_value(n, text.trim_start_matches('~'), Some(FIXTURE_HOME))
+            }
             ast::Expr::PathSearch(n) => self.refuse(n, "search path literal"),
             ast::Expr::CurPos(n) => self.refuse(n, "__curPos"),
             ast::Expr::Root(n) => self.refuse(n, "nested root"),
@@ -556,12 +604,30 @@ mod tests {
         );
     }
 
+    /// Nix's canonPath, and the fixture convention for relative and home paths.
+    /// The expected values are Nix's own (tvix corpus eval-okay-dirof and
+    /// eval-okay-path-antiquotation), not derived from this code.
+    #[test]
+    fn path_literals_are_absolute_and_canonical() {
+        assert_eq!(canon_path("/"), "/");
+        assert_eq!(canon_path("/."), "/");
+        assert_eq!(canon_path("/foo/bar/"), "/foo/bar");
+        assert_eq!(canon_path("//a//b/./c/.."), "/a/b");
+        assert_eq!(canon_path("/../.."), "/");
+        assert_eq!(canon_path("/foo/bar/../xyzzy/./foo.txt"), "/foo/xyzzy/foo.txt");
+        assert_eq!(parse("/foo/bar").unwrap(), Expr::Path("/foo/bar".into()));
+        assert_eq!(parse("./foo").unwrap(), Expr::Path("/pwd/lang/foo".into()));
+        assert_eq!(parse("../x").unwrap(), Expr::Path("/pwd/x".into()));
+        assert_eq!(parse("~/foo").unwrap(), Expr::Path("/fake-home/foo".into()));
+    }
+
     #[test]
     fn refuses_by_feature_name() {
         let cases = [
             ("{ ${a} = 1; }", "dynamic attribute name"),
             ("{ \"${a}\" = 1; }", "dynamic attribute name"),
-            ("./p", "path literal"),
+            ("./p/${a}", "path antiquotation"),
+            ("<nixpkgs>", "search path literal"),
             ("1.5", "float literal"),
             ("let x = 1; x = 2; in x", "`x` bound twice in one let"),
             ("{ a = 1; inherit a; }", "`a` bound twice in one attribute set"),
@@ -635,7 +701,7 @@ mod tests {
 
     #[test]
     fn positions_are_line_and_column() {
-        let err = parse("let\n  x = 1;\n  in ./x").unwrap_err();
+        let err = parse("let\n  x = 1;\n  in <x>").unwrap_err();   // any refused construct
         assert_eq!(err.pos, Pos { line: 3, col: 6 });
     }
 

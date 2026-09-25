@@ -35,6 +35,7 @@ SSTR(str_string, "string");
 SSTR(str_list, "list");
 SSTR(str_set, "set");
 SSTR(str_lambda, "lambda");
+SSTR(str_path, "path");
 SSTR(str_one, "1");
 SSTR(str_dot, ".");
 SSTR(str_slash, "/");
@@ -44,7 +45,7 @@ SSTR(str_wrong, "wrong");
 SSTR(str_space, " ");
 
 static obj_t *str_int, *str_bool, *str_null, *str_string, *str_list, *str_set, *str_lambda,
-             *str_one, *str_dot, *str_slash, *str_name, *str_right, *str_wrong, *str_space;
+             *str_one, *str_dot, *str_slash, *str_name, *str_right, *str_wrong, *str_space, *str_path;
 
 void prims_init(void)
 {
@@ -55,6 +56,7 @@ void prims_init(void)
     str_list   = STATIC_PTR(&str_list_s);
     str_set    = STATIC_PTR(&str_set_s);
     str_lambda = STATIC_PTR(&str_lambda_s);
+    str_path   = STATIC_PTR(&str_path_s);
     str_one    = STATIC_PTR(&str_one_s);
     str_dot    = STATIC_PTR(&str_dot_s);
     str_slash  = STATIC_PTR(&str_slash_s);
@@ -149,6 +151,16 @@ static obj_t *view_top_as(uint8_t tag)
     force_top();
     v = deref(peek());
     need(v, tag);
+    return v;
+}
+
+/* view_top_as for primops that take a STRING or a PATH (dirOf, baseNameOf). */
+static obj_t *view_top_text(void)
+{
+    obj_t *v;
+    force_top();
+    v = deref(peek());
+    if (v->tag != T_STRING && v->tag != T_PATH) type_err();
     return v;
 }
 
@@ -581,6 +593,14 @@ static void tostring_top(void)
     vo = force_pop_view(&v);
     switch (v->tag) {
     case T_STRING: push(vo); return;
+    case T_PATH:                                /* its text, as a string: no store copy (that is "${p}") */
+        rpush(vo);
+        nursery_reserve_n(1, round4(AUX16(v)), 8);
+        v = deref_rpop();
+        vo = str_alloc(AUX16(v));
+        memcpy(STRBYTES(vo), STRBYTES(v), AUX16(v));
+        push(vo);
+        return;
     case T_INT:    push(int_to_str(INTVAL(v))); return;
     case T_BOOL:   if (BOOLVAL(v)) push(str_one); else push(str_alloc(0)); return;
     case T_NULL:   push(str_alloc(0)); return;
@@ -645,7 +665,7 @@ static void prim_concatstringssep(void) { concat_strings_sep_top(); }
 /* baseNameOf / dirOf on STRINGs, with Nix's edge cases. */
 static void prim_basenameof(void)
 {
-    obj_t *s = view_top_as(T_STRING), *r;       /* stays rooted until the reserve */
+    obj_t *s = view_top_text(), *r;       /* stays rooted until the reserve */
     uint16_t n = AUX16(s), last, start;
     const char *p = STRBYTES(s);
     if (n == 0) { --vsp; push(str_alloc(0)); return; }
@@ -657,7 +677,7 @@ static void prim_basenameof(void)
         if (start == 0) break;
         --start;
     }
-    if (nursery_reserve_n(1, round4(last - start + 1), 8)) { s = view_top_as(T_STRING); p = STRBYTES(s); }
+    if (nursery_reserve_n(1, round4(last - start + 1), 8)) { s = view_top_text(); p = STRBYTES(s); }
     --vsp;
     r = str_alloc(last - start + 1);
     memcpy(STRBYTES(r), p + start, last - start + 1);
@@ -666,7 +686,7 @@ static void prim_basenameof(void)
 
 static void prim_dirof(void)
 {
-    obj_t *s = view_top_as(T_STRING), *r;       /* stays rooted until the reserve */
+    obj_t *s = view_top_text(), *r;       /* stays rooted until the reserve */
     uint16_t n = AUX16(s), j;
     const char *p = STRBYTES(s);
     if (n == 0) { --vsp; push(str_dot); return; }
@@ -676,10 +696,17 @@ static void prim_dirof(void)
         if (j == 0) { --vsp; push(str_dot); return; }
         --j;
     }
-    if (j == 0) { --vsp; push(str_slash); return; }
-    if (nursery_reserve_n(1, round4(j), 8)) { s = view_top_as(T_STRING); p = STRBYTES(s); }
+    /* A path's directory is a path; a string's is a string. A path always has
+     * a slash (it is absolute and canonical), so it never reaches str_dot. */
+    if (j == 0) {
+        --vsp;
+        if (s->tag == T_PATH) { r = path_alloc(1); STRBYTES(r)[0] = '/'; push(r); }
+        else push(str_slash);
+        return;
+    }
+    if (nursery_reserve_n(1, round4(j), 8)) { s = view_top_text(); p = STRBYTES(s); }
     --vsp;
-    r = str_alloc(j);
+    r = s->tag == T_PATH ? path_alloc(j) : str_alloc(j);
     memcpy(STRBYTES(r), p, j);
     push(r);
 }
@@ -721,6 +748,7 @@ static void prim_typeof(void)
     case T_LIST:   push(str_list); break;
     case T_ATTRS:  push(str_set); break;
     case T_LAMBDA: push(str_lambda); break;
+    case T_PATH:   push(str_path); break;
     default:       type_err();
     }
 }

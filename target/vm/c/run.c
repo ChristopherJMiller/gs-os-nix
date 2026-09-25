@@ -423,7 +423,18 @@ void op_arith(uint16_t op)
     switch (op) {
     case OP_ADD:                                /* two INTs add, two STRINGs concatenate */
         view_two(&a, &b);                       /* both still on the stack: see below */
-        if (a->tag == T_STRING) {
+        if (a->tag == T_PATH) {
+            /* path + string and path + path: canonPath of the joined text,
+             * a PATH (data.c path_join). */
+            if (b->tag != T_STRING && b->tag != T_PATH) type_err();
+            if ((uint16_t)(AUX16(a) + AUX16(b) + 1) <= AUX16(a)) nomem();
+            if (nursery_reserve_n(1, round4(AUX16(a) + AUX16(b) + 1), 4)) view_two(&a, &b);
+            vsp -= 2;
+            push(path_join(STRBYTES(a), AUX16(a), STRBYTES(b), AUX16(b)));
+        } else if (a->tag == T_STRING) {
+            /* string + path would copy the path into the store and put it in
+             * the string's context: that is L6, so a PATH here is a type
+             * error for now rather than a string without its context. */
             need(b, T_STRING);
             if ((uint16_t)(AUX16(a) + AUX16(b)) < AUX16(a)) nomem();
             if (nursery_reserve_n(1, round4(AUX16(a) + AUX16(b)), 8)) view_two(&a, &b);
