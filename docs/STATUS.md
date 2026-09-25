@@ -212,9 +212,18 @@ number rises by widening the lowering and the VM together, one slice at a time
      antiquotation (`./a/${b}`). And **string + path and `"${path}"` are type
      errors until L6**, because in Nix they copy the path into the store and put
      it in the string's context.
-   - **Next: string coercion of attribute sets** (`__toString`, `outPath`).
-     `eval-okay-coerce-opadd` needs it, and so does M4: interpolating a
-     derivation (`"${drv}"`) is an `outPath` coercion.
+   - ~~**String coercion of attribute sets**~~ **done** (2026-09-24): Nix's
+     `coerceToString` is `prims.c coerce_top`. A set coerces through
+     `__toString` (called with the set itself), which takes precedence over
+     `outPath`, and the result is coerced again. It applies in `+` (the left
+     operand decides what `+` means: a path, an int, otherwise strings, each side
+     coerced, left first), in `"${…}"`, in `toString` (with its wider rules),
+     and in `substring`, `stringLength` and `concatStringsSep`. M4 depends on
+     it: `"${drv}"` is an `outPath` coercion. **Its fixture caught a
+     silent wrong answer on the first run:** `concatStringsSep` coerced each
+     element to measure it, then copied the original sets' bytes as text.
+     `eval-okay-coerce-sets` and two mutations guard it, and the
+     `builtins-substring-coerce` and `coerce-opadd` corpus tests pass.
    - **~10 need real file I/O** — `readFile`, `readDir`, `pathExists`,
      `hashFile`, `builtins.path`. Those belong with the store (L6) and GS/OS,
      not here.

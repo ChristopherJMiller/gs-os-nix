@@ -7,6 +7,7 @@ fixtures/eval-okay-big-operations
 fixtures/eval-okay-bool-ops
 fixtures/eval-okay-carry-chain
 fixtures/eval-okay-closure-capture
+fixtures/eval-okay-coerce-sets
 fixtures/eval-okay-curry
 fixtures/eval-okay-deep-equality
 fixtures/eval-okay-deepseq-cycle
@@ -147,6 +148,7 @@ tvix/tvix_tests/eval-okay-builtins-partition-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-string-length
 tvix/tvix_tests/eval-okay-builtins-string-length-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-substring
+tvix/tvix_tests/eval-okay-builtins-substring-coerce
 tvix/tvix_tests/eval-okay-builtins-substring-negative-length
 tvix/tvix_tests/eval-okay-builtins-tail
 tvix/tvix_tests/eval-okay-builtins-tail-propagate-catchable
@@ -166,6 +168,7 @@ tvix/tvix_tests/eval-okay-cmp-int-false
 tvix/tvix_tests/eval-okay-cmp-int-true
 tvix/tvix_tests/eval-okay-cmp-str-false
 tvix/tvix_tests/eval-okay-cmp-str-true
+tvix/tvix_tests/eval-okay-coerce-opadd
 tvix/tvix_tests/eval-okay-compare-lists
 tvix/tvix_tests/eval-okay-compare-ordering-catchable
 tvix/tvix_tests/eval-okay-concat-lists

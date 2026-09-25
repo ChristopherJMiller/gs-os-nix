@@ -341,5 +341,8 @@ void op_arith(uint16_t op);         /* ADD SUB MUL DIV LT, for the primops that 
 /* --- prims.c ------------------------------------------------------------------------- */
 void prims_init(void);
 void op_prim(void);
+/* Nix's coerceToString on the top of the stack (runs bytecode): a set through
+ * __toString or outPath; with to_string, builtins.toString's wider rules. */
+void coerce_top(uint8_t to_string);
 
 #endif

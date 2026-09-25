@@ -1,0 +1,1 @@
+[ "/nix/store/abc-hello/bin/hello" "/nix/store/abc-hello" "prefix-/nix/store/abc-hello" "via-toString" "via-toString" "42" "deep" "1" 20 "via-" "/nix/store/abc-hello,via-toString,plain" false "/nix/store/abc-hello via-toString 1 1 " ]

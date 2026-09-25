@@ -36,6 +36,8 @@ SSTR(str_list, "list");
 SSTR(str_set, "set");
 SSTR(str_lambda, "lambda");
 SSTR(str_path, "path");
+SSTR(str_tostring, "__toString");
+SSTR(str_outpath, "outPath");
 SSTR(str_one, "1");
 SSTR(str_dot, ".");
 SSTR(str_slash, "/");
@@ -45,7 +47,8 @@ SSTR(str_wrong, "wrong");
 SSTR(str_space, " ");
 
 static obj_t *str_int, *str_bool, *str_null, *str_string, *str_list, *str_set, *str_lambda,
-             *str_one, *str_dot, *str_slash, *str_name, *str_right, *str_wrong, *str_space, *str_path;
+             *str_one, *str_dot, *str_slash, *str_name, *str_right, *str_wrong, *str_space, *str_path,
+             *str_tostring, *str_outpath;
 
 void prims_init(void)
 {
@@ -57,6 +60,8 @@ void prims_init(void)
     str_set    = STATIC_PTR(&str_set_s);
     str_lambda = STATIC_PTR(&str_lambda_s);
     str_path   = STATIC_PTR(&str_path_s);
+    str_tostring = STATIC_PTR(&str_tostring_s);
+    str_outpath  = STATIC_PTR(&str_outpath_s);
     str_one    = STATIC_PTR(&str_one_s);
     str_dot    = STATIC_PTR(&str_dot_s);
     str_slash  = STATIC_PTR(&str_slash_s);
@@ -525,7 +530,9 @@ static void prim_partition(void)                /* f list -> { right; wrong; } *
 /* --- strings ---------------------------------------------------------------------------- */
 static void prim_stringlength(void)
 {
-    obj_t *o, *s = force_pop_as(T_STRING, &o);
+    obj_t *o, *s;
+    coerce_top(0);                              /* coerced, as Nix does: a set via __toString / outPath */
+    s = force_pop_as(T_STRING, &o);
     push(new_int(AUX16(s)));
 }
 
@@ -533,7 +540,9 @@ static void prim_substring(void)                /* start len s */
 {
     uint16_t start, len = 0, slen, end;
     int to_end = 0;
-    obj_t *so, *s = force_pop_as(T_STRING, &so), *vo, *v, *r;
+    obj_t *so, *s, *vo, *v, *r;
+    coerce_top(0);                              /* the string argument is coerced (a set via __toString) */
+    s = force_pop_as(T_STRING, &so);
     int64_t x;
     rpush(so);
     v = force_pop_as(T_INT, &vo);               /* len: negative means "to the end" */
@@ -583,16 +592,41 @@ static obj_t *int_to_str(int64_t v)
 
 static void concat_strings_sep_top(void);
 
-/* The value on top of the stack is replaced by its STRING form. A list is its
- * elements' strings joined by spaces (Nix's coercion), so a throwing element
- * propagates -- catchably -- through it. Runs bytecode. */
-static void tostring_top(void)
+/* The value on top of the stack is replaced by its STRING form: Nix's
+ * coerceToString. Runs bytecode.
+ *
+ * A set coerces through `__toString` (called with the set itself) if it has
+ * one, else through `outPath`, and the result is coerced again by the same
+ * rules -- which is how `"${drv}"` becomes a store path, and why
+ * { __toString = _: true; } is "1" under toString.
+ *
+ * to_string: builtins.toString's rules (coerceMore, no store copy) -- INTs,
+ * BOOLs, null and lists coerce too, a list as its elements joined by spaces
+ * (so a throwing element propagates, catchably), and a path becomes its text.
+ * Without it, the rules of `+` and "${}": only strings and coercible sets; a
+ * path would be copied into the store (L6), so for now it is a type error
+ * rather than a string without its context. */
+void coerce_top(uint8_t to_string)
 {
-    uint16_t b = rsp, n, i;
-    obj_t *vo, *v = 0;
+    uint16_t b = rsp, n, i, ix;
+    obj_t *vo, *v = 0, *f;
     vo = force_pop_view(&v);
+    if (v->tag == T_ATTRS) {
+        if (find_attr(vo, str_tostring, &ix, &f)) {
+            push(f);                            /* f self */
+            push(vo);
+            do_call();
+        } else if (find_attr(vo, str_outpath, &ix, &f)) {
+            push(f);
+        } else {
+            type_err();
+        }
+        coerce_top(to_string);
+        return;
+    }
+    if (v->tag == T_STRING) { push(vo); return; }
+    if (!to_string) type_err();
     switch (v->tag) {
-    case T_STRING: push(vo); return;
     case T_PATH:                                /* its text, as a string: no store copy (that is "${p}") */
         rpush(vo);
         nursery_reserve_n(1, round4(AUX16(v)), 8);
@@ -611,7 +645,7 @@ static void tostring_top(void)
     rpush(vo);                                  /* source */
     for (i = 0; i < n; ++i) {                   /* the converted elements, on the stack */
         push(RELEM(b, i, n));
-        tostring_top();
+        coerce_top(to_string);
     }
     rsp = b;
     v = list_from_stack(n);
@@ -620,23 +654,48 @@ static void tostring_top(void)
     concat_strings_sep_top();
 }
 
-static void prim_tostring(void) { tostring_top(); }
+static void prim_tostring(void) { coerce_top(1); }
 
 /* concatStringsSep sep list, with the result left on the stack. */
 static void concat_strings_sep_top(void)
 {
-    uint16_t b = rsp, n, i, total = 0, nsep, w = 0;
-    obj_t *sep, *l, *sepo, *lo, *e, *eo, *r;
+    uint16_t b = rsp, n, i, total = 0, nsep, w = 0, at = 0;
+    uint8_t coerce = 0;
+    obj_t *sep, *l, *sepo, *lo, *e, *r;
     force_two_orig(&sep, &l, &sepo, &lo);
     need(sep, T_STRING); need(l, T_LIST);
     n = AUX16(l);
     rpush(sepo);
     rpush(lo);
+    /* Force every element and measure it, stopping at the first that is not a
+     * string. One pass, not a separate measuring one: with every element
+     * mature, each pass copies each string into the window ring, and three
+     * passes over 1,000 strings overran an instruction's 44 KB of ring
+     * (eval-okay-big-operations under A2MIN_RESERVE_STRESS). */
     for (i = 0; i < n; ++i) {
         push(RELEM(b + 1, i, n));
-        e = force_pop_as(T_STRING, &eo);
+        force_top();
+        e = deref(pop());
+        if (e->tag != T_STRING) { coerce = 1; break; }
         if ((uint16_t)(total + AUX16(e)) < total) nomem();
         total += AUX16(e);
+    }
+    if (coerce) {
+        total = 0;
+        /* Some element coerces (a set via __toString / outPath), so the text
+         * to copy is the COERCED value, not the element: keep every coerced
+         * string on the value stack, a root, and copy from there. (The first
+         * version coerced to measure and then copied the original elements --
+         * a set's header bytes as text: "F\x9a,\x9a,plain".) Bounded by the
+         * value stack; loud E_NOMEM past it. */
+        at = vsp;
+        for (i = 0; i < n; ++i) {
+            push(RELEM(b + 1, i, n));
+            coerce_top(0);
+            e = deref(peek());
+            if ((uint16_t)(total + AUX16(e)) < total) nomem();
+            total += AUX16(e);
+        }
     }
     sepo = rstack[b];
     sep = deref(sepo);
@@ -645,18 +704,19 @@ static void concat_strings_sep_top(void)
         if ((uint16_t)(total + nsep) < total) nomem();
         total += nsep;
     }
-    nursery_reserve_n(1, round4(total), 8);     /* sep and the list are still on RSTACK */
+    nursery_reserve_n(1, round4(total), 8);     /* sep, the list, any coerced strings: all rooted */
     sepo = rstack[b];
     lo = rstack[b + 1];
     rsp = b;
     r = str_alloc(total);
     for (i = 0; i < n; ++i) {
         if (i) { sep = deref(sepo); memcpy(STRBYTES(r) + w, STRBYTES(sep), nsep); w += nsep; }
-        l = deref(lo);
-        e = deref_follow(ELEMS(l)[i]);
+        if (coerce) e = deref(vstack[at + i]);
+        else { l = deref(lo); e = deref_follow(ELEMS(l)[i]); }
         memcpy(STRBYTES(r) + w, STRBYTES(e), AUX16(e));
         w += AUX16(e);
     }
+    if (coerce) vsp = at;
     push(r);
 }
 

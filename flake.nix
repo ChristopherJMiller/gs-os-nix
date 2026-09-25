@@ -419,8 +419,8 @@
           '';
 
         # And the VM's collector (DECISIONS.md D20, HEAP.md): break the
-        # remembered set six ways, object sizes three, the nursery reserves four
-        # and path + once, rebuild the VM with ORCA/C each time, and require the
+        # remembered set six ways, object sizes three, the nursery reserves four,
+        # path + once and string coercion twice, rebuild the VM with ORCA/C each time, and require the
         # collector fixtures (scripts/mutation-vm.sh) to catch every one.
         mutation-vm = pkgs.runCommandCC "check-mutation-vm"
           { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ours.nbc ]; }

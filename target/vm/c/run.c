@@ -160,6 +160,16 @@ void force_two(obj_t **a, obj_t **b)
     obj_t *ao, *bo;
     force_two_orig(a, b, &ao, &bo);
 }
+/* Coerce stack slot k (1 = the top) to a STRING in place, with the rules of
+ * `+` and "${}" (prims.c coerce_top). Runs bytecode: the value stays a root. */
+static void coerce_slot(uint16_t k)
+{
+    uint16_t at = vsp - k;
+    push(vstack[at]);
+    coerce_top(0);
+    vstack[at] = pop();
+}
+
 /* force_two's forcing, in its order, but both values STAY on the stack --
  * still roots -- so an operation that allocates in proportion to them can
  * nursery_reserve() before it pops them. The caller drops them (vsp -= 2). */
@@ -395,7 +405,12 @@ static void interpolate(uint16_t n)
 {
     uint16_t i, len = 0, at;
     obj_t *o, *s;
-    for (i = 0; i < n; ++i) force_slot(n - i);
+    /* Each part forced and coerced in order, as "${}" coerces: a set through
+     * __toString or outPath, which is how "${drv}" becomes its store path. */
+    for (i = 0; i < n; ++i) {
+        force_slot(n - i);
+        if (deref(vstack[vsp - (n - i)])->tag != T_STRING) coerce_slot(n - i);
+    }
     at = vsp - n;
     for (i = 0; i < n; ++i) {
         s = deref(vstack[at + i]);
@@ -431,19 +446,28 @@ void op_arith(uint16_t op)
             if (nursery_reserve_n(1, round4(AUX16(a) + AUX16(b) + 1), 4)) view_two(&a, &b);
             vsp -= 2;
             push(path_join(STRBYTES(a), AUX16(a), STRBYTES(b), AUX16(b)));
-        } else if (a->tag == T_STRING) {
-            /* string + path would copy the path into the store and put it in
-             * the string's context: that is L6, so a PATH here is a type
-             * error for now rather than a string without its context. */
-            need(b, T_STRING);
+        } else if (a->tag == T_INT) {
+            vsp -= 2;
+            need(b, T_INT);
+            push(new_int(INTVAL(a) + INTVAL(b)));
+        } else {
+            /* String concatenation. The first operand decides what `+` is (a
+             * path, an int, else a string), and here each side is coerced as
+             * Nix's coerceToString does for `+`, left first: a string as it
+             * is, a set through __toString or outPath (running bytecode), a
+             * path copied into the store -- L6, so for now a type error rather
+             * than a string without its context -- and anything else a type
+             * error. Two strings, the common case, skip it. */
+            if (a->tag != T_STRING || b->tag != T_STRING) {
+                uint8_t ca = a->tag != T_STRING, cb = b->tag != T_STRING;
+                if (ca) coerce_slot(2);
+                if (cb) coerce_slot(1);
+                view_two(&a, &b);
+            }
             if ((uint16_t)(AUX16(a) + AUX16(b)) < AUX16(a)) nomem();
             if (nursery_reserve_n(1, round4(AUX16(a) + AUX16(b)), 8)) view_two(&a, &b);
             vsp -= 2;
             push(str_concat(a, b));
-        } else {
-            vsp -= 2;
-            need(a, T_INT); need(b, T_INT);
-            push(new_int(INTVAL(a) + INTVAL(b)));
         }
         break;
     case OP_SUB: binary_ints(&a, &b); push(new_int(INTVAL(a) - INTVAL(b))); break;

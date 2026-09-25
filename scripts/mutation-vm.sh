@@ -37,7 +37,7 @@ set -uo pipefail
 
 A2MIN="$1"
 NBC="$2"
-FIXTURES="eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths"
+FIXTURES="eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets"
 MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1"
 SRCS="main.c run.c data.c prims.c gc.c card.c"      # link order: main.c first
 WORK=$(mktemp -d)
@@ -159,6 +159,15 @@ mutate "map keeps its view across a collecting reserve" prims.c \
 # bytes when it is promoted -- and `+` must canonicalise as Nix does.
 mutate "a PATH is sized by the 8-byte default" gc.c \
        's/^    case T_PATH:   return n ? round4(n) + 4 : 8;    \/\* no context word (HEAP.md) \*\///'
+
+# String coercion (prims.c coerce_top): "${drv}" is an outPath coercion, and
+# concatStringsSep must copy each element's COERCED text -- its first version
+# copied the set itself and printed its header bytes.
+mutate "outPath does not coerce" prims.c \
+       's/^        } else if (find_attr(vo, str_outpath, \&ix, \&f)) {$/        } else if (0) {/'
+
+mutate "concatStringsSep copies the set, not its coercion" prims.c \
+       's/^        if (coerce) e = deref(vstack\[at + i\]);$/        if (0) e = deref(vstack[at + i]);/'
 
 mutate "path + keeps .. components" data.c \
        's/        if (len == 2 \&\& PCH(start) == '"'"'.'"'"' \&\& PCH(start + 1) == '"'"'.'"'"') {/        if (0) {/'
