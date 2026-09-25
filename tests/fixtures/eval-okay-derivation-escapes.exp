@@ -1,0 +1,1 @@
+[ "/nix/store/fj76za3sc0q4v4fkndsm4aqgpl8zclig-edge.drv" "/nix/store/38bmgp5pkkq8ivd5xskwnf4n08jbs88i-edge" "/nix/store/6gnwm3jxwwc5g4maw6zaq2ipj5p4wb5q-edge-dev" "out" "dev" [ "__contentAddressed" "__structuredAttrs" "all" "args" "builder" "dev" "drvAttrs" "drvPath" "flag" "lst" "multi" "name" "nothing" "num" "out" "outPath" "outputName" "outputs" "system" "type" ] ]

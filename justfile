@@ -316,7 +316,7 @@ NBC := "tools/nbc/target/release/nbc"
 # The fixtures that actually reach a card verb: attribute lookups for LOOKUP,
 # 64-bit multiply and divide for ALU64. Five configurations x every fixture
 # under GC stress would be an hour for no extra information.
-VERB_WORKLOAD := "attrs.nbc,attr-builtins.nbc,with.nbc,with-captured.nbc,hash-collision.nbc,functor.nbc,tryeval.nbc,carry-chain.nbc,div-truncates.nbc,int-min-wrap.nbc,hashstring.nbc"
+VERB_WORKLOAD := "attrs.nbc,attr-builtins.nbc,with.nbc,with-captured.nbc,hash-collision.nbc,functor.nbc,tryeval.nbc,carry-chain.nbc,div-truncates.nbc,int-min-wrap.nbc,hashstring.nbc,derivation.nbc"
 
 # Build the test-only .nbc fixture generator (Rust, no dependencies; D7/D16).
 nbc-build:

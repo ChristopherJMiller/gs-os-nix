@@ -77,3 +77,24 @@ void sha256_cpu(const uint8_t *src, uint16_t n, uint8_t *out)
         out[4 * i + 3] = BYTE_OF(H[i], 0);
     }
 }
+
+/* What the card's HASH_FINAL leaves in P3 (storepath.v), for when there is no
+ * card: the digest XOR-folded to 20 bytes (f[i % 20] ^= h[i]), then Nix's
+ * base32, which emits from the END -- character i is bits 5(31-i) upward of
+ * the folded bytes read as one little-endian number. 32 characters. */
+void nix32_fold(const uint8_t *dig, char *out)
+{
+    uint8_t f[20];
+    uint16_t i, b, j, w;
+    for (i = 0; i < 20; ++i) f[i] = dig[i];
+    for (i = 20; i < 32; ++i) f[i - 20] ^= dig[i];
+    for (i = 0; i < 32; ++i) {
+        b = 5 * (31 - i);
+        j = b >> 3;
+        w = f[j] | (j < 19 ? (uint16_t)f[j + 1] << 8 : 0);
+        /* A signed shift, which ORCA/C already links (~SSHIFTRIGHT); an unsigned
+         * or left variable shift would link another routine into bank 0. The
+         * sign cannot reach the 5 bits kept: they come from bits <= 11. */
+        out[i] = "0123456789abcdfghijklmnpqrsvwxyz"[((int)w >> (b & 7)) & 31];
+    }
+}

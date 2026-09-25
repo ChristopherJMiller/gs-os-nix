@@ -493,17 +493,7 @@ int values_equal(obj_t *a, obj_t *b)
         rsp = base;
         return r;
     case T_ATTRS:
-        n = AUX16(av);
-        if (AUX16(bv) != n) return 0;
-        rpush(a); rpush(b);
-        r = 1;
-        for (i = 0; i < n; ++i) {
-            obj_t *sa = deref(rstack[base]), *sb = deref(rstack[base + 1]);
-            if (!str_eq(deref(ANAMES(sa, n)[i]), deref(ANAMES(sb, n)[i]))) { r = 0; break; }
-            if (!values_equal(AVALUES(sa, n)[i], AVALUES(sb, n)[i])) { r = 0; break; }
-        }
-        rsp = base;
-        return r;
+        return attrs_equal(a, b);               /* prims.c, to spare bank 0 (STATUS.md) */
     default:
         return 0;
     }

@@ -114,11 +114,13 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("dirOf", 0x2E, 1),
     ("tryEval", 0x2F, 1),
     ("hashString", 0x30, 2),
+    ("derivationStrict", 0x31, 1),
 ];
 
 /// The builtins Nix also exposes unqualified.
 pub const GLOBALS: &[&str] = &[
     "map", "toString", "throw", "abort", "isNull", "removeAttrs", "baseNameOf", "dirOf",
+    "derivation", "derivationStrict",
 ];
 
 pub fn primop(name: &str) -> Option<(u8, u8)> {

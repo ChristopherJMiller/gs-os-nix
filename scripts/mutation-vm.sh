@@ -39,7 +39,10 @@ set -uo pipefail
 
 A2MIN="$1"
 NBC="$2"
-FIXTURES="eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
+# The derivation fixtures first: they are cheap, and run_suite stops at the
+# first wrong answer, so a mutation they catch costs seconds. The refusal is a
+# fixture too -- its .exp is the error line (scripts/scoreboard.py).
+FIXTURES="eval-okay-derivation eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists refuse-derivation-dependent eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
 MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1 mask:4"
 SRCS="main.c run.c data.c prims.c gc.c card.c sha256.c"   # link order: main.c first
 WORK=$(mktemp -d)
@@ -64,15 +67,15 @@ run_suite() {
         for mode in $MODES; do
             case $mode in
                 limit:*)  got=$(A2MIN_RSET_LIMIT=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
-                                --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p') ;;
+                                --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
                 period:*) got=$(A2MIN_GC_PERIOD=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
-                                --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p') ;;
+                                --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
                 both:*)   got=$(A2MIN_GC_PERIOD=${mode#*:} A2MIN_RSET_LIMIT=1 A2MIN_BUDGET=$BUDGET "$A2MIN" \
-                                --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p') ;;
+                                --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
                 reserve:*) got=$(A2MIN_RESERVE_STRESS=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
-                                --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p') ;;
+                                --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
                 mask:*)   got=$(A2MIN_VERB_MASK=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
-                                --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p') ;;
+                                --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
             esac
             [ "$got" = "$want" ] || return 1
         done
@@ -182,13 +185,52 @@ mutate "HASH_STREAM starts a byte late" prims.c \
 mutate "SHA-256 on the CPU pads the wrong length" sha256.c \
        's/    uint32_t bits = (uint32_t)n << 3; /    uint32_t bits = (uint32_t)n << 2; /'
 
-mutate "the digest is read from the wrong slot" card.c \
-       '/^static int hash_finish/,/^}/ s/    cw8(REG_PSEL, 0);/    cw8(REG_PSEL, 3);/'
+mutate "the digest is read from the wrong slot" vm.h \
+       's/^#define card_sha256(s, n, o)    card_hash((s), (n), (o), 0)$/#define card_sha256(s, n, o)    card_hash((s), (n), (o), 3)/'
 
 mutate "path + keeps .. components" data.c \
        's/        if (len == 2 \&\& PCH(start) == '"'"'.'"'"' \&\& PCH(start + 1) == '"'"'.'"'"') {/        if (0) {/'
 
+# Derivations (docs/DERIVATION.md): each rule the host was measured to follow,
+# broken. Every one of these gives a well-formed store path -- only the host's
+# own answer in the .exp tells it is the wrong one.
+mutate "system is escaped like the builder" prims.c \
+       's/^    put_str(k, PAIR_VAL(d, d->sys), 0); /    put_str(k, PAIR_VAL(d, d->sys), 1); /'
+
+mutate "a tab is not escaped" prims.c \
+       's/ || c == .\\t.) {$/) {/'
+
+mutate "an output does not replace an attribute of its name" prims.c \
+       's/^            if (c == 1) ++i;$//'
+
+mutate "__contentAddressed = false goes into the environment" prims.c \
+       's/^    if (IS_LIT(nm, "__contentAddressed")) return K_CA;$//'
+
+mutate "a second output's path has no -<output> suffix" prims.c \
+       's/ol = IS_LIT(ov, "out") ? 0 : AUX16(ov);/ol = 0;/'
+
+mutate "the .drv is hashed from the masked ATerm" prims.c \
+       's/^    d.masked = 0;$//'
+
+mutate "__ignoreNulls keeps nulls" prims.c \
+       's/            if (deref(peek())->tag == T_NULL) { vsp -= 2; continue; }/            if (0) { vsp -= 2; continue; }/'
+
+mutate "toString puts a space after an empty list" prims.c \
+       's/        space = i + 1 < n \&\& !(v->tag == T_LIST \&\& AUX16(v) == 0);/        space = i + 1 < n;/'
+
+mutate "a store path is read from P0, the digest" vm.h \
+       's/^#define card_storepath(s, n, o) card_hash((s), (n), (o), 3)$/#define card_storepath(s, n, o) card_hash((s), (n), (o), 0)/'
+
+mutate "the CPU does not fold the store-path hash" sha256.c \
+       's/^    for (i = 20; i < 32; ++i) f\[i - 20\] ^= dig\[i\];$//'
+
+mutate "two derivations compare as sets" prims.c \
+       's/    if (is_drv(rstack\[base\]) \&\& is_drv(rstack\[base + 1\]) \&\&/    if (0 \&\&/'
+
+mutate "a second derivation is not refused" prims.c \
+       's/^    if (drv_made) err_exit(E_UNSUP);$//'
+
 echo
 echo "$pass mutations caught, $fail not caught"
 [ "$fail" -eq 0 ] || exit 1
-echo "MUTATION PASS: every broken collector is caught by the fixtures"
+echo "MUTATION PASS: every broken collector and derivation rule is caught by the fixtures"

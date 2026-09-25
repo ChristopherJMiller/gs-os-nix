@@ -202,15 +202,16 @@ void card_write_at(uint32_t addr, const void *src, uint16_t n)
 
 /* RESERVE n bytes: the base of a headerless block (promotion, HEAP.md). */
 /* --- SHA-256 (L6: builtins.hashString, and later the .drv and store paths) --- */
-/* HASH_FINAL, then the 32-byte digest from P0. 1, or 0 after the card raised
- * ERR (its error state cleared). */
-static int hash_finish(uint8_t *out)
+/* HASH_FINAL, then 32 bytes from slot psel: P0 the digest, P3 the store-path
+ * hash part storepath.v derives from it. 1, or 0 after the card raised ERR
+ * (its error state cleared). */
+static int hash_finish(uint8_t *out, uint8_t psel)
 {
     uint16_t st, i;
     cw8(REG_CMD, V_HASH_FINAL);                 /* drains the FIFO, then pads */
     do st = cr8(REG_CMD); while (!(st & (ST_DONE | ST_ERR)));
     if (st & ST_ERR) { cw8(REG_CTRL, 0x01); return 0; }
-    cw8(REG_PSEL, 0);
+    cw8(REG_PSEL, psel);
     for (i = 0; i < 32; ++i) out[i] = (uint8_t)cr8(REG_PPORT);
     return 1;
 }
@@ -220,7 +221,7 @@ static int hash_finish(uint8_t *out)
  * then HASH_FINAL -- the M2 demo's sequence. 0 if refused: no card, the verb
  * masked (checks.verb-economics), or the card raised ERR; the caller then
  * hashes on the CPU. */
-int card_sha256(const uint8_t *src, uint16_t n, uint8_t *out)
+int card_hash(const uint8_t *src, uint16_t n, uint8_t *out, uint8_t psel)
 {
     uint16_t st, burst;
     if (slot_x == 0 || verb_off(VERB_NO_HASH)) return 0;
@@ -236,7 +237,7 @@ int card_sha256(const uint8_t *src, uint16_t n, uint8_t *out)
         src += burst;
         n -= burst;
     }
-    return hash_finish(out);
+    return hash_finish(out, psel);
 }
 
 /* SHA-256 of n bytes already on the card at addr: HASH_STREAM, so none of
@@ -255,7 +256,7 @@ int card_sha256_at(uint32_t addr, uint16_t n, uint8_t *out)
     cw8(REG_CMD, V_HASH_STREAM);
     do st = cr8(REG_CMD); while (!(st & (ST_DONE | ST_ERR)));
     if (st & ST_ERR) { cw8(REG_CTRL, 0x01); return 0; }
-    return hash_finish(out);
+    return hash_finish(out, 0);
 }
 
 uint32_t card_reserve(uint16_t n)

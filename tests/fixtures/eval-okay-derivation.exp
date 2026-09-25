@@ -1,0 +1,1 @@
+[ "/nix/store/76w21n1f03fs5kw8fnffphx7qrqffw6r-hello.drv" "/nix/store/mjs27ix6ig2bkbi3s3sm470vrv4lf7ic-hello" "/nix/store/mjs27ix6ig2bkbi3s3sm470vrv4lf7ic-hello" "derivation" "hello" "out" [ "all" "args" "builder" "drvAttrs" "drvPath" "name" "out" "outPath" "outputName" "system" "type" ] 1 "/bin/sh" true true true "set" ]

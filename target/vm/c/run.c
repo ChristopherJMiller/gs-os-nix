@@ -166,7 +166,7 @@ static void coerce_slot(uint16_t k)
 {
     uint16_t at = vsp - k;
     push(vstack[at]);
-    coerce_top(0);
+    coerce_top(CO_PLAIN);
     vstack[at] = pop();
 }
 

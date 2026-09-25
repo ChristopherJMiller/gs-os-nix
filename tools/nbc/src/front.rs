@@ -55,9 +55,9 @@ pub fn parse_file(path: &Path) -> Result<Expr, Unsupported> {
     parse_in(&src, here.parent().map(|d| d.to_path_buf()), vec![here])
 }
 
-/// Parse a bare string, with no file to resolve imports against. The unit
-/// tests use this; an import in a string is refused rather than guessed.
-#[allow(dead_code)]
+/// Parse a bare string, with no file to resolve imports against: the unit
+/// tests, and the embedded derivation.nix. An import in a string is refused
+/// rather than guessed.
 pub fn parse(src: &str) -> Result<Expr, Unsupported> {
     parse_in(src, None, Vec::new())
 }

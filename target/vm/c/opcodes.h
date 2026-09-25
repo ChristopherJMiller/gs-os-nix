@@ -109,7 +109,8 @@
 #define PRIM_DIROF              0x2E /* 1 */
 #define PRIM_TRYEVAL            0x2F /* 1 */
 #define PRIM_HASHSTRING         0x30 /* 2 */
-#define PRIM_COUNT              0x31
+#define PRIM_DERIVATIONSTRICT   0x31 /* 1 */
+#define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */
 #define K_INT           0x01
@@ -130,5 +131,6 @@
 #define E_NOATTR        0x0B
 #define E_INDEX         0x0C
 #define E_NOVAR         0x0D
+#define E_UNSUP         0x0E    /* valid Nix the VM does not implement yet (DERIVATION.md) */
 
 #endif

@@ -232,6 +232,9 @@ impl Compiler {
     /// synthesised lambda. Refused by name if the VM lacks the primop, so the
     /// scoreboard can say which one would move the most tests.
     fn emit_builtin(&mut self, name: &str, pos: Pos, chunk: usize) -> Result<(), Unsupported> {
+        if name == "derivation" {
+            return self.emit_derivation(pos, chunk);
+        }
         let Some((id, arity)) = primop(name) else {
             return unsupported(pos, format!("builtins.{name}"));
         };
@@ -264,6 +267,22 @@ impl Compiler {
         };
         self.emit(chunk, OP_LAMBDA);
         self.emit_u16(chunk, entry as u16);
+        Ok(())
+    }
+
+    /// `derivation` is not a primop: in Nix it is derivation.nix wrapped around
+    /// the `derivationStrict` primop, and so it is here -- that file, embedded,
+    /// compiled as an import and forced (docs/DERIVATION.md). One chunk however
+    /// many sites use it, so every site gets the same function. Not in the
+    /// `builtins` set value, which would compile it into every `with builtins;`
+    /// program; a `with builtins;` lookup misses and falls back to this.
+    fn emit_derivation(&mut self, pos: Pos, chunk: usize) -> Result<(), Unsupported> {
+        let e = match crate::front::parse(include_str!("derivation.nix")) {
+            Ok(e) => e,
+            Err(u) => return unsupported(pos, format!("derivation.nix: {}", u.what)),
+        };
+        self.closed_thunk("<nix/derivation-internal.nix>", &e, chunk)?;
+        self.emit(chunk, OP_FORCE);
         Ok(())
     }
 
@@ -825,6 +844,25 @@ mod tests {
         // inherit in a let reads the OUTER scope: depth 1, not itself
         let ch = c("let x = 1; in let inherit x; in x");
         assert!(ch[0].code.windows(8).any(|w| w == [OP_ENV_GET, 1, 0, 1, 0, OP_ENV_SET, 1, 0]));
+    }
+
+    #[test]
+    fn derivation_is_the_embedded_file_once() {
+        // Every spelling of `derivation` is the CLOSED_THUNK of ONE chunk,
+        // forced: derivation.nix compiled like an import, so every site gets
+        // the same function (docs/DERIVATION.md).
+        let ch = c("[ derivation builtins.derivation (with { }; derivation) ]");
+        let sites: Vec<u16> = ch
+            .iter()
+            .flat_map(|k| k.code.windows(4).filter(|w| w[0] == OP_CLOSED_THUNK && w[3] == OP_FORCE)
+                .map(|w| u16::from_le_bytes([w[1], w[2]])).collect::<Vec<_>>())
+            .collect();
+        assert_eq!(sites.len(), 3, "three sites");
+        assert!(sites.iter().all(|&s| s == sites[0]), "one chunk: {sites:?}");
+        // ...whose body calls the primop, which is a global as in Nix 2.34.
+        assert!(ch.iter().any(|k| k.code.windows(2).any(|w| w == [OP_PRIM, 0x31])));
+        // A shadowed `derivation` is an ordinary variable.
+        assert!(c("let derivation = 1; in derivation").iter().all(|k| !k.code.contains(&OP_CLOSED_THUNK)));
     }
 
     #[test]

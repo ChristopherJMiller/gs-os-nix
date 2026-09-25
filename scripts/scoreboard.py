@@ -6,6 +6,12 @@ For every eval-okay-*.nix under each --corpus root:
   2. a2min --run-nbc runs it on the VM -> prints `result: <value>` or `error: <E_*>`
   3. the printed value is compared with the .exp file
 
+Two more kinds, both ours (the corpus has no .exp for its eval-fail tests): an
+eval-fail-*.nix is a program Nix rejects too, and a refuse-*.nix is VALID Nix
+the VM declines with E_UNSUP rather than answer wrongly (docs/DERIVATION.md
+"Refused"). Their .exp is the error line the VM must print, e.g.
+`error: E_UNSUP`; a value, or a different error, does not pass.
+
 Buckets: pass, fail (ran, wrong value), error (VM aborted), unsupported,
 notyetpassing (tvix itself does not pass these; scored separately).
 
@@ -37,7 +43,7 @@ def find_tests(root):
     out = []
     for dirpath, _, files in os.walk(root):
         for f in sorted(files):
-            if f.startswith("eval-okay-") and f.endswith(".nix"):
+            if f.startswith(("eval-okay-", "eval-fail-", "refuse-")) and f.endswith(".nix"):
                 path = os.path.join(dirpath, f)
                 exp = path[:-4] + ".exp"
                 if not os.path.exists(exp):
@@ -103,7 +109,8 @@ def main():
             rc, out, err = run([args.a2min, run_mode, args.vm, base + ".nbc"], timeout=600)
             kind, got = vm_result(out)
             if kind == "error":
-                bucket = "error"
+                got = "error: " + got
+                bucket = "pass" if got == want else "error"
             elif got == want:
                 bucket = "pass"
             else:

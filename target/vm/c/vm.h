@@ -283,6 +283,7 @@ int    find_attr(obj_t *set, obj_t *name, uint16_t *ix, obj_t **val);
 int    has_attr(obj_t *set, obj_t *name);   /* when only the answer is wanted */
 void   attrs_put(obj_t *set, uint16_t n, uint16_t i, obj_t *name, obj_t *value);
 int    values_equal(obj_t *a, obj_t *b);   /* runs bytecode; 1 if equal */
+int    attrs_equal(obj_t *a, obj_t *b);    /* prims.c: values_equal for two sets, derivations by outPath */
 int    cmp_values(void);                   /* pops two; 0 less, 1 equal, 2 greater */
 void   deep_force_top(void);
 
@@ -334,9 +335,15 @@ void card_write_at(uint32_t addr, const void *src, uint16_t n);
 uint32_t card_reserve(uint16_t n);
 int  card_lookup(uint32_t set, uint32_t h, uint16_t *ix, uint32_t *value);
 int  card_memcmp(uint32_t a, uint32_t b, uint16_t n);   /* -1/0/1, or 2 if refused */
-int  card_sha256(const uint8_t *src, uint16_t n, uint8_t *out);   /* 0 if refused */
+/* HASH_PUSH n bytes in RAM, then HASH_FINAL; the 32 bytes of slot psel: P0 the
+ * digest, P3 the store-path hash part (the digest folded and in nixbase32). 0 if
+ * refused. */
+int  card_hash(const uint8_t *src, uint16_t n, uint8_t *out, uint8_t psel);
+#define card_sha256(s, n, o)    card_hash((s), (n), (o), 0)
+#define card_storepath(s, n, o) card_hash((s), (n), (o), 3)
 int  card_sha256_at(uint32_t addr, uint16_t n, uint8_t *out);     /* bytes already on the card */
 void sha256_cpu(const uint8_t *src, uint16_t n, uint8_t *out);    /* sha256.c: no card, or masked */
+void nix32_fold(const uint8_t *dig, char *out);   /* sha256.c: what P3 holds, on the CPU */
 #define A_MUL 0x02
 #define A_DIV 0x03
 
@@ -347,6 +354,11 @@ void prims_init(void);
 void op_prim(void);
 /* Nix's coerceToString on the top of the stack (runs bytecode): a set through
  * __toString or outPath; with to_string, builtins.toString's wider rules. */
-void coerce_top(uint8_t to_string);
+#define CO_MORE   1     /* toString's wider rules: ints, bools, null, lists */
+#define CO_PATH   2     /* a path becomes its text; without it E_UNSUP (a store copy, L7) */
+#define CO_PLAIN  0                     /* `+` and "${}" */
+#define CO_STRING (CO_MORE | CO_PATH)    /* builtins.toString */
+#define CO_DRV    CO_MORE               /* derivation attributes (DERIVATION.md) */
+void coerce_top(uint8_t how);
 
 #endif

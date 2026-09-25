@@ -246,12 +246,13 @@
               --Mdir build -o a2min \
               rtl/a2nix_card.v sim/a2min.cpp
             # The fixtures that actually reach a verb: attribute lookups for
-            # LOOKUP, 64-bit multiply and divide for ALU64, SHA-256 for HASH. Six configurations
-            # times every fixture under GC stress would be an hour for no more
-            # information (justfile VERB_WORKLOAD is the same list).
+            # LOOKUP, 64-bit multiply and divide for ALU64, SHA-256 and store
+            # paths for HASH. Six configurations times every fixture under GC
+            # stress would be an hour for no more information (justfile
+            # VERB_WORKLOAD is the same list).
             mkdir -p build/nbc
             for f in attrs attr-builtins with with-captured hash-collision \
-                     functor tryeval carry-chain div-truncates int-min-wrap hashstring; do
+                     functor tryeval carry-chain div-truncates int-min-wrap hashstring derivation; do
               nbc "tests/fixtures/eval-okay-$f.nix" -o "build/nbc/$f.nbc"
             done
             python3 scripts/verb-economics.py \

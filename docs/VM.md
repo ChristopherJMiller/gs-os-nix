@@ -73,7 +73,9 @@ a single operation that allocated more than happened to be free failed even
 when a collection would have made room. `nursery_reserve` removed it; HEAP.md.)
 A fifth is the card's: nothing collects mature space yet, so a program can
 promote at most half the card's heap in total (512 KB in the harness), which
-only GC-stress runs reach.
+only GC-stress runs reach. A derivation adds its own: its final ATerm, and
+everything else its one reserve covers, must fit the nursery (DERIVATION.md
+"Ceilings").
 
 The C stack is the 65816 stack: ORCA/C allocates a function's locals below the
 stack pointer and points the direct-page register at them (`tsc / sbc / tcs / phd
@@ -154,13 +156,15 @@ target/vm/c/
   run.c       run(): dispatch, environments, calls, thunks, FORCE, catch frames
   data.c      strings, lists, attribute sets, hashing, equality, deep force,
               the write barrier and the window ring for mature objects
-  prims.c     the 48 primops
+  prims.c     the primops, string coercion, derivationStrict and the ATerm
+              (DERIVATION.md), and the set case of equality -- bank 4
   gc.c        the Cheney collector into bank 2, then promotion to the card
               (copy-back into the nursery when no card is present)
-  card.c      the driver: ALU64, RESERVE, DATA, LOOKUP
+  card.c      the driver: ALU64, RESERVE, DATA, LOOKUP, the SHA-256 verbs
+  sha256.c    SHA-256 and the store-path fold on the CPU, for no card -- bank 4
 ```
 
-`mkOrcaBinary { name = "cvm"; srcs = [ main.c run.c data.c prims.c gc.c card.c ]; }`
+`mkOrcaBinary { name = "cvm"; srcs = [ main.c run.c data.c prims.c gc.c card.c sha256.c ]; }`
 builds it; `just cvm` does the same in the tree.
 
 ## Phase counters and the profiler

@@ -10,7 +10,7 @@
 | **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, collector, CPU nursery | **done** — card side (memory engine, `DATA`/`TAG`, `ALLOC`/`RESERVE`, `FOLLOW`, `HASH_STREAM`, `LOOKUP`, `ALU64`, `MARK`/`COMPACT`) and the CPU-side nursery (`target/heap/nursery.s`: bump alloc, Cheney in RAM, one-burst promotion). D6 measured: `just bench-nursery` |
 | **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — slices 1-4 done, scoreboard live.** `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
-| **L6** | SHA-256 of strings, ATerm, `derivation` primop, string context; `NARHASH` with file I/O (D21) | **in progress** — `builtins.hashString "sha256"` on the card (`HASH_PUSH` for a young string, `HASH_STREAM` for a mature one, `sha256.c` without a card), matching Nix on FIPS padding edges; next ATerm and `derivation` |
+| **L6** | SHA-256 of strings, ATerm, `derivation` primop, string context; `NARHASH` with file I/O (D21) | **in progress** — `builtins.hashString "sha256"` on the card (`HASH_PUSH` for a young string, `HASH_STREAM` for a mature one, `sha256.c` without a card), matching Nix on FIPS padding edges. **`derivation`** ([DERIVATION.md](DERIVATION.md)): input-addressed, no inputs yet, byte-identical to the host -- ATerm, `hashDerivationModulo`, output and `.drv` paths from the card's `HASH_FINAL` `P3`; `derivation.nix` embedded verbatim. One per program until **string context**, which is next |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | not started |
 
 ## Milestones
@@ -28,6 +28,13 @@
   higher-fidelity run for anyone with a complete romset.
 - **M3** — A Nix expression typed at the IIgs evaluates with **zero** host involvement.
 - **M4** — The IIgs produces a `.drv` whose hash matches the host's exactly.
+  **Its shape runs in simulation** (2026-09-25): the C VM on a2min, with the
+  Verilated card, computes `/nix/store/76w21n1f03fs5kw8fnffphx7qrqffw6r-hello.drv`
+  for a leaf derivation, as the host does -- so its ATerm is the host's to the
+  byte (`eval-okay-derivation`: 1.06M cycles and 802 bus accesses for the whole
+  program, 9.03M with SHA-256 on the CPU). Not yet M4:
+  a derivation with inputs needs string context, and the `.drv` file itself is
+  written nowhere until GS/OS file I/O (L7).
 
 M1/M2/M4 are byte-parity assertions against upstream Nix. They are what separate an
 implementation from a tribute.
@@ -60,19 +67,28 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-**Bank 0 is nearly full: 39,765 of 40,960 bytes** (2026-09-24, after
-`hashString`). Code can move into load segments (`prims.c` and `sha256.c` are
-`segment "prims"`, bank 4), but **every static goes to bank 0 whatever segment
-its code is in**, as the symbol map shows. L6's ATerm and `derivation` must keep
-their tables on the stack or in a far bank, or bank 0 has to be relieved first:
-the value stack (4 KB) and CTAB (2 KB) are the obvious candidates to move behind
-far pointers.
+**Bank 0 is nearly full: 39,345 of 40,960 bytes** (2026-09-25, after
+`derivation`; it was 39,765 before it). Code can move into load segments
+(`prims.c` and `sha256.c` are `segment "prims"`, bank 4), but **every static,
+and every ORCA/C library routine the code links, goes to bank 0**, as the symbol
+map shows. String literals stay with their code (checked in `cvm.bin`). So
+`derivation` added one static byte and one static string, and the first build
+still grew bank 0 by 277 bytes: a struct assignment linked `~MOVE` and a
+variable left shift linked `~SHIFTLEFT`, 90 bytes between them, and the
+derivation rule in `values_equal` was 167 bytes of bank-0 code. Moving the
+whole set case of `values_equal` into `prims.c` (`attrs_equal`) turned that
+into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
+have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
+remain the big one.
 
-The scoreboard reads **283 / 413** (2026-09-24, after paths, string coercion of
-sets and `hashString`; 0 fail, 7 error, 101 unsupported, 22 notyetpassing). Two
+The scoreboard reads **295 / 425** (2026-09-25, after `derivation`; 0 fail, 7
+error, 101 unsupported, 22 notyetpassing; the 12 new are its fixtures, among
+them the first `eval-fail-` and `refuse-` ones). It was 283 / 413 after paths,
+string coercion of sets and `hashString`. Two
 of the errors are `hashString` with md5, sha1 or sha512, which the card does not
-compute: CPU versions are easy, but their constant tables would have to live in
-bank 0 (sha512's alone is 640 bytes), so they wait for bank 0 to be relieved.
+compute (`E_UNSUP`, valid Nix the VM declines): CPU versions are easy, but their
+constant tables would have to live in bank 0 (sha512's alone is 640 bytes), so
+they wait for bank 0 to be relieved.
 Neither is on M4's path. The scoreboard takes about **12 seconds**: `scoreboard.py`
 runs tests in parallel and prints the errors and the slowest tests every time.
 It was 10 minutes, and 601 s of that was one test,
@@ -221,9 +237,9 @@ number rises by widening the lowering and the VM together, one slice at a time
      context word, so a promoted path would have been truncated to 4 bytes.
      `eval-okay-paths` is long enough to catch that under GC stress, and two
      mutations prove it. Five corpus tests pass. Still refused: path
-     antiquotation (`./a/${b}`). And **string + path and `"${path}"` are type
-     errors until L6**, because in Nix they copy the path into the store and put
-     it in the string's context.
+     antiquotation (`./a/${b}`). And **string + path and `"${path}"` are
+     `E_UNSUP` until L7**, because in Nix they copy the path into the store and
+     put it in the string's context.
    - ~~**String coercion of attribute sets**~~ **done** (2026-09-24): Nix's
      `coerceToString` is `prims.c coerce_top`. A set coerces through
      `__toString` (called with the set itself), which takes precedence over
@@ -254,7 +270,9 @@ number rises by widening the lowering and the VM together, one slice at a time
    refused constructs, so pick the next slice from the top of that list.
 7. **`eval-fail` corpus.** Vendor it once the VM's error reporting is worth scoring;
    `E_INFREC` already matches Nix for `let x = x; in x`, and `E_THROW` carries
-   the message.
+   the message. Our own fixtures already score errors: an `eval-fail-*.nix`
+   (Nix rejects it too) or `refuse-*.nix` (valid Nix the VM declines with
+   `E_UNSUP`) passes when the VM prints the error line in its `.exp`.
 8. ~~**Verb economics on real programs**~~ **done** (2026-09-23) —
    `checks.verb-economics` runs the same fixtures with each verb forced onto its
    CPU path (`vm.h VERB_NO_*`, set by `A2MIN_VERB_MASK`) and diffs the cycles, so

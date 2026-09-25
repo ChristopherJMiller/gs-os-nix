@@ -391,6 +391,17 @@ search would have found.
 > hand-written assembly SHA-256 would narrow the gap several-fold. It could not
 > close it: the card's cost is a flat ~50 accesses plus one per pushed byte.
 > This is the verb D5 was written for.
+>
+> `derivation` (L6, [DERIVATION.md](DERIVATION.md)) is the first VM caller of
+> `P3`. Each store path is a fingerprint pushed like any young string, and
+> after `HASH_FINAL` the VM reads `P3` rather than `P0`: the fold and nixbase32
+> that `storepath.v` performs, and that M1 proved against Nix, cost the same 32
+> reads as the digest. A leaf derivation is two ATerms and two fingerprints:
+> `eval-okay-derivation` takes **1,059,666 cycles and 802 bus accesses with the
+> card, 9,033,607 with `sha256.c` and `nix32_fold`** (measured 2026-09-25, the
+> HASH verb masked): the card saves 88% of the program, most of it four
+> hashes. With it in the verb-economics workload, **HASH saves 15,945,314 cycles
+> (54.3% of twelve programs) for 1,137 bus accesses**.
 
 `ALU64` exists because the 65816 has **no multiply or divide at all** and Nix integers
 are 64-bit. Operands `P0`/`P1` and the result `P3` are 8-byte little-endian integers in

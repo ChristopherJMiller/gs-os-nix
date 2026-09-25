@@ -560,3 +560,31 @@ needed and where real trees exist to price it on.
 `NARHASH` on synthetic trees. The representation would be guessed before the
 thing that fills it (the file-system layer) exists, and the D5 gate would be
 answered on inputs no program produces.
+
+## D22 — `derivation` is Nix's own `derivation.nix`; one per program until context
+
+**Decided in the L6 loop (2026-09-25).** Nix implements `derivation` as a Nix
+file wrapped around the `derivationStrict` primop. The VM does the same: the
+generator embeds that file verbatim and compiles it like an import
+(BYTECODE.md "Imports"); only `derivationStrict` is C (DERIVATION.md).
+
+Why not all C: the wrapper's result (`all`, `drvAttrs`, one attribute set per
+output, `outputName`, its laziness, so `d.name` never builds anything) is
+observable, and reproducing it by hand is a place to be subtly wrong. Compiled
+from Nix's own source it is right by construction, and it costs one chunk.
+
+This does not bend D7. The embedded file computes nothing: no hash, no path,
+no answer is precomputed on the host, and `checks.fixture-purity` still finds
+no hashing code in the generator. On the target it is the same bytecode any
+program's `let` would be, and at L5 the on-target compiler compiles the same
+source.
+
+**Interim, until string context:** a second `derivationStrict` in one program
+is `E_UNSUP`. Without context, one derivation's output path reaches another's
+attributes as plain text: the second `.drv` has no `inputDrvs` and a
+well-formed, wrong path. One derivation per program cannot consume another.
+
+**Rejected:** a context *marker* on derivation outputs, propagated through
+every string operation and refused by `derivationStrict`. It touches every
+site that real context propagation will touch, to be rewritten there
+immediately after; the guard is three lines and goes when context lands.

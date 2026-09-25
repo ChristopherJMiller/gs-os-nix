@@ -272,7 +272,8 @@ primop would move the most tests.
 | `$2D` | `baseNameOf` | 1 | last path component of a `STRING` |
 | `$2E` | `dirOf` | 1 | everything before it; `"."` if none |
 | `$2F` | `tryEval` | 1 | see "Catch frames" |
-| `$30` | `hashString` | 2 | `type s`: `"sha256"` only, the card's `HASH_PUSH`+`HASH_FINAL` (a CPU SHA-256 without one); lowercase hex. Other types are `E_TYPE` |
+| `$30` | `hashString` | 2 | `type s`: `"sha256"` only, the card's `HASH_PUSH`+`HASH_FINAL` (a CPU SHA-256 without one); lowercase hex. `md5`, `sha1`, `sha512` are `E_UNSUP`; anything else `E_TYPE` |
+| `$31` | `derivationStrict` | 1 | `attrs` → `{ drvPath; <output> ...; }`: [DERIVATION.md](DERIVATION.md). `derivation` itself is Nix code the generator embeds around it |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`
 diffs the primop table too).
@@ -358,6 +359,13 @@ Two things the generator must refuse rather than guess:
 
 An import cycle is refused the same way (`unsupported: import cycle`), since
 the generator would otherwise recurse forever.
+
+**`derivation` is an import too.** In Nix it is not a primop but a Nix file,
+`derivation.nix`, wrapped around the `derivationStrict` primop. The generator
+embeds that file verbatim (`tools/nbc/src/derivation.nix`) and compiles every
+unshadowed `derivation` or `builtins.derivation` as the `CLOSED_THUNK` of it,
+forced: one chunk and one function per program, exactly as a file imported from
+several places ([DERIVATION.md](DERIVATION.md)).
 
 ## Thunk placement (what is lazy)
 
@@ -449,7 +457,9 @@ Error codes: `E_BADOP $01`, `E_TYPE $02`, `E_DIVZERO $03`, `E_INFREC $04`,
 $07` (`MUL`/`DIV` with no card in any slot), `E_ASSERT $08`, `E_THROW $09`,
 `E_ABORT $0A`, `E_NOATTR $0B` (selecting a missing attribute), `E_INDEX $0C`
 (`head []`, `elemAt` out of range, negative `substring` start), `E_NOVAR $0D`
-(an identifier no `with` set supplies). The harness (`a2min --run-nbc`) prints the value in
+(an identifier no `with` set supplies), `E_UNSUP $0E` (valid Nix the VM does not implement
+yet: a second derivation before string context, fixed-output derivations, a path
+copied into the store, `md5`; [DERIVATION.md](DERIVATION.md)). The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.
 
