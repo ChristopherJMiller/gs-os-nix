@@ -69,6 +69,7 @@
                                        nothing live is in a C local is actually tested */
 #define VERB_NO_LOOKUP   0x01U
 #define VERB_NO_ALU64    0x02U
+#define VERB_NO_HASH     0x04U   /* SHA-256: HASH_PUSH / HASH_STREAM + HASH_FINAL */
 #define verb_off(bit)    (*(volatile uint8_t *)VERB_MASK_ADDR & (bit))
 #define STACK_MIN        0x0500U    /* the C stack (S) must stay above this */
 
@@ -333,6 +334,9 @@ void card_write_at(uint32_t addr, const void *src, uint16_t n);
 uint32_t card_reserve(uint16_t n);
 int  card_lookup(uint32_t set, uint32_t h, uint16_t *ix, uint32_t *value);
 int  card_memcmp(uint32_t a, uint32_t b, uint16_t n);   /* -1/0/1, or 2 if refused */
+int  card_sha256(const uint8_t *src, uint16_t n, uint8_t *out);   /* 0 if refused */
+int  card_sha256_at(uint32_t addr, uint16_t n, uint8_t *out);     /* bytes already on the card */
+void sha256_cpu(const uint8_t *src, uint16_t n, uint8_t *out);    /* sha256.c: no card, or masked */
 #define A_MUL 0x02
 #define A_DIV 0x03
 

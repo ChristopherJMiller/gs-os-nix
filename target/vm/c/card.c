@@ -25,6 +25,12 @@
 #define REG_LEN   8
 
 #define CARD_ID   0xA2
+#define V_HASH_INIT   0x10
+#define V_HASH_STREAM 0x11
+#define V_HASH_FINAL  0x12
+#define V_HASH_PUSH   0x15
+#define ST_READY  0x10
+#define FIFO_BURST 16                           /* bytes one READY poll licenses (CARD-ISA.md) */
 #define V_MEMCMP  0x22
 #define V_RESERVE 0x25
 #define V_LOOKUP  0x30
@@ -195,6 +201,63 @@ void card_write_at(uint32_t addr, const void *src, uint16_t n)
 }
 
 /* RESERVE n bytes: the base of a headerless block (promotion, HEAP.md). */
+/* --- SHA-256 (L6: builtins.hashString, and later the .drv and store paths) --- */
+/* HASH_FINAL, then the 32-byte digest from P0. 1, or 0 after the card raised
+ * ERR (its error state cleared). */
+static int hash_finish(uint8_t *out)
+{
+    uint16_t st, i;
+    cw8(REG_CMD, V_HASH_FINAL);                 /* drains the FIFO, then pads */
+    do st = cr8(REG_CMD); while (!(st & (ST_DONE | ST_ERR)));
+    if (st & ST_ERR) { cw8(REG_CTRL, 0x01); return 0; }
+    cw8(REG_PSEL, 0);
+    for (i = 0; i < 32; ++i) out[i] = (uint8_t)cr8(REG_PPORT);
+    return 1;
+}
+
+/* SHA-256 of n bytes in RAM: HASH_INIT (mandatory: it abandons any partial
+ * message), HASH_PUSH, the bytes through DATA a FIFO burst per READY poll,
+ * then HASH_FINAL -- the M2 demo's sequence. 0 if refused: no card, the verb
+ * masked (checks.verb-economics), or the card raised ERR; the caller then
+ * hashes on the CPU. */
+int card_sha256(const uint8_t *src, uint16_t n, uint8_t *out)
+{
+    uint16_t st, burst;
+    if (slot_x == 0 || verb_off(VERB_NO_HASH)) return 0;
+    cw8(REG_CMD, V_HASH_INIT);
+    cw8(REG_CMD, V_HASH_PUSH);
+    while (n) {
+        do {
+            st = cr8(REG_CMD);
+            if (st & ST_ERR) { cw8(REG_CTRL, 0x01); return 0; }
+        } while (!(st & ST_READY));
+        burst = n < FIFO_BURST ? n : FIFO_BURST;
+        burst_out(src, burst);
+        src += burst;
+        n -= burst;
+    }
+    return hash_finish(out);
+}
+
+/* SHA-256 of n bytes already on the card at addr: HASH_STREAM, so none of
+ * them cross the bus -- a mature string is hashed where it lives. */
+int card_sha256_at(uint32_t addr, uint16_t n, uint8_t *out)
+{
+    uint16_t st;
+    if (slot_x == 0 || verb_off(VERB_NO_HASH)) return 0;
+    cw8(REG_CMD, V_HASH_INIT);
+    set_a0(addr);
+    cw8(REG_CTRL, 0x08);                        /* rewind the port indices before LEN */
+    cw8(REG_LEN, n & 0xFF);
+    cw8(REG_LEN, n >> 8);
+    cw8(REG_LEN, 0);
+    cw8(REG_LEN, 0);
+    cw8(REG_CMD, V_HASH_STREAM);
+    do st = cr8(REG_CMD); while (!(st & (ST_DONE | ST_ERR)));
+    if (st & ST_ERR) { cw8(REG_CTRL, 0x01); return 0; }
+    return hash_finish(out);
+}
+
 uint32_t card_reserve(uint16_t n)
 {
     cw8(REG_CTRL, 0x08);                        /* rewind the port indices (CARD-ISA.md) */

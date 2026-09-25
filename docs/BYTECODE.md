@@ -272,6 +272,7 @@ primop would move the most tests.
 | `$2D` | `baseNameOf` | 1 | last path component of a `STRING` |
 | `$2E` | `dirOf` | 1 | everything before it; `"."` if none |
 | `$2F` | `tryEval` | 1 | see "Catch frames" |
+| `$30` | `hashString` | 2 | `type s`: `"sha256"` only, the card's `HASH_PUSH`+`HASH_FINAL` (a CPU SHA-256 without one); lowercase hex. Other types are `E_TYPE` |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`
 diffs the primop table too).

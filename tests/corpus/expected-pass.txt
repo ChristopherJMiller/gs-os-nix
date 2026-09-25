@@ -16,6 +16,7 @@ fixtures/eval-okay-formals
 fixtures/eval-okay-function-equality
 fixtures/eval-okay-functor
 fixtures/eval-okay-hash-collision
+fixtures/eval-okay-hashstring
 fixtures/eval-okay-import
 fixtures/eval-okay-inherit-and-escapes
 fixtures/eval-okay-int-min-wrap

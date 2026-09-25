@@ -108,7 +108,8 @@
 #define PRIM_BASENAMEOF         0x2D /* 1 */
 #define PRIM_DIROF              0x2E /* 1 */
 #define PRIM_TRYEVAL            0x2F /* 1 */
-#define PRIM_COUNT              0x30
+#define PRIM_HASHSTRING         0x30 /* 2 */
+#define PRIM_COUNT              0x31
 
 /* Constant kinds are heap tags (docs/HEAP.md). */
 #define K_INT           0x01

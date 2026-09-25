@@ -183,7 +183,8 @@ quiet-clock: build-a2min cvm nbc-build asm-headless
         target/build/nbc-fixtures target/build/storepath_demo_headless.bin {{VECTORS}}
 
 # Prove the collector fixtures can fail: break the remembered set six ways, object
-# sizes three, the nursery reserves four, path + once and string coercion twice.
+# sizes three, the nursery reserves four, path + once, string coercion twice and
+# SHA-256 three times.
 # Mutates a copy, never the tree.
 mutation-vm: build-a2min nbc-build
     ./scripts/mutation-vm.sh ./sim/build_a2min/a2min {{NBC}}
@@ -231,7 +232,7 @@ orca-smoke: build-a2min
 # --- The VM (docs/VM.md): C, compiled by ORCA/C ---------------------------------
 # main.c stays first: the load file's entry point is the first function of the
 # first object.
-CVM_SRCS := "target/vm/c/main.c target/vm/c/run.c target/vm/c/data.c target/vm/c/prims.c target/vm/c/gc.c target/vm/c/card.c"
+CVM_SRCS := "target/vm/c/main.c target/vm/c/run.c target/vm/c/data.c target/vm/c/prims.c target/vm/c/gc.c target/vm/c/card.c target/vm/c/sha256.c"
 
 # Compile, link and flatten the VM to target/build/cvm.bin.
 cvm:
@@ -315,7 +316,7 @@ NBC := "tools/nbc/target/release/nbc"
 # The fixtures that actually reach a card verb: attribute lookups for LOOKUP,
 # 64-bit multiply and divide for ALU64. Five configurations x every fixture
 # under GC stress would be an hour for no extra information.
-VERB_WORKLOAD := "attrs.nbc,attr-builtins.nbc,with.nbc,with-captured.nbc,hash-collision.nbc,functor.nbc,tryeval.nbc,carry-chain.nbc,div-truncates.nbc,int-min-wrap.nbc"
+VERB_WORKLOAD := "attrs.nbc,attr-builtins.nbc,with.nbc,with-captured.nbc,hash-collision.nbc,functor.nbc,tryeval.nbc,carry-chain.nbc,div-truncates.nbc,int-min-wrap.nbc,hashstring.nbc"
 
 # Build the test-only .nbc fixture generator (Rust, no dependencies; D7/D16).
 nbc-build:

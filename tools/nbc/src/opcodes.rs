@@ -113,6 +113,7 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("baseNameOf", 0x2D, 1),
     ("dirOf", 0x2E, 1),
     ("tryEval", 0x2F, 1),
+    ("hashString", 0x30, 2),
 ];
 
 /// The builtins Nix also exposes unqualified.

@@ -398,12 +398,11 @@ static void prim_intersectattrs(void)           /* names of a that are in b, wit
 /* Is the STRING `name` (a view) among the (forced) elements of LIST l (original)? */
 static int name_in_list(obj_t *name, obj_t *lo)
 {
-    obj_t *l = deref(lo);
-    uint16_t n = AUX16(l), j;
-    for (j = 0; j < n; ++j) {
-        if (str_eq(name, deref_follow(ELEMS(l)[j]))) return 1;
-        l = deref(lo);
-    }
+    uint16_t n = AUX16(deref(lo)), j;
+    /* list_elem, not deref(lo) each time round: a long mature list evicted by
+     * the element derefs is re-copied whole per element (data.c list_elem). */
+    for (j = 0; j < n; ++j)
+        if (str_eq(name, deref_follow(list_elem(lo, j, n)))) return 1;
     return 0;
 }
 
@@ -656,6 +655,47 @@ void coerce_top(uint8_t to_string)
 
 static void prim_tostring(void) { coerce_top(1); }
 
+/* hashString type s -> lowercase hex (BYTECODE.md). Only "sha256" -- it is
+ * what the card hashes, and what store paths need; md5, sha1 and sha512 are
+ * E_TYPE until something needs them. Nix forces the type first, then the
+ * string, which must BE a string (forceString, not a coercion).
+ *
+ * The string is hashed where it lives. A mature one stays on the card and
+ * HASH_STREAM reads it there: only its 4-byte header crosses the bus. A young
+ * one goes through HASH_PUSH. With no card, or the verb masked
+ * (checks.verb-economics), sha256.c does it on the CPU. */
+static void prim_hashstring(void)
+{
+    static const char hex[] = "0123456789abcdef";
+    uint8_t dig[32];
+    uint16_t i, n;
+    obj_t *t, *so, *s, *r, hdr;
+    force_slot(2);                              /* the type, first, as Nix forces it */
+    t = deref(vstack[vsp - 2]);
+    need(t, T_STRING);
+    if (AUX16(t) != 6 || memcmp(STRBYTES(t), "sha256", 6) != 0) type_err();
+    force_top();
+    so = peek();
+    if (IS_MATURE(so)) {
+        card_read_at(PBITS(so), &hdr, 4);
+        need(&hdr, T_STRING);
+        n = AUX16(&hdr);
+        if (!card_sha256_at(PBITS(so) + 4, n, dig)) { s = deref(so); sha256_cpu((uint8_t *)STRBYTES(s), n, dig); }
+    } else {
+        s = deref(so);
+        need(s, T_STRING);
+        n = AUX16(s);
+        if (!card_sha256((uint8_t *)STRBYTES(s), n, dig)) sha256_cpu((uint8_t *)STRBYTES(s), n, dig);
+    }
+    vsp -= 2;
+    r = str_alloc(64);                          /* 72 bytes: inside the boundary's margin */
+    for (i = 0; i < 32; ++i) {
+        STRBYTES(r)[2 * i] = hex[dig[i] >> 4];
+        STRBYTES(r)[2 * i + 1] = hex[dig[i] & 15];
+    }
+    push(r);
+}
+
 /* concatStringsSep sep list, with the result left on the stack. */
 static void concat_strings_sep_top(void)
 {
@@ -712,7 +752,7 @@ static void concat_strings_sep_top(void)
     for (i = 0; i < n; ++i) {
         if (i) { sep = deref(sepo); memcpy(STRBYTES(r) + w, STRBYTES(sep), nsep); w += nsep; }
         if (coerce) e = deref(vstack[at + i]);
-        else { l = deref(lo); e = deref_follow(ELEMS(l)[i]); }
+        else e = deref_follow(list_elem(lo, i, n));   /* not deref(lo): a long mature list re-copied per element overran the window ring */
         memcpy(STRBYTES(r) + w, STRBYTES(e), AUX16(e));
         w += AUX16(e);
     }
@@ -921,6 +961,7 @@ void op_prim(void)
     case PRIM_BASENAMEOF:      prim_basenameof(); break;
     case PRIM_DIROF:           prim_dirof(); break;
     case PRIM_TRYEVAL:         prim_tryeval(); break;
+    case PRIM_HASHSTRING:      prim_hashstring(); break;
     default:                   err_exit(E_BADOP);
     }
 }

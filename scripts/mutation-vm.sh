@@ -17,6 +17,8 @@
 #   reserve:1 every nursery_reserve() collects (A2MIN_RESERVE_STRESS): each is a
 #             mid-instruction collection, so a site that keeps a view or a
 #             local across one reads a forwarded object
+#   mask:M    a normal run with verbs M on the CPU (A2MIN_VERB_MASK): 4 puts
+#             SHA-256 on sha256.c, a path no other mode reaches
 #   both:K    period:K with a one-entry set. The only mode in which ENV_SET
 #             finds the set full: without it, "store_field ignores a full set"
 #             survived, because only the period modes reach store_field with a
@@ -37,9 +39,9 @@ set -uo pipefail
 
 A2MIN="$1"
 NBC="$2"
-FIXTURES="eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets"
-MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1"
-SRCS="main.c run.c data.c prims.c gc.c card.c"      # link order: main.c first
+FIXTURES="eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
+MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1 mask:4"
+SRCS="main.c run.c data.c prims.c gc.c card.c sha256.c"   # link order: main.c first
 WORK=$(mktemp -d)
 BUDGET=500000000
 trap 'rm -rf "$WORK"' EXIT
@@ -68,6 +70,8 @@ run_suite() {
                 both:*)   got=$(A2MIN_GC_PERIOD=${mode#*:} A2MIN_RSET_LIMIT=1 A2MIN_BUDGET=$BUDGET "$A2MIN" \
                                 --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p') ;;
                 reserve:*) got=$(A2MIN_RESERVE_STRESS=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
+                                --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p') ;;
+                mask:*)   got=$(A2MIN_VERB_MASK=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
                                 --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p') ;;
             esac
             [ "$got" = "$want" ] || return 1
@@ -168,6 +172,18 @@ mutate "outPath does not coerce" prims.c \
 
 mutate "concatStringsSep copies the set, not its coercion" prims.c \
        's/^        if (coerce) e = deref(vstack\[at + i\]);$/        if (0) e = deref(vstack[at + i]);/'
+
+# SHA-256 (prims.c prim_hashstring): three paths, each reached by some mode --
+# HASH_STREAM only for a mature string (the period modes), sha256.c only with
+# the verb masked (mask:4), the digest readout on every card run.
+mutate "HASH_STREAM starts a byte late" prims.c \
+       's/        if (!card_sha256_at(PBITS(so) + 4, n, dig))/        if (!card_sha256_at(PBITS(so) + 5, n, dig))/'
+
+mutate "SHA-256 on the CPU pads the wrong length" sha256.c \
+       's/    uint32_t bits = (uint32_t)n << 3; /    uint32_t bits = (uint32_t)n << 2; /'
+
+mutate "the digest is read from the wrong slot" card.c \
+       '/^static int hash_finish/,/^}/ s/    cw8(REG_PSEL, 0);/    cw8(REG_PSEL, 3);/'
 
 mutate "path + keeps .. components" data.c \
        's/        if (len == 2 \&\& PCH(start) == '"'"'.'"'"' \&\& PCH(start + 1) == '"'"'.'"'"') {/        if (0) {/'

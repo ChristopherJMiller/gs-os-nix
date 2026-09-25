@@ -32,7 +32,8 @@
         cvm = self'.mkOrcaBinary {
           name = "cvm";
           srcs = [ ./target/vm/c/main.c ./target/vm/c/run.c ./target/vm/c/data.c
-                   ./target/vm/c/prims.c ./target/vm/c/gc.c ./target/vm/c/card.c ];
+                   ./target/vm/c/prims.c ./target/vm/c/gc.c ./target/vm/c/card.c
+                   ./target/vm/c/sha256.c ];
           includes = [ ./target/vm/c ];
         };
       });
@@ -245,12 +246,12 @@
               --Mdir build -o a2min \
               rtl/a2nix_card.v sim/a2min.cpp
             # The fixtures that actually reach a verb: attribute lookups for
-            # LOOKUP, 64-bit multiply and divide for ALU64. Five configurations
+            # LOOKUP, 64-bit multiply and divide for ALU64, SHA-256 for HASH. Six configurations
             # times every fixture under GC stress would be an hour for no more
             # information (justfile VERB_WORKLOAD is the same list).
             mkdir -p build/nbc
             for f in attrs attr-builtins with with-captured hash-collision \
-                     functor tryeval carry-chain div-truncates int-min-wrap; do
+                     functor tryeval carry-chain div-truncates int-min-wrap hashstring; do
               nbc "tests/fixtures/eval-okay-$f.nix" -o "build/nbc/$f.nbc"
             done
             python3 scripts/verb-economics.py \
@@ -420,7 +421,8 @@
 
         # And the VM's collector (DECISIONS.md D20, HEAP.md): break the
         # remembered set six ways, object sizes three, the nursery reserves four,
-        # path + once and string coercion twice, rebuild the VM with ORCA/C each time, and require the
+        # path + once, string coercion twice and SHA-256 three times, rebuild the
+        # VM with ORCA/C each time, and require the
         # collector fixtures (scripts/mutation-vm.sh) to catch every one.
         mutation-vm = pkgs.runCommandCC "check-mutation-vm"
           { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ours.nbc ]; }

@@ -533,3 +533,30 @@ breaks the set six ways and the object sizes two ways, and requires the
 fixtures to notice each (D14). It mutates a copy of the sources, never the
 tree: its first version edited `target/vm/c` in place, and a low-memory kill
 (which skips any trap) twice left a mutation behind.
+
+---
+
+## D21 — L6 begins with strings, not NARHASH
+
+**Decided with Chris (2026-09-24).** The plan was "L6 starts with `NARHASH`,
+priced first on real programs". But `NARHASH` hashes a **directory tree held on
+the card**, and nothing can put a file tree there until GS/OS file I/O exists
+(L7): there is no real program to price it on, only synthetic trees built for
+the purpose. Meanwhile the first M4 target, a `.drv` whose hash matches the
+host's, needs **no files at all**. A derivation with a builder, arguments and an
+environment but no source paths needs:
+
+1. SHA-256 of strings: `builtins.hashString "sha256"`, on the card's proven
+   `HASH_PUSH`/`HASH_STREAM` + `HASH_FINAL`;
+2. ATerm serialisation of the derivation;
+3. the `derivation` primop: `hashDerivationModulo`, then `STOREPATH`, the verb
+   M1 proved byte-identical to Nix;
+4. string context, so a derivation's inputs are recorded.
+
+**Decision:** that order. `NARHASH` arrives with file I/O, where it is first
+needed and where real trees exist to price it on.
+
+**Rejected:** designing a card-side tree representation now and pricing
+`NARHASH` on synthetic trees. The representation would be guessed before the
+thing that fills it (the file-system layer) exists, and the D5 gate would be
+answered on inputs no program produces.

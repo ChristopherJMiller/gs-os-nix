@@ -377,6 +377,20 @@ search would have found.
 > in a window, and still copies short ones. That took the program's card reads
 > from 238 KB to 45 KB. The rule is reuse, not size: bulk-copy what will be
 > read again before it is evicted, field-read what will not.
+>
+> ### Measured on a real program (2026-09-24): SHA-256 pays by four orders of magnitude
+>
+> `builtins.hashString "sha256"` (L6's first step, D21) uses `HASH_PUSH` for a
+> string in RAM and `HASH_STREAM` for a mature one, which the card hashes where
+> it lives: only the string's 4-byte header crosses the bus. On the
+> verb-economics workload, `eval-okay-hashstring`'s seven hashes, including
+> the padding edges and a four-block string, give **HASH saves 7,971,457 cycles
+> (30.8% of the whole workload) for 336 bus accesses**: ~1.1M cycles a hash
+> for `sha256.c` in ORCA/C against ~48 bus accesses on the card. The CPU side
+> is plain C, where every 32-bit rotate is a ~300-cycle library call, so a
+> hand-written assembly SHA-256 would narrow the gap several-fold. It could not
+> close it: the card's cost is a flat ~50 accesses plus one per pushed byte.
+> This is the verb D5 was written for.
 
 `ALU64` exists because the 65816 has **no multiply or divide at all** and Nix integers
 are 64-bit. Operands `P0`/`P1` and the result `P3` are 8-byte little-endian integers in

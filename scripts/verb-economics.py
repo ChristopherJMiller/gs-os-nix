@@ -33,11 +33,13 @@ import sys
 
 # name -> (environment overrides, what the row means)
 CONFIGS = [
-    ("card, all verbs", {}, "the baseline: LOOKUP and ALU64 on the card"),
+    ("card, all verbs", {}, "the baseline: LOOKUP, ALU64 and SHA-256 on the card"),
     ("LOOKUP on the CPU", {"A2MIN_VERB_MASK": "1"},
      "find_attr copies the set and scans it: no LOOKUP, and no MEMCMP either"),
     ("ALU64 on the CPU", {"A2MIN_VERB_MASK": "2"}, "ORCA/C's own 64-bit mul/div"),
-    ("both on the CPU", {"A2MIN_VERB_MASK": "3"}, "the card holds memory, nothing else"),
+    ("HASH on the CPU", {"A2MIN_VERB_MASK": "4"},
+     "sha256.c in ORCA/C instead of HASH_PUSH / HASH_STREAM + HASH_FINAL"),
+    ("all on the CPU", {"A2MIN_VERB_MASK": "7"}, "the card holds memory, nothing else"),
     ("no card at all", {"A2MIN_NO_CARD": "1"}, "no promotion either: heap stays in RAM"),
 ]
 
@@ -45,7 +47,7 @@ CONFIGS = [
 # whole card path for an attribute lookup -- the CAM plus the MEMCMP that
 # confirms its candidate -- against the CPU copying the set and scanning it,
 # because those are the two implementations that actually exist.
-VERBS = [("LOOKUP", "LOOKUP on the CPU"), ("ALU64", "ALU64 on the CPU")]
+VERBS = [("LOOKUP", "LOOKUP on the CPU"), ("ALU64", "ALU64 on the CPU"), ("HASH", "HASH on the CPU")]
 
 STATS = re.compile(r"(\d+) instructions, (\d+) CPU cycles, (\d+) slot accesses")
 
@@ -137,7 +139,11 @@ def main():
     ap.add_argument("--a2min", required=True)
     ap.add_argument("--vm", required=True, help="the flattened VM (target/build/cvm.bin)")
     ap.add_argument("--nbc-dir", required=True, help="compiled .nbc files to use as the workload")
-    ap.add_argument("--budget", type=int, default=400_000_000)
+    # The "no card at all" row under GC stress copies every live object at every
+    # boundary in RAM: eval-okay-hashstring needs 1.4G cycles there (~10 s) and
+    # 20M with a card. A budget run-out reads as "did not halt", which the
+    # disagreement check rightly treats as a different answer.
+    ap.add_argument("--budget", type=int, default=2_000_000_000)
     ap.add_argument("--no-gc-stress", action="store_true",
                     help="run without promotion at every boundary -- see the docstring")
     ap.add_argument("--per-test", action="store_true", help="also print every test")
