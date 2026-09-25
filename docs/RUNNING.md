@@ -24,7 +24,24 @@ is only the character-generator font (`region="gfx1"`) that a headless run never
 touches. See [DECISIONS.md](DECISIONS.md) D13.
 
 It models the clocks that matter: 50 MHz card against a 2.8 MHz CPU, with `$Cxxx`
-accesses stretched to 1.024 MHz. It is **not** an Apple IIgs — no video, no ROM, no
+accesses stretched to 1.024 MHz.
+
+**The card is clocked only while clocking it can change something.** Clocking
+it 18 times per CPU cycle made a2min run at 0.4M simulated cycles per second,
+7× slower than the machine it models. `perf` put essentially all of the time in
+the Verilated model, which spends nearly every one of those cycles idle between
+verbs. A Verilated model is deterministic, so once a full tick leaves every byte
+of the model's state unchanged and writes nothing to the heap, every later tick
+with the same inputs does the same. From then until the CPU next touches a card
+register, cycles are counted, not simulated. This needs no knowledge of which
+engines the RTL has, so it can't go stale as the RTL grows. foldlStrict at
+`n` = 550 went from **84.7 s to 0.15 s** with byte-identical output.
+`A2MIN_EXACT_CLOCK=1` simulates every cycle, and `just quiet-clock`
+(`checks.quiet-clock`) runs every fixture and the M2 store
+path both ways, requires identical output, then proves it can fail on a
+deliberately broken copy.
+
+It is **not** an Apple IIgs — no video, no ROM, no
 soft switches, no interrupts — and unknown opcodes abort rather than being skipped,
 because a skipped instruction would yield a wrong-but-plausible digest.
 

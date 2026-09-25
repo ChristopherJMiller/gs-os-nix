@@ -44,14 +44,14 @@ obj_t *str_alloc(uint16_t len)
 
 obj_t *list_alloc(uint16_t n)
 {
-    obj_t *o = alloc(4 + 4 * n);
+    obj_t *o = alloc(n ? 4 + 4 * n : 8);          /* >= 8: see obj_size (gc.c) */
     SET_HDR(o, T_LIST, n);
     return o;
 }
 
 obj_t *attrs_alloc(uint16_t n)
 {
-    obj_t *o = alloc(4 + 12 * n);
+    obj_t *o = alloc(n ? 4 + 12 * n : 8);         /* >= 8: see obj_size (gc.c) */
     SET_HDR(o, T_ATTRS, n);
     return o;
 }
@@ -130,14 +130,20 @@ obj_t *deref(obj_t *p)
     return mature_view(p);
 }
 
-/* The write barrier: a store into a mature object promotes the value first --
- * a collection, with the value on the stack as a root -- and goes through the
- * bus. Into a young object it is a plain store. `c` is the object, not a view. */
+/* The write barrier: a store into a mature object goes through the bus, and if
+ * the value is young the field is recorded in the remembered set (gc.c), which
+ * the next collection treats as a root and rewrites. O(1) per store. It used to
+ * promote the value first -- a whole collection per store -- which made any
+ * program that forces promoted thunks quadratic (HEAP.md "the barrier makes a
+ * promoting workload quadratic"). Only a FULL set still costs a collection, with
+ * the value on the stack as a root. Into a young object it is a plain store.
+ * `c` is the object, not a view. */
 void store_field(obj_t *c, uint16_t off, obj_t *v)
 {
     if (IS_RAM(c)) { *(obj_t **)((uint8_t *)c + off) = v; return; }
-    if (IS_YOUNG(v)) { ++ST_BARRIER; push(v); gc_collect(); v = pop(); }
+    if (IS_YOUNG(v) && rs_full()) { ++ST_BARRIER; push(v); gc_collect(); v = pop(); }
     card_write_at(PBITS(c) + off, &v, 4);
+    if (IS_YOUNG(v)) remember(c, off);
     windows_invalidate(c);
 }
 

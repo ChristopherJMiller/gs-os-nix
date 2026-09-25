@@ -433,3 +433,103 @@ access counter, and it is what settled all three earlier surprises (D5's verb
 gate, `LOOKUP`'s baseline, field-wise versus bulk reads). Everything else was a
 single undifferentiated cycle count. **When a cost is a mystery, the cheapest
 next step is usually a counter, not an experiment.**
+
+---
+
+## D20 — A remembered set for the write barrier; the "never points young" rule weakens
+
+**Decided with Chris (2026-09-23), forced by a measured O(n²).**
+
+**Context.** D6's promotion came with an absolute rule, stated in
+[ARCHITECTURE.md](ARCHITECTURE.md) (rule 1) and [CARD-ISA.md](CARD-ISA.md): *a
+mature object never points into the nursery; anything stored into a mature
+object is promoted first; there is no remembered set.* The VM implemented it
+literally, and promoting a value has exactly one mechanism, a whole
+collection. So every store of a young value into a mature object cost O(live).
+`eval-okay-foldlStrict` (`foldl'` over `range 1 1000`) made that quadratic: 52
+collections at `n` = 550, 51 of them from the barrier, and at `n` = 1000 it
+never finished, where with no card it took 3 collections (HEAP.md "the barrier
+makes a promoting workload quadratic"). The card made the program quadratic
+*because it works*: with no card, nothing is ever mature.
+
+**Decision.** A store into a mature object writes the young pointer through the
+bus and records (object, offset) in a bounded **remembered set** (256 entries,
+the spare 4 KB of bank 5). The next collection treats each recorded field as a
+root: it reads the field back, evacuates what it points at, and after promotion
+writes the card address over it. A store is O(1); collections happen for memory
+pressure only. A full set collects, which is exactly the old behaviour, bounded.
+
+**The rule, restated:** *a mature object never points into the nursery except
+through a recorded field, which the card must not trace.* That is sound because
+nothing card-side follows a pointer the VM gives it today: the VM issues
+`DATA`, `RESERVE`, `LOOKUP` (which hands back a value pointer as opaque bits),
+`MEMCMP` (on names, which are never stored after creation) and `ALU64`. Two
+verbs *do* chase pointers card-side — `FOLLOW` and `MARK` — and neither is
+issued. **The contract for whoever issues the first one: the remembered set is
+empty at that moment.** A nursery collection empties it, so "collect, then
+`MARK`" is enough, and the card needs no knowledge of the set — which matters
+because teaching the card to skip recorded fields would be the card making a
+policy decision. This joins the `THUNK` word-0 discrepancy and the `aux2` mark
+as what slice 5's card-side `MARK` must resolve before it runs (HEAP.md).
+
+**What the measurement said afterwards, including what the diagnosis got
+wrong.** With the set in place, foldlStrict's collections fell to memory
+pressure: `n` = 550 went from 52 collections (38.6M cycles) to 1 (20.2M);
+`n` = 650 from not finishing to 1 collection (32.5M); `n` = 1000 finishes, with
+1 collection. But the counter of recorded fields read **0** on all of them: the
+set was never used. The old barrier collected whenever the *value* was young,
+and forcing a thunk to an `INT`, `BOOL` or `NULL` copies the value into the
+thunk — no pointer crosses the bus at all. So most of the quadratic was the
+barrier firing on stores that carried no pointer, and the fix that removed it is
+the barrier testing *what is written* rather than what the value is. The set
+still earns its place — a thunk forced to a list, a string or a closure does
+store a young pointer, and `tests/fixtures/eval-okay-remembered-set` is built
+to do exactly that, hundreds of times across several collections — but the
+HEAP.md account of the mechanism was half right.
+
+**Rejected:**
+- *Keep promote-on-store and make collection cheaper.* It stays O(live) per
+  store whatever the constant.
+- *Card marking* (a dirty bit per card page, scanned at collection). It needs
+  either a card-side table the CPU reads back — bus traffic proportional to the
+  heap — or the card deciding what is dirty. The set is O(stores) and lives
+  entirely in CPU RAM.
+- *An unbounded set.* A 64 KB nursery bounds how many young objects exist, but
+  not how many times they are stored; bounded plus "full means collect" keeps
+  the worst case where it was before.
+- *Deduplicating entries.* A search per store costs more than the rare
+  duplicate; evacuation is idempotent, so a field recorded twice is harmless.
+
+**Tests, and what writing them taught.** GC stress, the collector test every
+fixture already ran under, **does not test the set at all**. Promoting at every
+boundary makes every value mature before it can be stored, so a stress run
+records nothing, and the first version of the mutation runner confirmed it:
+under stress every mutation survived. What exercises the set is promotion
+that leaves some values young, so there are now three ways to get it:
+
+- `tests/fixtures/eval-okay-remembered-set` fills the nursery on purpose between
+  building two lists of unforced thunks and forcing them (47 fields recorded
+  in a normal run);
+- `A2MIN_RSET_LIMIT=1` shrinks the set to one entry, so the full-set path (a
+  collection mid-instruction) runs: 18 of that fixture's 20 collections;
+- `A2MIN_GC_PERIOD=k` makes GC stress collect at every *k*-th boundary rather
+  than every one, which puts collections between a `let`'s `ENV_NEW` and its
+  `ENV_SET`s. The fixture alone never reaches that `store_field` path, and the
+  "store not recorded" mutation survived until this mode existed.
+
+**Its first run found a bug older than the set.** At period 2,
+`eval-okay-deep-equality` answered `{ } == { }` and `[ ] == [ ]` *false*. The C
+port allocated an empty list or set as 4 bytes, against HEAP.md's normative
+8-byte minimum, so the collector wrote the empty object's forwarding pointer
+over the header of whatever came next. Whether that mattered depended on which
+object was next and when the collection landed, so stress at every boundary
+never hit it, and periods 2, 5 and 7 did. Fixed in `list_alloc`/`attrs_alloc`
+and `obj_size`, and `scan_one` now steps by `obj_size` instead of keeping its
+own copy of every size, which is how the two had been able to disagree.
+
+The scoreboard check runs every fixture normally, at stress periods 1 and 3,
+and with a one-entry set. `scripts/mutation-vm.sh` (`checks.mutation-vm`)
+breaks the set six ways and the object sizes two ways, and requires the
+fixtures to notice each (D14). It mutates a copy of the sources, never the
+tree: its first version edited `target/vm/c` in place, and a low-memory kill
+(which skips any trap) twice left a mutation behind.

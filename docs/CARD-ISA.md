@@ -240,11 +240,17 @@ their sizes preserved, so the whole staging area can be pushed to the card as **
 no per-object `ALLOC`. Young pointers carry bit 31, which the card's 1 MB heap never
 uses, so the two address spaces cannot be confused.
 
-The rule that makes this sound: **a mature object never points into the nursery.**
-The card cannot dereference a CPU-RAM address, so an old→young pointer would be
-meaningless to `LOOKUP` or `FOLLOW` anyway. Anything stored into a mature object is
-promoted first. That is the entire generational write barrier — there is no
-remembered set.
+The rule that makes this sound: **a mature object never points into the nursery,
+except through a field in the CPU's remembered set** ([DECISIONS.md](DECISIONS.md)
+D20, which weakened a rule this section used to state absolutely). The card cannot
+dereference a CPU-RAM address, so an old→young pointer is meaningless to it. The
+write barrier stores a young pointer through the bus and records the field; the
+next nursery collection promotes the value and overwrites the field with its card
+address. **Contract: the remembered set is empty whenever the CPU issues `MARK` or
+`FOLLOW`**, the two verbs that chase pointers card-side, and a nursery collection
+is what empties it. `LOOKUP` returns a value pointer as opaque bits and is
+unaffected. The card itself knows nothing of the set: deciding which fields to
+skip would be a policy decision (D2).
 
 ### Evaluation support
 

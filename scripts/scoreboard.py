@@ -17,10 +17,12 @@ Compiled fixtures are left in --build next to a copy of their source so that
 scripts/fixture-purity.sh can check each one against what it was compiled from.
 """
 import argparse
+import concurrent.futures
 import os
 import shutil
 import subprocess
 import sys
+import time
 
 
 def run(cmd, timeout=120):
@@ -68,6 +70,9 @@ def main():
     ap.add_argument("--verbose", "-v", action="store_true")
     ap.add_argument("--gc-stress", action="store_true",
                     help="collect the nursery at every bytecode boundary (slow; a collector test)")
+    ap.add_argument("--jobs", "-j", type=int,
+                    default=int(os.environ.get("NIX_BUILD_CORES") or 0) or os.cpu_count() or 1,
+                    help="tests run side by side (default: NIX_BUILD_CORES, else every core)")
     args = ap.parse_args()
     run_mode = "--run-nbc-gc-stress" if args.gc_stress else "--run-nbc"
 
@@ -79,37 +84,49 @@ def main():
 
     buckets = {k: [] for k in ("pass", "fail", "error", "unsupported", "notyetpassing")}
     details = {}
+    seconds = {}
 
+    def one(test):
+        name, nix, exp, nyp = test
+        t0 = time.monotonic()
+        with open(exp) as f:
+            want = f.read().strip()
+        # Keep source and fixture side by side for the purity check.
+        base = os.path.join(args.build, name.replace(os.sep, "__"))
+        shutil.copyfile(nix, base + ".nix")
+        rc, _, err = run([args.nbc, nix, "-o", base + ".nbc"])
+        if rc == 2:
+            bucket, got = "unsupported", err.strip().splitlines()[-1] if err.strip() else ""
+        elif rc != 0:
+            bucket, got = "error", f"generator rc={rc}: {err.strip()}"
+        else:
+            rc, out, err = run([args.a2min, run_mode, args.vm, base + ".nbc"], timeout=600)
+            kind, got = vm_result(out)
+            if kind == "error":
+                bucket = "error"
+            elif got == want:
+                bucket = "pass"
+            else:
+                bucket = "fail"
+        if nyp and bucket != "pass":
+            bucket = "notyetpassing"
+        return name, bucket, want, got, time.monotonic() - t0
+
+    tests = []
     for root in args.corpus:
         if not os.path.isdir(root):
             continue
         tag = os.path.basename(root.rstrip("/"))
         for rel, nix, exp, nyp in find_tests(root):
-            name = f"{tag}/{rel}"
-            with open(exp) as f:
-                want = f.read().strip()
+            tests.append((f"{tag}/{rel}", nix, exp, nyp))
 
-            # Keep source and fixture side by side for the purity check.
-            base = os.path.join(args.build, name.replace(os.sep, "__"))
-            shutil.copyfile(nix, base + ".nix")
-            rc, _, err = run([args.nbc, nix, "-o", base + ".nbc"])
-            if rc == 2:
-                bucket, got = "unsupported", err.strip().splitlines()[-1] if err.strip() else ""
-            elif rc != 0:
-                bucket, got = "error", f"generator rc={rc}: {err.strip()}"
-            else:
-                rc, out, err = run([args.a2min, run_mode, args.vm, base + ".nbc"], timeout=600)
-                kind, got = vm_result(out)
-                if kind == "error":
-                    bucket = "error"
-                elif got == want:
-                    bucket = "pass"
-                else:
-                    bucket = "fail"
-            if nyp and bucket != "pass":
-                bucket = "notyetpassing"
+    # Every test is its own a2min process (~6 MB) with its own files, so they
+    # run side by side; map() keeps the report in corpus order regardless.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        for name, bucket, want, got, secs in pool.map(one, tests):
             buckets[bucket].append(name)
             details[name] = (bucket, want, got)
+            seconds[name] = secs
             if args.verbose or bucket == "fail":
                 print(f"  {bucket:<13} {name}" + ("" if bucket == "pass" else f"   want {want!r} got {got!r}"))
 
@@ -132,6 +149,17 @@ def main():
         print("\n  unsupported, by first refused construct:")
         for what, n in sorted(reasons.items(), key=lambda kv: -kv[1])[:12]:
             print(f"  {n:5}  {what}")
+
+    # Always name the errors: a count alone says nothing about what to fix.
+    if buckets["error"]:
+        print("\n  errors:")
+        for n in buckets["error"]:
+            print(f"    {n}: {details[n][2][:100]}")
+    # And where the wall clock went (D19: count before guessing).
+    if seconds:
+        print(f"\n  slowest (of {sum(seconds.values()):.0f} s total, {args.jobs} jobs):")
+        for n, s in sorted(seconds.items(), key=lambda kv: -kv[1])[:8]:
+            print(f"  {s:7.1f} s  {n}  [{details[n][0]}]")
 
     print()
     for k in ("pass", "fail", "error", "unsupported", "notyetpassing"):

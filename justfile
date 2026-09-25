@@ -173,6 +173,27 @@ selftest: build-a2min (asm-test "native_test")
 mutation-a2min: (asm-test "native_test")
     ./scripts/mutation-a2min.sh
 
+# The quiet clock (docs/RUNNING.md): every fixture and the M2 run,
+# fast vs A2MIN_EXACT_CLOCK=1, must be byte-identical; then a broken copy must not be.
+quiet-clock: build-a2min cvm nbc-build asm-headless
+    python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
+        --vm target/build/cvm.bin --corpus tests/fixtures --build target/build/nbc-fixtures \
+        --expected tests/corpus/expected-pass.txt > /dev/null
+    ./scripts/quiet-clock.sh ./sim/build_a2min/a2min target/build/cvm.bin \
+        target/build/nbc-fixtures target/build/storepath_demo_headless.bin {{VECTORS}}
+
+# Prove the collector fixtures can fail: break the remembered set six ways and
+# the minimum object size two (D20). Mutates a copy, never the tree.
+mutation-vm: build-a2min nbc-build
+    ./scripts/mutation-vm.sh ./sim/build_a2min/a2min {{NBC}}
+
+# The phase counters for one .nix, bounded by cycles rather than wall clock (D19).
+phases file budget="400000000": build-a2min cvm nbc-build
+    mkdir -p target/build
+    {{NBC}} {{file}} -o target/build/$(basename {{file}} .nix).nbc
+    A2MIN_BUDGET={{budget}} ./sim/build_a2min/a2min --run-nbc target/build/cvm.bin \
+        target/build/$(basename {{file}} .nix).nbc | grep -a "cycles\|phases\|profile\|\\$\|result\|error"
+
 # How many cycles does the 65816 spend on a 64x64 multiply by itself?
 # The D5 gate for ALU64, 8-bit emulation mode (target/tests/mul64_bench.s).
 bench-mul64 a="123456789" b="987654321": build-a2min (asm-test "mul64_bench")
@@ -244,6 +265,20 @@ fixtures-gc: build-a2min cvm nbc-build
     A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py --nbc {{NBC}} \
         --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
         --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress
+
+# GC stress at every k-th boundary: unlike k = 1, it leaves some stores young,
+# so it exercises the remembered set (D20).
+fixtures-gc-period k="3": build-a2min cvm nbc-build
+    A2MIN_GC_PERIOD={{k}} A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py --nbc {{NBC}} \
+        --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
+        --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress
+
+# The fixtures with a one-entry remembered set, so it fills (D20). Not under GC
+# stress, which promotes every value before it can be stored young.
+fixtures-rset: build-a2min cvm nbc-build
+    A2MIN_RSET_LIMIT=1 python3 scripts/scoreboard.py --nbc {{NBC}} \
+        --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
+        --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt
 
 # Promotion at every boundary is the default, because without it nothing on a
 # fixture is ever mature and LOOKUP is never called at all (scripts/verb-economics.py).

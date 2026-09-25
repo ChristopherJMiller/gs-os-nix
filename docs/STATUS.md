@@ -60,17 +60,25 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-The scoreboard reads **248 / 406**, and 133 of the rest are `unsupported` —
-refused by the lowering, not failed by the VM. Since the generator parses all of
-Nix (rnix), the refusals are by feature, and the histogram says what would move
-the number: path literal 35, float literal 23, `builtins` used as a value 10,
-dynamic attribute names 10, `toJSON`/`fromJSON`/`toXML` 13, then a long tail of
-single primops (`catAttrs`, `functionArgs`, `mapAttrs`, `splitVersion`,
-`hashString`, …). The 3 `error`s: two tests exhaust the 16 KB nursery (one
-building a long string, `eval-okay-tail-call-1` allocating 100 000 call
-environments — tail calls no longer grow the CPU stack, but every call still
-allocates), and `substring` coercing an int. The number rises by widening the
-lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
+The scoreboard reads **271 / 408** (2026-09-24; 0 fail, 6 error, 109
+unsupported, 22 notyetpassing), and it takes **12 seconds**: `scoreboard.py`
+runs tests in parallel and prints the errors and the slowest tests every time.
+It was 10 minutes, and 601 s of that was one test,
+`eval-okay-cycle-display-cppnix-2.13`, whose cyclic result sent a2min's printer
+on a 2⁶⁴-call walk until the 600 s timeout. The printer now prints `«repeated»`
+as Nix 2.13+ does, and that test *passes*. The default cycle budget went from
+50M to 500M, now ~2.5 s, and `eval-okay-foldlStrict` (86M cycles) passes with it.
+
+Most of the rest are `unsupported`: refused by the lowering, not failed by the
+VM. The histogram says what would move the number: float literal 23, path
+literal 16, dynamic attribute names 10, `toJSON`/`fromJSON`/`toXML` 13, then a
+long tail of single primops (`mapAttrs`, `catAttrs`, `genericClosure`,
+`functionArgs`, `groupBy`, `splitVersion`, …). The 6 `error`s: `E_NOVAR` ×4
+(`regex-match` twice, `regex-split`, `sort`: missing primops),
+`builtins-substring-coerce` (`substring` coercing an int), and
+`eval-okay-tail-call-1`, which does not halt even at 2 billion cycles. The
+number rises by widening the lowering and the VM together, one slice at a time
+(BYTECODE.md "Slice plan"):
 
 1. ~~Slice 2a: lambdas, application, `assert`~~ **done** — 17 → 37.
 2. ~~Slice 2b: strings, lists, attribute sets, primops~~ **done** — 37 → 134.
@@ -105,6 +113,42 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
    filled it exactly — and answer wrongly in silence. Now the only failure is a
    loud `E_NOMEM`, and `WINDOW_MAX` caps a single viewable object at 20 KB
    ([HEAP.md](HEAP.md) “How long a view lives”).
+   (e) ~~**the remembered set**~~ (2026-09-23, **D20**): a store into a mature
+   object used to promote the value by a whole collection, which made
+   `eval-okay-foldlStrict` quadratic. Now the young pointer is written through the
+   bus and the field recorded (256 entries, bank 5); the next collection promotes
+   it. foldlStrict at `n` = 550 went from 52 collections to 1, and `n` = 1000
+   finishes. **What I got wrong:** the set recorded *nothing* on foldlStrict — the
+   old barrier fired whenever the value was young, even for an `INT` copied into
+   the thunk by value, so most of the quadratic was a barrier with nothing to do.
+   **GC stress, as it was, never exercised the set:** promoting at every boundary
+   makes every value mature before it is stored. So the stress byte is now a
+   period (`A2MIN_GC_PERIOD=k`, collect every *k*-th boundary), and the
+   scoreboard check runs the fixtures at periods 1 and 3 and with a one-entry
+   set (`A2MIN_RSET_LIMIT=1`, so the full-set path runs). `eval-okay-remembered-set`
+   stores young pointers into promoted thunks on purpose, and
+   `checks.mutation-vm` breaks the set six ways and requires it to notice.
+   **The period mode's first run found an older bug:** empty lists and sets
+   were 4 bytes, so a collection wrote their forwarding pointer over the next
+   object's header, and `{ } == { }` came out false at periods 2, 5 and 7 (D20).
+   Fixed, with two mutations of its own. The rule in ARCHITECTURE.md and CARD-ISA.md now reads
+   *"… except through a recorded field"*, and **`MARK`/`FOLLOW` may be issued
+   only with the set empty** — one more thing card-side `MARK` must respect.
+   **Two findings from building it, not fixed:** (1) foldlStrict at `n` = 1000
+   is still 2.2× slower with the card than without (85.7M vs 38.8M cycles), and
+   it is window copies now, not collections — 4,950 copies, 238 KB; the profile's
+   top page (`$A500`, 25%) needs naming before anything is changed. The same
+   page (`$A600` after the binary grew by $100) is **49%** of a GC-stress run of
+   `eval-okay-remembered-set`, where a stress collection costs ~160K cycles. It
+   is the tail of bank 0, where the link order puts `card.c` and then the ORCA
+   runtime; naming it needs a symbol map from the linker, which the toolchain
+   does not produce yet. That is the next instrument to build. (2) **One
+   instruction that allocates more than the free nursery is `E_NOMEM`, and
+   whether it happens depends on where the nursery happens to be:** `genList 300`
+   allocates ~8 KB (a thunk per element) and fails if forced with less free,
+   because collections only run at boundaries with a 2 KB margin. A primop that
+   allocates in proportion to its input should collect before it starts, while
+   its arguments are still just stack roots.
 5. **Slice 5.** The histogram's "path literal 35" is misleading, and measuring
    it changed what this slice is. There are **45** tests whose first refusal is
    a path literal, and they split three ways:
@@ -206,6 +250,15 @@ lowering and the VM together, one slice at a time (BYTECODE.md "Slice plan"):
   `orcarun` compiles `target/tests/smoke.c`, the ORCA linker links it, `omf2bin`
   flattens it, a2min runs it, and the bytes it leaves are checked against values
   worked out by hand. The VM port is built on this, so a miscompile fails here first.
+- **`checks.quiet-clock`** — a2min clocks the card only while that can change
+  something (docs/RUNNING.md). That took the simulator from 0.4M simulated
+  cycles per second, 7× slower than the IIgs it models, to ~560× faster on
+  foldlStrict. The check runs every fixture and the M2 store
+  path with and without it (`A2MIN_EXACT_CLOCK=1`), requires byte-identical
+  output including every cycle count, and proves it catches a broken copy.
+  Measured while choosing what to optimise: an ORCA/C build of the whole VM
+  under `orcarun` takes 2.4 s, so the compiler was never the slow part. The
+  90-minute mutation runs were a2min, clocking an idle card.
 - **`checks.verb-economics`** — every verb's measured MAME cycle cost vs. its 65816
   equivalent. A verb that doesn't pay for its bus crossing gets deleted.
 - **`checks.scoreboard`** — the headline metric. Every vendored tvix test is

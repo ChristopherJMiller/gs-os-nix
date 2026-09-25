@@ -222,13 +222,23 @@ there, falls back to the CPU scan of the copy so a collision can never lose an
 attribute. This is the operation the CAM was built for. Young sets are a CPU hash
 scan.
 
-**Write barrier** (D6's rule, "a mature object never points into the nursery"): the
-places the VM writes into an existing object are `ENV_SET` (a binding into its
-`let`'s environment, which may have been promoted while an earlier initialiser
-allocated), the in-place update after forcing a thunk (and the blackholing before),
-and the visit mark of a deep force. When the target is mature, the value being
-stored is promoted first — a collection, with the value on the stack as its root —
-and the store goes to the card through the address register. The primop loops that
+**Write barrier** (D6's rule as weakened by D20, "a mature object never points into
+the nursery except through a recorded field"): the places the VM writes into an
+existing object are `ENV_SET` (a binding into its `let`'s environment, which may
+have been promoted while an earlier initialiser allocated), the in-place update
+after forcing a thunk (and the blackholing before), and the visit mark of a deep
+force. When the target is mature, the store goes to the card through the address
+register, and if what it writes is a young pointer, the field — (object, offset) —
+goes in the **remembered set** (`gc.c`, 256 entries in bank 5 above the window
+ring). The test is on what is *written*: a thunk forced to an `INT`, `BOOL` or
+`NULL` copies the value in and stores no pointer at all, and a closure copied over
+a thunk writes its environment, which can be young even when the closure is not.
+The next collection reads each recorded field back, re-checks against the
+object's header that the offset is still a pointer field (a thunk can be updated
+twice, and an `INT`'s high word can look exactly like a young pointer), evacuates
+it as a root, and after promotion writes the card address over it and drops the
+field's cached window. A **full** set is the old behaviour: a collection with the
+value on the stack as its root, then the store. The primop loops that
 call back into Nix (`filter`, `partition`, `concatMap`, `listToAttrs`, `toString`
 on a list) would be a fourth place, because the container they fill could be
 promoted by a callback mid-loop; they collect their results on the value stack
@@ -244,7 +254,10 @@ word 0 of a closure is opaque. Two more things become the card collector's
 problem the day it compacts: the window table caches copies by card address, so
 it must be flushed when addresses move (today a `RESERVE` never reuses one), and
 an object promoted mid-deep-force carries the `aux2` visit mark, which the
-tracer must mask out of the count. Recorded here so none of it can be forgotten.
+tracer must mask out of the count. And since D20, a mature field may hold a young
+pointer until the next nursery collection: `MARK` (and `FOLLOW`) may only be
+issued with the remembered set empty, i.e. straight after a nursery collection.
+Recorded here so none of it can be forgotten.
 
 
 ### Measured: the barrier makes a promoting workload quadratic
@@ -278,6 +291,29 @@ only. The invariant would weaken to *a mature object never points into the
 nursery except through a recorded field, which the card must not trace*, and
 that is safe only while the card's collector does not run. It has to be resolved
 before `MARK` does, like the `THUNK` word-0 discrepancy below.
+
+**Built (D20), and re-measured** with the same counters:
+
+| `n` | collections | from a full set | fields remembered | cycles | result |
+|---:|---:|---:|---:|---:|---|
+| 550 | **1** (was 52) | 0 | 0 | 20.2M (was 38.6M) | 151525 |
+| 650 | **1** (was 101) | 0 | 0 | 32.5M (did not finish in 60M) | 211575 |
+| 1000 | **1** | 0 | 0 | 85.7M | 500500 |
+| 1000, no card | 3 | 0 | 0 | 38.8M | 500500 |
+
+Collections collapsed to memory pressure. But **the set recorded nothing** on
+this workload, which says the account above was half wrong: forcing these
+thunks yields `INT`s, which are copied into the thunk and put no pointer on the
+card. The old barrier promoted the value whenever the value was young, whether
+or not a pointer was being stored — so most of the quadratic was a barrier firing
+on stores that needed nothing. Testing what is written fixed that; the set
+covers what remains (lists, strings and closures), which
+`tests/fixtures/eval-okay-remembered-set` exercises.
+
+What is left of the gap to no card (85.7M against 38.8M) is not collections: one
+collection, then 4,950 window copies moving 238 KB — every force of a promoted
+element thunk reads it through the bus, and the profile's top page ($A500, 25%)
+is to be identified before anything is changed (D19).
 
 ## What the collector traces
 

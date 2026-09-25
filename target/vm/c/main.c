@@ -57,7 +57,8 @@ void vm_entry(void)
     str_success = STATIC_PTR(&success_s);
     str_value   = STATIC_PTR(&value_s);
     for (i = 0; i < STATS_N; ++i) STAT(i) = 0;
-    vsp = rsp = fstack_n = catch_n = 0;
+    vsp = rsp = fstack_n = catch_n = rs_n = 0;
+    gc_tick = 0;
     env = 0;
     gc_water = nfree = 0x0010;                  /* offset 0 stays unallocated */
     prims_init();

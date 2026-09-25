@@ -176,6 +176,27 @@
               --expected tests/corpus/expected-pass.txt --gc-stress \
               | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
 
+            # And collecting at every 3rd boundary instead (A2MIN_GC_PERIOD): a
+            # collection at EVERY boundary promotes each value before it can be
+            # stored, so it never exercises the remembered set (D20); a period
+            # leaves some stores young, including into a promoted `let`.
+            A2MIN_GC_PERIOD=3 A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py \
+              --nbc nbc --a2min ./build/a2min --vm "$vm" \
+              --corpus tests/fixtures --build build/gc3 \
+              --expected tests/corpus/expected-pass.txt --gc-stress \
+              | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
+
+            # Once more with the remembered set shrunk to one entry (D20), so a
+            # second young store finds it full and collects mid-instruction -- a
+            # path the fixtures never take otherwise. A normal run, not GC
+            # stress: promoting at every boundary makes every value mature
+            # before it is stored, so under stress the set is never used.
+            A2MIN_RSET_LIMIT=1 python3 scripts/scoreboard.py \
+              --nbc nbc --a2min ./build/a2min --vm "$vm" \
+              --corpus tests/fixtures --build build/rset \
+              --expected tests/corpus/expected-pass.txt \
+              | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
+
             # The ratchet must be able to fail: a listed test that no longer
             # passes is a regression, and the run must say so and exit non-zero.
             # Plant one by giving a real fixture the wrong expected value.
@@ -298,6 +319,34 @@
             grep -q "M2 PASS" "$out"
           '';
 
+        # a2min clocks the card only while that can change something (the quiet
+        # clock, docs/RUNNING.md). Prove it changes no output: every fixture,
+        # the card verbs on, and the M2 run, against A2MIN_EXACT_CLOCK=1, byte for
+        # byte -- then prove the comparison catches a broken quiet clock.
+        quiet-clock = pkgs.runCommandCC "check-quiet-clock"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 pkgs.cc65 ours.nbc ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/target ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            mkdir -p target/build
+            ca65 --cpu 65816 -D NO_PRINT \
+              -o target/build/demo.o target/tests/storepath_demo.s
+            ld65 -C target/tests/apple2.cfg \
+              -o target/build/storepath_demo_headless.bin target/build/demo.o
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            python3 scripts/scoreboard.py --nbc nbc --a2min ./build/a2min \
+              --vm ${ours.cvm}/cvm.bin --corpus tests/fixtures --build build/nbc \
+              --expected tests/corpus/expected-pass.txt > /dev/null
+            ./scripts/quiet-clock.sh ./build/a2min ${ours.cvm}/cvm.bin build/nbc \
+              target/build/storepath_demo_headless.bin tests/vectors/l1.txt | tee "$out"
+            grep -q "QUIET CLOCK OK" "$out"
+          '';
+
         # D6: the generational boundary is the slot connector. Runs the CPU-side
         # nursery (target/heap/nursery.s) on the 65816 harness, verifies the promoted
         # graph arrived on the card intact with every young pointer translated, and
@@ -357,6 +406,25 @@
             chmod -R +w .
             patchShebangs scripts
             ./scripts/mutation-a2min.sh | tee "$out"
+            grep -q "MUTATION PASS" "$out"
+          '';
+
+        # And the VM's collector (DECISIONS.md D20): break the remembered set
+        # six ways and the minimum object size two, rebuild the VM with ORCA/C
+        # each time, and require eval-okay-remembered-set and
+        # eval-okay-deep-equality to catch every one.
+        mutation-vm = pkgs.runCommandCC "check-mutation-vm"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ours.nbc ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/target ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            ./scripts/mutation-vm.sh ./build/a2min nbc | tee "$out"
             grep -q "MUTATION PASS" "$out"
           '';
 

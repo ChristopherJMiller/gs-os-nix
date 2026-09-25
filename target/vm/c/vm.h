@@ -45,14 +45,15 @@
  * there is nothing to trade away. */
 #define STAT(i)          (*(volatile uint32_t *)(STATS_ADDR + 4UL * (i)))
 #define ST_COLLECT       STAT(0)    /* collections */
-#define ST_BARRIER       STAT(1)    /* of those, forced by a write barrier */
+#define ST_BARRIER       STAT(1)    /* of those, forced by a FULL remembered set */
 #define ST_PROMOTED      STAT(2)    /* bytes streamed to the card */
 #define ST_VIEWS         STAT(3)    /* mature reads that copied (cache misses) */
 #define ST_VIEW_BYTES    STAT(4)    /* bytes those copies moved */
 #define ST_TURNOVER      STAT(5)    /* window-ring turnovers */
 #define ST_FORCES        STAT(6)    /* thunks forced */
+#define ST_REMEMBERED    STAT(7)    /* young pointers stored into mature fields */
 
-/* The two harness flags. They were at $0BF0, which is inside the C stack's
+/* The harness flags. The first two were at $0BF0, which is inside the C stack's
  * range ($0400..$1FFF): a deep enough recursion would have overwritten them,
  * silently turning GC stress off or a masked verb back on -- the second of
  * which would quietly corrupt a measurement. $0330 is below the stack floor. */
@@ -60,6 +61,9 @@
 #define VERB_MASK_ADDR   0x0331UL   /* a2min sets it: verbs to refuse and do on the CPU
                                        instead, so checks.verb-economics can price each
                                        one on a real program (docs/CARD-ISA.md) */
+#define RSET_LIMIT_ADDR  0x0332UL   /* a2min sets it: shrink the remembered set to this
+                                       many entries (0 = RSET_N), so the tests can make
+                                       it fill -- the one path a normal run never takes */
 #define VERB_NO_LOOKUP   0x01U
 #define VERB_NO_ALU64    0x02U
 #define verb_off(bit)    (*(volatile uint8_t *)VERB_MASK_ADDR & (bit))
@@ -82,6 +86,11 @@
                                        WINDOW_MAX + change any one of them can hold live
                                        at once, so the ring NEVER wraps mid-instruction
                                        and no live view is ever overwritten (data.c) */
+
+/* The remembered set (gc.c): the 4 KB of bank 5 above the window ring. An
+ * entry is 10 bytes, so 256 of them take 2.5 KB. */
+#define RSET_BASE        0x0005F000UL
+#define RSET_N           256
 
 #define GC_MARGIN        0x0800U    /* collect when less than this is free */
 
@@ -227,9 +236,11 @@ extern uint16_t win_ring;
 void   windows_turnover(void);
 #define windows_maybe() do { if (win_ring > WINDOW_FLOOR) windows_turnover(); } while (0)
 uint16_t obj_size(const obj_t *hdr);    /* from a header (gc.c) */
-/* The write barrier (HEAP.md): a mature object never points into the nursery.
- * Stores into a mature object go through these, which promote the value first
- * (a collection) and write through the bus. */
+/* The write barrier (HEAP.md): a mature object never points into the nursery
+ * EXCEPT through a field in the remembered set. Stores into a mature object go
+ * through these: they write through the bus, and a young pointer stored that
+ * way is recorded (gc.c) for the next collection to promote and rewrite. Only
+ * when the set is full does a store cost a collection. */
 void   store_field(obj_t *container, uint16_t off, obj_t *value);
 void   store_byte(obj_t *container, uint16_t off, uint8_t v);
 /* Forcing and popping: the ORIGINAL pointer (to store) and its view (to read). */
@@ -274,6 +285,18 @@ void stack_check(void);
 /* --- gc.c: the nursery collector --------------------------------------------------- */
 void gc_maybe(void);
 void gc_collect(void);
+/* Collect at this boundary? Normally for nursery pressure. Under GC stress the
+ * byte at GC_STRESS_ADDR is a period k: every k-th boundary. k = 1 promotes
+ * every value before it can ever be stored young, so it never exercises the
+ * remembered set; k = 2 or 3 leaves values young across some stores (D20). */
+extern uint8_t gc_tick;
+#define gc_due() (*(volatile uint8_t *)GC_STRESS_ADDR \
+    ? (++gc_tick >= *(volatile uint8_t *)GC_STRESS_ADDR && (gc_tick = 0, nfree != gc_water)) \
+    : nfree >= NURSERY_END - GC_MARGIN)
+extern uint16_t rs_n;               /* entries in the remembered set */
+#define rs_full() (rs_n >= (*(volatile uint8_t *)RSET_LIMIT_ADDR ? \
+                            *(volatile uint8_t *)RSET_LIMIT_ADDR : RSET_N))
+void remember(obj_t *container, uint16_t off);   /* the field now holds a young pointer */
 
 /* --- card.c: the a2nix card -------------------------------------------------------- */
 void card_find(void);

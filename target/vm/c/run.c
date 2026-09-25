@@ -37,6 +37,19 @@ void stack_check(void)
 }
 
 /* --- forcing ------------------------------------------------------------------------- */
+/* The one pointer an in-place update of a thunk with the value v (view vv)
+ * writes, and its offset: the value, when the thunk becomes an INDIRECT to it;
+ * the environment, when a closure is copied over the thunk; 0 when the value
+ * is copied and holds no pointer. Mirrors force_thunk's switch below. */
+static obj_t *update_ptr(obj_t *vv, obj_t *v, uint16_t *off)
+{
+    switch (vv->tag) {
+    case T_INT: case T_BOOL: case T_NULL: return 0;
+    case T_LAMBDA: case T_THUNK: *off = 8; return CL_ENV(vv);
+    default: *off = 4; return v;
+    }
+}
+
 /* The thunk on top of the stack: blackhole it, remember it on FSTACK (a caught
  * throw un-blackholes it), run its body with its captured environment, then
  * update it in place with the value -- a value of 12 bytes or fewer overwrites
@@ -44,7 +57,8 @@ void stack_check(void)
  * top is the thunk's afterwards (it may have moved during the body). */
 static void force_thunk(void)
 {
-    obj_t *th = peek(), *tv, *v, *vv;
+    obj_t *th = peek(), *tv, *v, *vv, *y;
+    uint16_t yoff;
     const uint8_t *spc = pc;
     ++ST_FORCES;
     obj_t **sctab = ctab;
@@ -65,10 +79,19 @@ static void force_thunk(void)
     th = fstack[--fstack_n];                    /* the thunk, wherever it is now */
     v = pop();
     if (IS_MATURE(th)) {
-        /* The update goes through the bus, so the value must be mature first:
-         * the write barrier, a collection with the value as a root. */
-        if (IS_YOUNG(v)) { ++ST_BARRIER; push(v); gc_collect(); v = pop(); }
+        /* The update goes through the bus: the write barrier. It can put one
+         * pointer on the card -- the value itself, for an INDIRECT, or the
+         * environment of a closure copied in place -- and if that pointer is
+         * young the field goes in the remembered set. A mature v can carry a
+         * young environment too (it may itself be a thunk updated this way), so
+         * the test is on what is written, not on v. Only a full set collects. */
         vv = deref(v);
+        y = update_ptr(vv, v, &yoff);
+        if (IS_YOUNG(y) && rs_full()) {
+            ++ST_BARRIER; push(v); gc_collect(); v = pop();
+            vv = deref(v);                      /* now nothing it carries is young */
+            y = update_ptr(vv, v, &yoff);
+        }
         switch (vv->tag) {
         case T_INT: case T_LAMBDA: case T_THUNK:
             memcpy(buf, vv, 12); card_write_at(PBITS(th), buf, 12); break;
@@ -78,6 +101,7 @@ static void force_thunk(void)
             SET_HDR((obj_t *)buf, T_INDIRECT, 0); buf[1] = PBITS(v);
             card_write_at(PBITS(th), buf, 8);
         }
+        if (IS_YOUNG(y)) remember(th, yoff);
         windows_invalidate(th);
     } else {
         vv = deref(v);
@@ -415,7 +439,7 @@ void run(void)
     obj_t *a, *b, *o, *ao, *bo, *sv;
     for (;;) {
         /* the only place a collection can happen (gc_maybe, inlined) */
-        if (*(volatile uint8_t *)GC_STRESS_ADDR ? nfree != gc_water : nfree >= NURSERY_END - GC_MARGIN)
+        if (gc_due())
             gc_collect();
         windows_maybe();        /* and the only place the window ring may turn over */
         op = fetch8();

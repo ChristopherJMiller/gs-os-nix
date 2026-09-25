@@ -69,10 +69,15 @@ set by the workload's survival rate, not by the mechanism; the mechanism's cost 
 
 Three rules make this work, and they are load-bearing:
 
-1. **A mature object never points into the nursery.** The card cannot dereference a
-   CPU-RAM address, so an old→young pointer would be meaningless to it anyway.
-   Anything stored into a mature object is promoted first. That *is* the write
-   barrier; there is no remembered set.
+1. **A mature object never points into the nursery, except through a recorded
+   field, which the card must not trace.** The card cannot dereference a CPU-RAM
+   address, so an old→young pointer is meaningless to it. Until D20 this rule was
+   absolute — anything stored into a mature object was promoted first, by a whole
+   collection — and that made promoting workloads quadratic. Now the write
+   barrier stores the young pointer through the bus and records the field in a
+   bounded **remembered set**; the next collection promotes it and rewrites the
+   field. Sound only while nothing card-side chases pointers: the set must be
+   empty whenever the CPU issues `MARK` or `FOLLOW` ([DECISIONS.md](DECISIONS.md) D20).
 2. **Young pointers carry bit 31.** The card's 1 MB heap never uses it, so the two
    address spaces cannot be confused.
 3. **Promotion translates by a constant.** Cheney lays survivors out contiguously

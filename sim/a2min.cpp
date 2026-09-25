@@ -45,6 +45,7 @@
 // that the harness could pass as a cycle-exact emulator.
 
 #include "Va2nix_card.h"
+#include "Va2nix_card___024root.h"   // the model's whole state, for the quiet-clock test
 #include "verilated.h"
 
 #include "cardbus.h"      // tag constants, for verifying the promoted graph
@@ -60,6 +61,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -102,8 +104,34 @@ void tick() {
     ++card_cycles;
 }
 
+// The card is clocked only while clocking it can change something.
+//
+// Measured (perf, 2026-09-24): with the card clocked 18 times per CPU cycle,
+// ~all of a2min's time was the Verilated model -- 0.4M simulated cycles per
+// second, 7x slower than the machine it models -- while the card sat idle
+// between verbs almost all the time. So: a Verilated model is deterministic,
+// and if one full tick leaves every byte of its state unchanged and writes
+// nothing to the heap, every later tick with the same inputs does the same.
+// From then until an input changes (card_read, card_write, bring_up_card
+// clear the flag) the ticks are counted, not simulated. That is exact by
+// construction -- it needs no knowledge of which engines the RTL has or when
+// each is idle -- and A2MIN_EXACT_CLOCK=1 turns it off, so any output can be
+// compared with and without.
+bool card_quiet = false;
+bool exact_clock = false;
+std::vector<uint8_t> card_snap;
+
 void advance(int n) {
-    while (n-- > 0) tick();
+    const std::size_t sz = sizeof(*card->rootp);
+    const auto *state = reinterpret_cast<const uint8_t *>(card->rootp);
+    while (n > 0) {
+        if (card_quiet && !exact_clock) { card_cycles += static_cast<uint64_t>(n); return; }
+        if (card_snap.size() != sz) card_snap.resize(sz);
+        std::memcpy(card_snap.data(), state, sz);
+        tick();
+        --n;
+        card_quiet = !card->mem_we && std::memcmp(card_snap.data(), state, sz) == 0;
+    }
 }
 
 [[noreturn]] void die(const char *what, uint32_t where) {
@@ -123,6 +151,7 @@ uint8_t card_read(uint8_t off) {
     const uint8_t v = card->c0n_rdata;
     tick();                               // commit the auto-increment
     card->c0n_read = 0;
+    card_quiet = false;                   // an input changed
     advance(CARD_CYCLES_PER_SLOT_ACCESS - 1);
     ++slot_accesses;
     return v;
@@ -135,6 +164,7 @@ void card_write(uint8_t off, uint8_t v) {
     card->c0n_read  = 0;
     tick();
     card->c0n_write = 0;
+    card_quiet = false;                   // an input changed
     advance(CARD_CYCLES_PER_SLOT_ACCESS - 1);
     ++slot_accesses;
 }
@@ -232,6 +262,8 @@ void bring_up_card() {
     for (int i = 0; i < 8; ++i) tick();
     card->rst_n = 1;
     tick();
+    card_quiet = false;
+    if (const char *e = std::getenv("A2MIN_EXACT_CLOCK")) exact_clock = (e[0] == '1');
 }
 
 // RTS from the entry point returns to HALT_ADDR, so seed the stack accordingly, then
@@ -248,7 +280,12 @@ bool profile_on = false;
 std::uint64_t pc_pages[256];      // bank-0 page (pc >> 8) -> instructions seen
 std::uint64_t pc_other = 0;       // anything outside bank 0
 
-bool run_to_halt(uint64_t budget = 50'000'000) {
+// The default budget is a hang detector. It was 50M cycles when the card was
+// clocked every cycle and 50M took two minutes; with the quiet clock it takes
+// ~0.3 s, and eval-okay-foldlStrict -- which needs 86M -- was scored as an
+// error for no reason but the budget. 500M costs ~2.5 s on a program that
+// never halts.
+bool run_to_halt(uint64_t budget = 500'000'000) {
     // A2MIN_BUDGET overrides the cycle budget: GC-stress runs of the C VM need more.
     if (const char *b = std::getenv("A2MIN_BUDGET")) budget = std::strtoull(b, nullptr, 0);
     if (const char *p = std::getenv("A2MIN_PROFILE")) profile_on = (p[0] == '1');
@@ -419,7 +456,18 @@ std::string nix_string_bytes(uint32_t ptr) {
 // Printing happens after errors too, when a container may still carry the VM's
 // transient marks in aux bits 22-23 (HEAP.md) -- mask them, and never index
 // past memory on a corrupt pointer.
+//
+// A non-empty list or set printed once is «repeated» ever after, as Nix 2.13+
+// prints it (printValue's `seen`, one set for the whole value). Without that,
+// a set with two self-references is a walk of 2^64 calls: the depth limit
+// bounds its depth, not its breadth, and eval-okay-cycle-display-cppnix-2.13
+// held the scoreboard for its whole 600 s timeout -- 99% of a 10-minute run.
+std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &seen);
 std::string fmt_value(uint32_t ptr, int depth) {
+    std::unordered_set<uint32_t> seen;
+    return fmt_value(ptr, depth, seen);
+}
+std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &seen) {
     if (depth > 64) return "<DEEP>";
     if (ptr == 0) return "<NULLPTR>";
     const uint8_t tag = mem8(ptr, 0);
@@ -437,24 +485,26 @@ std::string fmt_value(uint32_t ptr, int depth) {
         case TAG_PATH: return nix_string_bytes(ptr);
         case TAG_LIST: {
             if (aux == 0) return "[ ]";
+            if (!seen.insert(ptr).second) return "«repeated»";
             std::string s = "[";
-            for (uint32_t i = 0; i < aux; ++i) s += " " + fmt_value(mem32(ptr, 4 + 4 * i), depth + 1);
+            for (uint32_t i = 0; i < aux; ++i) s += " " + fmt_value(mem32(ptr, 4 + 4 * i), depth + 1, seen);
             return s + " ]";
         }
         case TAG_ATTRS: {
             if (aux == 0) return "{ }";
+            if (!seen.insert(ptr).second) return "«repeated»";
             std::string s = "{";
             for (uint32_t i = 0; i < aux; ++i) {
                 const uint32_t np = mem32(ptr, 4 + 8 * aux + 4 * i);
                 const std::string name = np ? nix_string_bytes(np) : "<NULLPTR>";
                 s += " " + (is_nix_identifier(name) ? name : quote_nix(name)) + " = " +
-                     fmt_value(mem32(ptr, 4 + 4 * aux + 4 * i), depth + 1) + ";";
+                     fmt_value(mem32(ptr, 4 + 4 * aux + 4 * i), depth + 1, seen) + ";";
             }
             return s + " }";
         }
         case TAG_THUNK: return "<CODE>";
         case TAG_LAMBDA: return "<LAMBDA>";
-        case TAG_INDIRECT: return fmt_value(mem32(ptr, 4), depth + 1);
+        case TAG_INDIRECT: return fmt_value(mem32(ptr, 4), depth + 1, seen);
         case TAG_BLACKHOLE: return "<CYCLE>";
         default: { char b[16]; std::snprintf(b, sizeof b, "<?%02X>", tag); return b; }
     }
@@ -473,7 +523,15 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     if (!load_image(vm_path)) return 2;
     // The VM collects at every bytecode boundary when this byte is set (gc.c),
     // which turns every fixture into a collector test.
-    ram[0x0330] = gc_stress ? 1 : 0;
+    // A2MIN_GC_PERIOD=k makes that every k-th boundary instead (vm.h gc_due):
+    // with k = 1 every value is promoted before it can be stored young, so the
+    // remembered set is never used; k = 2 or 3 leaves some stores young (D20).
+    unsigned period = 1;
+    if (const char *k = std::getenv("A2MIN_GC_PERIOD")) {
+        period = static_cast<unsigned>(std::strtoul(k, nullptr, 0));
+        if (period < 1 || period > 255) { std::fprintf(stderr, "A2MIN_GC_PERIOD must be 1..255\n"); return 2; }
+    }
+    ram[0x0330] = gc_stress ? static_cast<uint8_t>(period) : 0;
     // A2MIN_VERB_MASK makes the VM refuse card verbs and do them on the CPU
     // instead (vm.h VERB_*), which is how checks.verb-economics prices a verb on
     // a real program; A2MIN_NO_CARD hides the card altogether, so card_find()
@@ -482,6 +540,11 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         ram[0x0331] = static_cast<uint8_t>(std::strtoul(m, nullptr, 0));
     if (const char *n = std::getenv("A2MIN_NO_CARD"))
         if (n[0] == '1') card_slot = -1;        // no slot decodes, so the scan finds nothing
+    // A2MIN_RSET_LIMIT shrinks the VM's remembered set (vm.h RSET_LIMIT_ADDR) so
+    // that it fills: the full-set path collects mid-instruction, which a normal
+    // run of the fixtures never reaches, so without this it would go untested.
+    if (const char *r = std::getenv("A2MIN_RSET_LIMIT"))
+        ram[0x0332] = static_cast<uint8_t>(std::strtoul(r, nullptr, 0));
     {
         std::ifstream f(nbc_path, std::ios::binary);
         if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }
@@ -508,15 +571,16 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     {
         const uint32_t c = ram32(STATS), b = ram32(STATS + 4), pb = ram32(STATS + 8),
                        v = ram32(STATS + 12), vb = ram32(STATS + 16),
-                       to = ram32(STATS + 20), f = ram32(STATS + 24);
+                       to = ram32(STATS + 20), f = ram32(STATS + 24),
+                       rs = ram32(STATS + 28);
         // Printed unconditionally: a run stopped by the budget is the case
         // these exist for, and the counters are live at STATS so they are valid
         // whether or not the VM reached its exit.
         if (true)
-            std::printf("  phases: %u collections (%u from the write barrier), "
+            std::printf("  phases: %u collections (%u from a full remembered set), "
                         "%u bytes promoted; %u window copies moving %u bytes, "
-                        "%u ring turnovers; %u thunks forced\n",
-                        c, b, pb, v, vb, to, f);
+                        "%u ring turnovers; %u thunks forced; %u fields remembered\n",
+                        c, b, pb, v, vb, to, f, rs);
     }
     if (profile_on) {
         // Top pages by instruction count, so a routine can be identified from the

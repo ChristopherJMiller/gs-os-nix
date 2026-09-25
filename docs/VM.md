@@ -34,7 +34,14 @@ bank 3  the .nbc image               $030000, up to 64 KB (a2min --run-nbc puts 
 bank 4+ further code segments        ORCA/C `segment "prims";` etc., placed by omf2bin;
                                      the interpreter core stays in bank 0
 bank 5  WINDOWS   $050000-$05EFFF   the 60 KB copy ring: views of mature objects
+        RSET      $05F000-$05F9FF   the remembered set: 256 × (object, offset, scratch)
 ```
+
+`$0332` is a third harness flag: `A2MIN_RSET_LIMIT` shrinks the remembered set
+so the tests can make it fill. And the GC-stress byte at `$0330` is a period,
+not a switch: `A2MIN_GC_PERIOD=k` collects at every *k*-th boundary. At `k` = 1
+every value is promoted before it can be stored young, so the remembered set
+is never used; `k` = 2 or 3 is what tests it (DECISIONS.md D20).
 
 Bank 0's 40 KB were never going to hold the parser and the store layers, so
 code lives in load segments from the start: `prims.c` is `segment "prims"` and
@@ -100,9 +107,11 @@ and the two spaces" has the rules; this is where they land in the C):
   round (`prims.c` `RELEM`). See HEAP.md “How long a view lives” for why the
   alternative — wrapping whenever the ring filled — was a silent wrong answer.
 - **Writing:** `store_field()` / `store_byte()` are the write barrier: a store
-  into a mature object promotes the value first (a collection with the value on
-  the stack as its root) and goes through the bus; the window copy is dropped.
-  Forcing a mature thunk blackholes it on the card and writes the update there.
+  into a mature object goes through the bus and, if it wrote a young pointer,
+  records the field in the remembered set (`gc.c remember`, D20); the window
+  copy is dropped. Forcing a mature thunk blackholes it on the card and writes
+  the update there, recording the one pointer the update can carry. Only a full
+  set costs a collection (with the value on the stack as its root).
 - **Searching:** `find_attr()` on a mature set is the card's `LOOKUP` verb, the
   name compare, and a CPU scan of the copy if a hash collision misled the CAM.
 
