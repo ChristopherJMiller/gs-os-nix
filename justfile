@@ -182,8 +182,8 @@ quiet-clock: build-a2min cvm nbc-build asm-headless
     ./scripts/quiet-clock.sh ./sim/build_a2min/a2min target/build/cvm.bin \
         target/build/nbc-fixtures target/build/storepath_demo_headless.bin {{VECTORS}}
 
-# Prove the collector fixtures can fail: break the remembered set six ways and
-# the minimum object size two (D20). Mutates a copy, never the tree.
+# Prove the collector fixtures can fail: break the remembered set six ways, the
+# minimum object size two and the nursery reserves four. Mutates a copy, never the tree.
 mutation-vm: build-a2min nbc-build
     ./scripts/mutation-vm.sh ./sim/build_a2min/a2min {{NBC}}
 
@@ -259,19 +259,25 @@ fixtures *flags: build-a2min cvm nbc-build
         --vm target/build/cvm.bin --corpus tests/fixtures \
         --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt {{flags}}
 
-# With a collection at every boundary the tail-call fixture needs ~90M cycles
-# (docs/VM.md), so the budget is raised for this run only.
+# With a collection at every boundary the slowest fixture needs ~290M cycles,
+# within the default 500M budget.
 fixtures-gc: build-a2min cvm nbc-build
-    A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py --nbc {{NBC}} \
+    python3 scripts/scoreboard.py --nbc {{NBC}} \
         --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
         --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress
 
 # GC stress at every k-th boundary: unlike k = 1, it leaves some stores young,
 # so it exercises the remembered set (D20).
 fixtures-gc-period k="3": build-a2min cvm nbc-build
-    A2MIN_GC_PERIOD={{k}} A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py --nbc {{NBC}} \
+    A2MIN_GC_PERIOD={{k}} python3 scripts/scoreboard.py --nbc {{NBC}} \
         --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
         --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress
+
+# The fixtures with every nursery_reserve() collecting, needed or not (vm.h).
+fixtures-reserve: build-a2min cvm nbc-build
+    A2MIN_RESERVE_STRESS=1 python3 scripts/scoreboard.py --nbc {{NBC}} \
+        --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
+        --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt
 
 # The fixtures with a one-entry remembered set, so it fills (D20). Not under GC
 # stress, which promotes every value before it can be stored young.

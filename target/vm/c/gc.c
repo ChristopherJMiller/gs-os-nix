@@ -104,6 +104,31 @@ void gc_maybe(void)
     if (gc_due()) gc_collect();
 }
 
+/* vm.h explains when this may be called. Under A2MIN_RESERVE_STRESS it
+ * collects every time (if anything is young), which is what proves each call
+ * site holds nothing live in a C local: one that did would read a stale
+ * nursery address after this, and answer wrongly. */
+int nursery_reserve(uint16_t bytes)
+{
+    int collected = 0;
+    if (*(volatile uint8_t *)RESERVE_STRESS_ADDR) {
+        if (nfree != gc_water) { gc_collect(); collected = 1; }
+    } else if ((uint16_t)(NURSERY_END - nfree) >= bytes) {
+        return 0;
+    } else {
+        gc_collect();
+        collected = 1;
+    }
+    if ((uint16_t)(NURSERY_END - nfree) < bytes) nomem();
+    return collected;
+}
+
+int nursery_reserve_n(uint16_t n, uint16_t per, uint16_t fixed)
+{
+    if (per && n > (uint16_t)(0xFFFFU - fixed) / per) nomem();   /* more than a bank */
+    return nursery_reserve((uint16_t)(fixed + n * per));
+}
+
 /* The size in bytes of an object from its header. Marks in aux2 are ignored.
  *
  * Never less than 8 (HEAP.md "Alignment and minimum size"): evac() writes the
@@ -243,6 +268,13 @@ void gc_collect(void)
          * is mature, so the remembered set is empty. */
         memcpy(YOUNG_PTR(gc_water), STAGE_AT(gc_water), (uint16_t)(gfree - gc_water));
         nfree = gfree;
+        /* The overhead limit: live data has filled the nursery. Carrying on
+         * would collect every few KB, each collection copying all of it --
+         * eval-okay-big-operations ran for billions of cycles that way, 58 KB
+         * live and ~6 KB freed a time -- which looks exactly like a hang. A
+         * loud E_NOMEM is the honest answer for a 64 KB heap. With a card the
+         * nursery is empty after every collection, so this never fires. */
+        if ((uint16_t)(NURSERY_END - nfree) < NURSERY_LOW) nomem();
         return;
     }
     /* step C: promote. RESERVE the block, translate every pointer field in the

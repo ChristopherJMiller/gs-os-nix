@@ -3,6 +3,7 @@
 fixtures/eval-okay-assert
 fixtures/eval-okay-attr-builtins
 fixtures/eval-okay-attrs
+fixtures/eval-okay-big-operations
 fixtures/eval-okay-bool-ops
 fixtures/eval-okay-carry-chain
 fixtures/eval-okay-closure-capture
@@ -38,6 +39,7 @@ fixtures/eval-okay-strings
 fixtures/eval-okay-tail-call
 fixtures/eval-okay-thunk-chain
 fixtures/eval-okay-tostring-int64
+fixtures/eval-okay-tostring-widths
 fixtures/eval-okay-tryeval
 fixtures/eval-okay-tryeval-restore
 fixtures/eval-okay-with

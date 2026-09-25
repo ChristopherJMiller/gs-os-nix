@@ -160,6 +160,16 @@ void force_two(obj_t **a, obj_t **b)
     obj_t *ao, *bo;
     force_two_orig(a, b, &ao, &bo);
 }
+/* force_two's forcing, in its order, but both values STAY on the stack --
+ * still roots -- so an operation that allocates in proportion to them can
+ * nursery_reserve() before it pops them. The caller drops them (vsp -= 2). */
+void view_two(obj_t **a, obj_t **b)
+{
+    force_top();
+    force_slot(2);
+    *b = deref(vstack[vsp - 1]);
+    *a = deref(vstack[vsp - 2]);
+}
 
 /* --- calls ------------------------------------------------------------------------ */
 /* f and its argument (on top) -> pc/ctab/env of the callee, both popped. The
@@ -393,6 +403,7 @@ static void interpolate(uint16_t n)
         if ((uint16_t)(len + AUX16(s)) < len) nomem();
         len += AUX16(s);
     }
+    nursery_reserve_n(1, round4(len), 8);       /* the parts are on the stack; the copy loop re-derefs */
     o = str_alloc(len);
     len = 0;
     for (i = 0; i < n; ++i) {
@@ -411,11 +422,15 @@ void op_arith(uint16_t op)
     obj_t *a, *b;
     switch (op) {
     case OP_ADD:                                /* two INTs add, two STRINGs concatenate */
-        force_two(&a, &b);
+        view_two(&a, &b);                       /* both still on the stack: see below */
         if (a->tag == T_STRING) {
             need(b, T_STRING);
+            if ((uint16_t)(AUX16(a) + AUX16(b)) < AUX16(a)) nomem();
+            if (nursery_reserve_n(1, round4(AUX16(a) + AUX16(b)), 8)) view_two(&a, &b);
+            vsp -= 2;
             push(str_concat(a, b));
         } else {
+            vsp -= 2;
             need(a, T_INT); need(b, T_INT);
             push(new_int(INTVAL(a) + INTVAL(b)));
         }
@@ -494,16 +509,19 @@ void run(void)
         /* --- lists --- */
         case OP_LIST:                           /* the n values on top, in push order */
             n = fetch16();
+            nursery_reserve_n(n, 4, 4);         /* the values are on the stack: roots */
             o = list_alloc(n);
             vsp -= n;
             memcpy(ELEMS(o), &vstack[vsp], 4 * n);
             push(o);
             break;
         case OP_CONCAT:
-            force_two(&a, &b);
+            view_two(&a, &b);                   /* operands stay rooted for the reserve */
             need(a, T_LIST); need(b, T_LIST);
             n = AUX16(a); i = AUX16(b);
             if ((uint16_t)(n + i) < n) nomem();
+            if (nursery_reserve_n(n + i, 4, 4)) view_two(&a, &b);
+            vsp -= 2;
             o = list_alloc(n + i);
             memcpy(ELEMS(o), ELEMS(a), 4 * n);
             memcpy(ELEMS(o) + n, ELEMS(b), 4 * i);
@@ -513,6 +531,7 @@ void run(void)
         /* --- attribute sets --- */
         case OP_ATTRS:                          /* n (name, value) pairs, names sorted */
             n = fetch16();
+            nursery_reserve_n(n, 12, 4);        /* the pairs are on the stack: roots */
             o = attrs_alloc(n);
             ix = vsp - 2 * n;
             for (i = 0; i < n; ++i)
@@ -542,8 +561,11 @@ void run(void)
             push_bool(a->tag == T_ATTRS && has_attr(ao, bo));
             break;
         case OP_UPDATE:
-            force_two(&a, &b);
+            view_two(&a, &b);                   /* operands stay rooted for the reserve */
             need(a, T_ATTRS); need(b, T_ATTRS);
+            if ((uint16_t)(AUX16(a) + AUX16(b)) < AUX16(a)) nomem();
+            if (nursery_reserve_n(AUX16(a) + AUX16(b), 12, 4)) view_two(&a, &b);
+            vsp -= 2;
             push(update(a, b));
             break;
         case OP_INTERPOLATE: interpolate(fetch16()); break;
@@ -551,6 +573,9 @@ void run(void)
         /* --- environments --- */
         case OP_ENV_NEW:                        /* a LIST of n+1: [0] = the old env, [1..n] = null */
             n = fetch16();
+            /* Hot: every `let`. Below 512 bindings the boundary's GC_MARGIN
+             * already covers it; env is a root either way. */
+            if (n >= GC_MARGIN / 4 - 2) nursery_reserve_n(n + 1, 4, 4);
             o = list_alloc(n + 1);
             ELEMS(o)[0] = env;
             for (i = 1; i <= n; ++i) ELEMS(o)[i] = 0;

@@ -169,8 +169,8 @@
             # The collector test: every local fixture again, with a nursery
             # collection at every bytecode boundary. A fixture that passes
             # normally and fails here has a root the collector cannot see. The
-            # tail-call fixture needs ~90M cycles this way (VM.md), hence the budget.
-            A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py \
+            # default 500M-cycle budget covers the slowest (big-operations, ~290M).
+            python3 scripts/scoreboard.py \
               --nbc nbc --a2min ./build/a2min --vm "$vm" \
               --corpus tests/fixtures --build build/gc \
               --expected tests/corpus/expected-pass.txt --gc-stress \
@@ -180,10 +180,19 @@
             # collection at EVERY boundary promotes each value before it can be
             # stored, so it never exercises the remembered set (D20); a period
             # leaves some stores young, including into a promoted `let`.
-            A2MIN_GC_PERIOD=3 A2MIN_BUDGET=200000000 python3 scripts/scoreboard.py \
+            A2MIN_GC_PERIOD=3 python3 scripts/scoreboard.py \
               --nbc nbc --a2min ./build/a2min --vm "$vm" \
               --corpus tests/fixtures --build build/gc3 \
               --expected tests/corpus/expected-pass.txt --gc-stress \
+              | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
+
+            # And with every nursery_reserve() collecting (A2MIN_RESERVE_STRESS):
+            # each reserve is a mid-instruction collection at a point its caller
+            # claims holds nothing live in a C local, and this is what tests it.
+            A2MIN_RESERVE_STRESS=1 python3 scripts/scoreboard.py \
+              --nbc nbc --a2min ./build/a2min --vm "$vm" \
+              --corpus tests/fixtures --build build/reserve \
+              --expected tests/corpus/expected-pass.txt \
               | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
 
             # Once more with the remembered set shrunk to one entry (D20), so a
@@ -409,10 +418,10 @@
             grep -q "MUTATION PASS" "$out"
           '';
 
-        # And the VM's collector (DECISIONS.md D20): break the remembered set
-        # six ways and the minimum object size two, rebuild the VM with ORCA/C
-        # each time, and require eval-okay-remembered-set and
-        # eval-okay-deep-equality to catch every one.
+        # And the VM's collector (DECISIONS.md D20, HEAP.md): break the
+        # remembered set six ways, the minimum object size two and the nursery
+        # reserves four, rebuild the VM with ORCA/C each time, and require the
+        # collector fixtures (scripts/mutation-vm.sh) to catch every one.
         mutation-vm = pkgs.runCommandCC "check-mutation-vm"
           { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ours.nbc ]; }
           ''

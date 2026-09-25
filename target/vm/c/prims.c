@@ -109,7 +109,9 @@ static void call_with(obj_t *f, obj_t *x)
 /* The n values on top of the stack become a fresh LIST. */
 static obj_t *list_from_stack(uint16_t n)
 {
-    obj_t *o = list_alloc(n);
+    obj_t *o;
+    nursery_reserve_n(n, 4, 4);                 /* the n values are on the stack: roots */
+    o = list_alloc(n);
     vsp -= n;
     memcpy(ELEMS(o), &vstack[vsp], 4 * n);
     return o;
@@ -137,11 +139,26 @@ static void prim_head(void)
     push(ELEMS(l)[0]);
 }
 
+/* Force the top in place, type-check it, and view it -- WITHOUT popping, so it
+ * stays a root while the primop reserves room for what it will allocate. After
+ * a reserve that collected, view it again. (force_pop_as, but for primops that
+ * allocate in proportion to their argument: vm.h nursery_reserve.) */
+static obj_t *view_top_as(uint8_t tag)
+{
+    obj_t *v;
+    force_top();
+    v = deref(peek());
+    need(v, tag);
+    return v;
+}
+
 static void prim_tail(void)
 {
-    obj_t *o, *l = force_pop_as(T_LIST, &o), *r;
+    obj_t *l = view_top_as(T_LIST), *r;
     uint16_t n = AUX16(l);
     if (n == 0) err_exit(E_INDEX);
+    if (nursery_reserve_n(n - 1, 4, 4)) l = view_top_as(T_LIST);
+    --vsp;
     r = list_alloc(n - 1);
     memcpy(ELEMS(r), ELEMS(l) + 1, 4 * (n - 1));
     push(r);
@@ -155,10 +172,15 @@ static void prim_elemat(void)                   /* list i */
     push(ELEMS(l)[i]);
 }
 
+/* make_apply allocates 28 bytes (an environment of 3 and a thunk): map is
+ * 32 bytes an element, genList 44 with its INT -- 13 KB for genList 300, which
+ * is why these two reserve before they start (vm.h nursery_reserve). */
 static void prim_map(void)                      /* f list -> a list of (f x) thunks */
 {
-    obj_t *o, *l = force_pop_as(T_LIST, &o), *f, *r;
+    obj_t *l = view_top_as(T_LIST), *f, *r;
     uint16_t n = AUX16(l), i;
+    if (nursery_reserve_n(n, 32, 4)) l = view_top_as(T_LIST);
+    --vsp;
     f = pop();
     r = list_alloc(n);
     for (i = 0; i < n; ++i) ELEMS(r)[i] = make_apply(f, ELEMS(l)[i]);
@@ -168,7 +190,10 @@ static void prim_map(void)                      /* f list -> a list of (f x) thu
 static void prim_genlist(void)                  /* f n -> [ (f 0) ... (f (n-1)) ] */
 {
     uint16_t n = pop_index(), i;
-    obj_t *f = pop(), *r = list_alloc(n);
+    obj_t *f, *r;
+    nursery_reserve_n(n, 44, 4);                /* f is still on the stack: a root */
+    f = pop();
+    r = list_alloc(n);
     for (i = 0; i < n; ++i) ELEMS(r)[i] = make_apply(f, new_int(i));
     push(r);
 }
@@ -220,6 +245,7 @@ static void prim_concatlists(void)              /* [ [..] [..] ]: force each, su
         if ((uint16_t)(total + AUX16(e)) < total) nomem();
         total += AUX16(e);
     }
+    nursery_reserve_n(total, 4, 4);             /* all rooted on RSTACK; the copy re-fetches */
     r = list_alloc(total);
     for (i = 0; i < n; ++i) {
         e = deref_follow(RELEM(b, i, n));
@@ -280,8 +306,10 @@ static void any_all(int want)                   /* f list; `want` decides early 
 /* --- attribute sets ---------------------------------------------------------------------- */
 static void prim_attrnames(void)
 {
-    obj_t *o, *s = force_pop_as(T_ATTRS, &o), *r;
+    obj_t *s = view_top_as(T_ATTRS), *r;
     uint16_t n = AUX16(s);
+    if (nursery_reserve_n(n, 4, 4)) s = view_top_as(T_ATTRS);
+    --vsp;
     r = list_alloc(n);
     memcpy(ELEMS(r), ANAMES(s, n), 4 * n);
     push(r);
@@ -289,8 +317,10 @@ static void prim_attrnames(void)
 
 static void prim_attrvalues(void)
 {
-    obj_t *o, *s = force_pop_as(T_ATTRS, &o), *r;
+    obj_t *s = view_top_as(T_ATTRS), *r;
     uint16_t n = AUX16(s);
+    if (nursery_reserve_n(n, 4, 4)) s = view_top_as(T_ATTRS);
+    --vsp;
     r = list_alloc(n);
     memcpy(ELEMS(r), AVALUES(s, n), 4 * n);
     push(r);
@@ -328,7 +358,7 @@ static void prim_getattr(void)
 static void prim_intersectattrs(void)           /* names of a that are in b, with b's values */
 {
     obj_t *a, *b, *ao, *bo, *r, *v;
-    uint16_t na, nb, i, j, k = 0;
+    uint16_t na, nb, i, j, k = 0, rb = rsp;
     force_two_orig(&a, &b, &ao, &bo);
     need(a, T_ATTRS); need(b, T_ATTRS);
     na = AUX16(a); nb = AUX16(b);
@@ -336,6 +366,10 @@ static void prim_intersectattrs(void)           /* names of a that are in b, wit
         a = deref(ao);
         if (has_attr(bo, ANAMES(a, na)[i])) ++k;
     }
+    rpush(ao); rpush(bo);                       /* rooted across the reserve */
+    nursery_reserve_n(k, 12, 4);
+    ao = rstack[rb]; bo = rstack[rb + 1];
+    rsp = rb;
     r = attrs_alloc(k);
     for (i = 0, k = 0; i < na; ++i) {
         a = deref(ao);
@@ -371,13 +405,16 @@ static void prim_removeattrs(void)              /* set [ names ]: keep entries n
     }
     so = rstack[b];
     lo = rstack[b + 1];
-    rsp = b;
     s = deref(so);
     ns = AUX16(s);
     for (i = 0; i < ns; ++i) {
         s = deref(so);
         if (!name_in_list(deref(ANAMES(s, ns)[i]), lo)) ++k;
     }
+    nursery_reserve_n(k, 12, 4);                /* so and lo are still on RSTACK */
+    so = rstack[b];
+    lo = rstack[b + 1];
+    rsp = b;
     r = attrs_alloc(k);
     for (i = 0, k = 0; i < ns; ++i) {
         s = deref(so);
@@ -430,6 +467,7 @@ static void prim_listtoattrs(void)              /* [ { name; value; } ... ] */
     rsp = b;
     /* pass 2, no bytecode: sorted insertion into a fresh set */
     at = vsp - 2 * n;
+    nursery_reserve_n(n, 24, 8);                /* the set and its compacted copy; pairs are on the stack */
     set = attrs_alloc(n);                       /* capacity n; column offsets use n */
     for (i = 0; i < n; ++i)
         insert_entry(set, n, &cnt, vstack[at + 2 * i], vstack[at + 2 * i + 1]);
@@ -458,6 +496,7 @@ static void prim_partition(void)                /* f list -> { right; wrong; } *
     rsp = b;
     at = vsp - 2 * n;
     for (i = 0; i < n; ++i) if (vstack[at + 2 * i + 1] == obj_true) ++nr; else ++nw;
+    nursery_reserve_n(n, 4, 8 + 28);            /* both lists and the 2-entry set; pairs on the stack */
     r = list_alloc(nr);
     w = list_alloc(nw);
     for (i = 0, nr = 0, nw = 0; i < n; ++i) {
@@ -491,12 +530,14 @@ static void prim_substring(void)                /* start len s */
     v = force_pop_as(T_INT, &vo);               /* start */
     x = INTVAL(v);
     if (x < 0) err_exit(E_INDEX);
-    s = deref_rpop();
+    s = deref(rstack[rsp - 1]);                 /* still rooted, for the reserve */
     slen = AUX16(s);
-    if (x > 0xFFFF || (uint16_t)x >= slen) { push(str_alloc(0)); return; }
+    if (x > 0xFFFF || (uint16_t)x >= slen) { --rsp; push(str_alloc(0)); return; }
     start = (uint16_t)x;
     if (to_end || (uint16_t)(start + len) < start || start + len > slen) end = slen;
     else end = start + len;
+    nursery_reserve_n(1, round4(end - start), 8);
+    s = deref_rpop();
     r = str_alloc(end - start);
     memcpy(STRBYTES(r), STRBYTES(s) + start, end - start);
     push(r);
@@ -509,7 +550,19 @@ static obj_t *int_to_str(int64_t v)
     uint16_t n = 0, i;
     obj_t *o;
     uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
-    do { buf[n++] = (char)('0' + (uint16_t)(u % 10)); u /= 10; } while (u);
+    /* 64-bit % and / are ORCA/C's ~UDIV8, ~4,000 cycles each: two per digit
+     * made toString 37% of a program that prints numbers (a2min's function
+     * profile, eval-okay-big-operations). Almost every number printed fits 16
+     * bits, so the narrow loops come first and the wide one runs only above. */
+    if (u <= 0xFFFFU) {
+        uint16_t w = (uint16_t)u;
+        do { buf[n++] = (char)('0' + w % 10); w /= 10; } while (w);
+    } else if (u <= 0xFFFFFFFFUL) {
+        uint32_t w = (uint32_t)u;
+        do { buf[n++] = (char)('0' + (uint16_t)(w % 10)); w /= 10; } while (w);
+    } else {
+        do { buf[n++] = (char)('0' + (uint16_t)(u % 10)); u /= 10; } while (u);
+    }
     if (v < 0) buf[n++] = '-';
     o = str_alloc(n);
     for (i = 0; i < n; ++i) STRBYTES(o)[i] = buf[n - 1 - i];
@@ -566,14 +619,16 @@ static void concat_strings_sep_top(void)
         total += AUX16(e);
     }
     sepo = rstack[b];
-    lo = rstack[b + 1];
-    rsp = b;
     sep = deref(sepo);
     nsep = AUX16(sep);
     for (i = 1; i < n; ++i) {                   /* n-1 separators */
         if ((uint16_t)(total + nsep) < total) nomem();
         total += nsep;
     }
+    nursery_reserve_n(1, round4(total), 8);     /* sep and the list are still on RSTACK */
+    sepo = rstack[b];
+    lo = rstack[b + 1];
+    rsp = b;
     r = str_alloc(total);
     for (i = 0; i < n; ++i) {
         if (i) { sep = deref(sepo); memcpy(STRBYTES(r) + w, STRBYTES(sep), nsep); w += nsep; }
@@ -590,10 +645,10 @@ static void prim_concatstringssep(void) { concat_strings_sep_top(); }
 /* baseNameOf / dirOf on STRINGs, with Nix's edge cases. */
 static void prim_basenameof(void)
 {
-    obj_t *o, *s = force_pop_as(T_STRING, &o), *r;
+    obj_t *s = view_top_as(T_STRING), *r;       /* stays rooted until the reserve */
     uint16_t n = AUX16(s), last, start;
     const char *p = STRBYTES(s);
-    if (n == 0) { push(str_alloc(0)); return; }
+    if (n == 0) { --vsp; push(str_alloc(0)); return; }
     last = n - 1;
     if (last && p[last] == '/') --last;        /* a trailing slash is ignored */
     start = last;
@@ -602,6 +657,8 @@ static void prim_basenameof(void)
         if (start == 0) break;
         --start;
     }
+    if (nursery_reserve_n(1, round4(last - start + 1), 8)) { s = view_top_as(T_STRING); p = STRBYTES(s); }
+    --vsp;
     r = str_alloc(last - start + 1);
     memcpy(STRBYTES(r), p + start, last - start + 1);
     push(r);
@@ -609,17 +666,19 @@ static void prim_basenameof(void)
 
 static void prim_dirof(void)
 {
-    obj_t *o, *s = force_pop_as(T_STRING, &o), *r;
+    obj_t *s = view_top_as(T_STRING), *r;       /* stays rooted until the reserve */
     uint16_t n = AUX16(s), j;
     const char *p = STRBYTES(s);
-    if (n == 0) { push(str_dot); return; }
+    if (n == 0) { --vsp; push(str_dot); return; }
     j = n - 1;
     for (;;) {
         if (p[j] == '/') break;
-        if (j == 0) { push(str_dot); return; }
+        if (j == 0) { --vsp; push(str_dot); return; }
         --j;
     }
-    if (j == 0) { push(str_slash); return; }
+    if (j == 0) { --vsp; push(str_slash); return; }
+    if (nursery_reserve_n(1, round4(j), 8)) { s = view_top_as(T_STRING); p = STRBYTES(s); }
+    --vsp;
     r = str_alloc(j);
     memcpy(STRBYTES(r), p, j);
     push(r);

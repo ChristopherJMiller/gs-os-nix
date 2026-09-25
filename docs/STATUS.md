@@ -155,13 +155,25 @@ number rises by widening the lowering and the VM together, one slice at a time
    `eval-okay-remembered-set`: 133M → 36.6M, after the collector's root walk
    stopped calling `evac`/`translate` for roots that are already mature. What
    remains of the gap is shared VM cost (`deref`, `run`, the call path; the
-   "C is 2.5× slower" thread in VM.md), not the card. (2) **One
-   instruction that allocates more than the free nursery is `E_NOMEM`, and
-   whether it happens depends on where the nursery happens to be:** `genList 300`
-   allocates ~8 KB (a thunk per element) and fails if forced with less free,
-   because collections only run at boundaries with a 2 KB margin. A primop that
-   allocates in proportion to its input should collect before it starts, while
-   its arguments are still just stack roots.
+   "C is 2.5× slower" thread in VM.md), not the card. (2) ~~One instruction
+   that allocates more than the free nursery was `E_NOMEM`, depending on where
+   the nursery happened to be~~ **fixed** (2026-09-24): `genList 300` allocates
+   13 KB in one instruction (44 bytes an element, not the ~8 KB guessed here
+   before), and collections ran only at boundaries with a 2 KB margin. Now every
+   operation that allocates in proportion to its input calls `nursery_reserve`
+   before it pops its operands, and collects there if it must (HEAP.md "When a
+   collection happens"). `A2MIN_RESERVE_STRESS=1` makes every reserve collect,
+   which is what tests that no call site holds a live pointer in a C local, and
+   `eval-okay-big-operations` checks content, not just lengths, because a view
+   kept across a collection reads a forwarded object with the right length and
+   the wrong elements. The same fixture fails with `E_NOMEM` on the previous
+   commit's VM. Two limits it made visible are in HEAP.md: with no card, live
+   data that fills the 64 KB nursery made the collector storm (a hang in all
+   but name), so a collection that leaves under 8 KB free is now `E_NOMEM`, an
+   overhead limit that cannot fire with a card; and a GC-stress run hits the
+   card's 512 KB half-space, because mature space is never collected yet. Its profile also found **`toString` at 37%** of that program: ORCA/C's
+   64-bit divide (~4,000 cycles) twice per digit. It now divides in 16 or 32
+   bits when the value fits (`eval-okay-tostring-widths` checks each boundary).
 5. **Slice 5.** The histogram's "path literal 35" is misleading, and measuring
    it changed what this slice is. There are **45** tests whose first refusal is
    a path literal, and they split three ways:

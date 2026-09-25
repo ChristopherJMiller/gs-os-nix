@@ -167,9 +167,33 @@ bytecode may clobber all of it), so the roots are exactly:
 | thunks under evaluation | `FSTACK` |
 | catch frames | the `env` in each `CATCH` entry |
 
-An instruction that needs more than the margin in one go fails with `E_NOMEM`
-rather than collecting mid-instruction; the margin is sized so that does not
-happen on the corpus.
+**One other place may collect: `nursery_reserve(bytes)`** (vm.h, 2026-09-24),
+called by every operation that allocates in proportion to its input (`genList`,
+`map`, `++`, `//`, list and set literals, string `+` and interpolation,
+`concatLists`, `attrNames`, …) before it pops its operands, while everything
+live is still on a stack. If fewer than `bytes` are free, it collects there,
+and only if a collection cannot make room is it `E_NOMEM`. This used to be
+the rule "an instruction that needs more than the margin fails", which made a
+program's fate depend on where the nursery happened to be: `genList 300`
+allocates 13 KB in one instruction, and failed or not by position.
+`A2MIN_RESERVE_STRESS=1` makes every reserve collect, needed or not, which is
+what tests each call site's claim that nothing live is in a C local. An
+operation that keeps a *view* across a reserve that collected must take it
+again (`view_two`, `view_top_as`): a young operand has moved, and its old copy
+still has the right length but a forwarding pointer in its first word.
+
+Two limits this makes visible. **Without a card**, live data that nearly
+fills the 64 KB nursery made the collector storm: each collection copied all
+of it and freed only a few KB. `eval-okay-big-operations` ran for billions of
+cycles that way (58 KB live, ~6 KB freed a time), and the boundaries had
+always done the same; the reserve only let programs get far enough to show
+it. So a collection that leaves less than `NURSERY_LOW` (8 KB) free is now
+`E_NOMEM`, the overhead-limit rule. With a card it cannot fire, because
+promotion empties the nursery every time; it only turns the no-card
+configuration's hang-shaped failure into a loud one. **Under GC stress**, every
+value is promoted before it can die, and nothing collects mature space yet
+(the card-side `MARK` is slice 5), so a stress run fails with `E_NOMEM` once a
+program has allocated about 512 KB in total, half the harness card's heap.
 
 **The collection** is `target/heap/nursery.s`'s algorithm on these roots: a Cheney
 copy of the live graph into a staging area in bank 1 (long addressing; the nursery

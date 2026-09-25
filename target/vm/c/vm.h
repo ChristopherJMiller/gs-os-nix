@@ -64,6 +64,9 @@
 #define RSET_LIMIT_ADDR  0x0332UL   /* a2min sets it: shrink the remembered set to this
                                        many entries (0 = RSET_N), so the tests can make
                                        it fill -- the one path a normal run never takes */
+#define RESERVE_STRESS_ADDR 0x0333UL /* a2min sets it: every nursery_reserve() collects,
+                                       needed or not -- so each call site's claim that
+                                       nothing live is in a C local is actually tested */
 #define VERB_NO_LOOKUP   0x01U
 #define VERB_NO_ALU64    0x02U
 #define verb_off(bit)    (*(volatile uint8_t *)VERB_MASK_ADDR & (bit))
@@ -93,6 +96,8 @@
 #define RSET_N           256
 
 #define GC_MARGIN        0x0800U    /* collect when less than this is free */
+#define NURSERY_LOW      0x2000U    /* with no card, a collection that leaves less than
+                                       this free is E_NOMEM, not a storm (gc.c) */
 
 /* --- heap tags (HEAP.md) --------------------------------------------------------- */
 #define T_INT        0x01
@@ -301,6 +306,17 @@ extern uint8_t gc_tick;
 #define gc_due() (*(volatile uint8_t *)GC_STRESS_ADDR \
     ? (++gc_tick >= *(volatile uint8_t *)GC_STRESS_ADDR && (gc_tick = 0, nfree != gc_water)) \
     : nfree >= NURSERY_END - GC_MARGIN)
+/* Room for one operation's allocation: collect now if fewer than `bytes` are
+ * free (E_NOMEM if a collection cannot make them). Collections otherwise run
+ * only at bytecode boundaries with a GC_MARGIN of 2 KB, so an operation that
+ * allocates in proportion to its input -- genList 300 is 13 KB -- used to be
+ * E_NOMEM or not depending on where the nursery happened to be. Call it ONLY
+ * where every live object is on a stack: before the operation pops its
+ * operands into C locals, or once everything it holds is on RSTACK. Returns
+ * 1 if it collected: every view taken before it must then be taken again. */
+int nursery_reserve(uint16_t bytes);
+int nursery_reserve_n(uint16_t n, uint16_t per, uint16_t fixed);   /* fixed + n * per, E_NOMEM past a bank */
+void view_two(obj_t **a, obj_t **b);   /* force the top two in place and view them; both stay on the stack */
 extern uint16_t rs_n;               /* entries in the remembered set */
 #define rs_full() (rs_n >= (*(volatile uint8_t *)RSET_LIMIT_ADDR ? \
                             *(volatile uint8_t *)RSET_LIMIT_ADDR : RSET_N))

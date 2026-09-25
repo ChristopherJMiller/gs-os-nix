@@ -17,6 +17,11 @@ set -uo pipefail
 A2MIN="$1"; VM="$2"; NBCDIR="$3"; M2BIN="$4"; VECTORS="$5"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
+# Both halves of every comparison stop at the same budget, so a capped run still
+# compares like with like -- a divergence shows in the counters either way --
+# and the exact half, which runs at the old full-clock speed (~0.4M cycles/s),
+# stays bounded: eval-okay-big-operations' 84M would be ~3.5 minutes on its own.
+QC_BUDGET=30000000
 
 # compare <a2min> [first]: 0 if every run is identical both ways, 1 otherwise.
 # With "first", stop at the first difference (the self-test needs only one).
@@ -27,8 +32,8 @@ compare() {
         # card-heaviest case, and the exact half of every run costs the old
         # full-clock time (all three masks made this check 16 minutes).
         for mask in 0; do
-            A2MIN_EXACT_CLOCK=0 A2MIN_VERB_MASK=$mask A2MIN_BUDGET=200000000 "$bin" --run-nbc "$VM" "$f" > "$WORK/fast" 2>&1
-            A2MIN_EXACT_CLOCK=1 A2MIN_VERB_MASK=$mask A2MIN_BUDGET=200000000 "$bin" --run-nbc "$VM" "$f" > "$WORK/exact" 2>&1
+            A2MIN_EXACT_CLOCK=0 A2MIN_VERB_MASK=$mask A2MIN_BUDGET=$QC_BUDGET "$bin" --run-nbc "$VM" "$f" > "$WORK/fast" 2>&1
+            A2MIN_EXACT_CLOCK=1 A2MIN_VERB_MASK=$mask A2MIN_BUDGET=$QC_BUDGET "$bin" --run-nbc "$VM" "$f" > "$WORK/exact" 2>&1
             n=$((n + 1))
             cmp -s "$WORK/fast" "$WORK/exact" || { bad=$((bad + 1)); echo "  differs: $(basename "$f") mask=$mask"; }
             [ -n "$first" ] && [ "$bad" -gt 0 ] && { echo "  $n runs compared, stopped at the first difference"; return 1; }

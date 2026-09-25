@@ -14,6 +14,9 @@
 #             a `let`'s ENV_NEW and its ENV_SETs, and at every phase of a
 #             program. Not stress at EVERY boundary: that promotes each value
 #             before it can be stored, so the set is never used.
+#   reserve:1 every nursery_reserve() collects (A2MIN_RESERVE_STRESS): each is a
+#             mid-instruction collection, so a site that keeps a view or a
+#             local across one reads a forwarded object
 #   both:K    period:K with a one-entry set. The only mode in which ENV_SET
 #             finds the set full: without it, "store_field ignores a full set"
 #             survived, because only the period modes reach store_field with a
@@ -34,11 +37,11 @@ set -uo pipefail
 
 A2MIN="$1"
 NBC="$2"
-FIXTURES="eval-okay-remembered-set eval-okay-deep-equality"
-MODES="limit:0 limit:1 period:2 period:3 both:4"
+FIXTURES="eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations"
+MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1"
 SRCS="main.c run.c data.c prims.c gc.c card.c"      # link order: main.c first
 WORK=$(mktemp -d)
-BUDGET=200000000
+BUDGET=500000000
 trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$WORK/orig" "$WORK/src"
@@ -64,6 +67,8 @@ run_suite() {
                                 --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p') ;;
                 both:*)   got=$(A2MIN_GC_PERIOD=${mode#*:} A2MIN_RSET_LIMIT=1 A2MIN_BUDGET=$BUDGET "$A2MIN" \
                                 --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p') ;;
+                reserve:*) got=$(A2MIN_RESERVE_STRESS=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
+                                --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p') ;;
             esac
             [ "$got" = "$want" ] || return 1
         done
@@ -97,7 +102,7 @@ mutate() {
     esac
 }
 
-echo "=== mutation testing the collector (remembered set, object sizes) ==="
+echo "=== mutation testing the collector (remembered set, object sizes, reserves) ==="
 echo "Baseline: the fixtures must pass in every mode on the unmutated VM."
 fresh
 run_suite
@@ -131,6 +136,23 @@ mutate "an empty list is 4 bytes" data.c \
 
 mutate "an empty set is 4 bytes" data.c \
        's/alloc(n ? 4 + 12 \* n : 8)/alloc(4 + 12 * n)/'
+
+# nursery_reserve (vm.h): an operation that allocates in proportion to its
+# input collects first if it must. Without the reserve, genList 300 is E_NOMEM
+# whenever it starts with less than 13 KB free...
+mutate "genList does not reserve" prims.c \
+       's/^    nursery_reserve_n(n, 44, 4);                \/\* f is still on the stack: a root \*\///'
+
+# ...and a site that reserves but keeps its view across a collection reads a
+# forwarded young operand: the right length, the wrong contents.
+mutate "++ keeps its views across a collecting reserve" run.c \
+       's/            if (nursery_reserve_n(n + i, 4, 4)) view_two(\&a, \&b);/            nursery_reserve_n(n + i, 4, 4);/'
+
+mutate "string + keeps its views across a collecting reserve" run.c \
+       's/            if (nursery_reserve_n(1, round4(AUX16(a) + AUX16(b)), 8)) view_two(\&a, \&b);/            nursery_reserve_n(1, round4(AUX16(a) + AUX16(b)), 8);/'
+
+mutate "map keeps its view across a collecting reserve" prims.c \
+       's/    if (nursery_reserve_n(n, 32, 4)) l = view_top_as(T_LIST);/    nursery_reserve_n(n, 32, 4);/'
 
 echo
 echo "$pass mutations caught, $fail not caught"

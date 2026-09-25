@@ -67,8 +67,13 @@ wrong answer: `CTAB_N` = **512 constants** across all chunks (a 256-attribute
 literal set needs 512 — 256 names and 256 integers — and so fails at load,
 which is what stopped the `LOOKUP` crossover measurement at 128); `WINDOW_MAX` =
 **20 KB** for a single mature object that has to be viewed; and the nursery's
-64 KB between collections. All three are a constant in `vm.h`, and bank 0 has
-room to raise the first.
+64 KB of live young data. All three are a constant in `vm.h`, and bank 0 has
+room to raise the first. (The nursery ceiling used to be a fourth, worse one:
+a single operation that allocated more than happened to be free failed even
+when a collection would have made room. `nursery_reserve` removed it; HEAP.md.)
+A fifth is the card's: nothing collects mature space yet, so a program can
+promote at most half the card's heap in total (512 KB in the harness), which
+only GC-stress runs reach.
 
 The C stack is the 65816 stack: ORCA/C allocates a function's locals below the
 stack pointer and points the direct-page register at them (`tsc / sbc / tcs / phd

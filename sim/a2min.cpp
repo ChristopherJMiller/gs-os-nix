@@ -663,6 +663,12 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     // run of the fixtures never reaches, so without this it would go untested.
     if (const char *r = std::getenv("A2MIN_RSET_LIMIT"))
         ram[0x0332] = static_cast<uint8_t>(std::strtoul(r, nullptr, 0));
+    // A2MIN_RESERVE_STRESS=1: every nursery_reserve() in the VM collects, needed
+    // or not (vm.h RESERVE_STRESS_ADDR). Each reserve is a mid-instruction
+    // collection at a point its caller claims holds nothing live in a C local;
+    // this is what tests that claim, the way GC stress tests the boundaries.
+    if (const char *r = std::getenv("A2MIN_RESERVE_STRESS"))
+        ram[0x0333] = (r[0] == '1') ? 1 : 0;
     {
         std::ifstream f(nbc_path, std::ios::binary);
         if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }
