@@ -62,9 +62,9 @@ compiler, linker, `ORCALib`, `SysLib`, `SysFloat` and the headers all ship in it
 
 ```sh
 orcacc   [-o NAME] [-I DIR]... [-O] [-d OUTDIR] FILE.c    # -> NAME.root, NAME.a
-orcalink [-o OUT] [-d OUTDIR] NAME...                      # -> OUT, an OMF load file
-omf2bin  [--org N] IN OUT                                  # -> flat binary for a2min
-orcabuild -o OUT.bin [-O] [-I DIR]... FILE.c...            # all three
+orcalink [-o OUT] [-d OUTDIR] NAME...                      # -> OUT, an OMF load file, and OUT.sym
+omf2bin  [--org N] [--syms OUT.sym OUT.map] IN OUT         # -> flat binary for a2min (+ symbol map)
+orcabuild -o OUT.bin [-O] [-I DIR]... FILE.c...            # all three; also OUT.map and OUT.omf
 orcarun  --trace ...                                       # every OS/shell/Toolbox call
 just orca-smoke                                            # the smoke test, by hand
 ```

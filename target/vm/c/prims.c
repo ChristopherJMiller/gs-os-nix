@@ -100,8 +100,11 @@ static void call_with(obj_t *f, obj_t *x)
     do_call();
 }
 
-/* The i-th element of the LIST whose pointer is root stack entry r. */
-#define RELEM(r, i) (ELEMS(deref(rstack[r]))[i])
+/* The i-th element of the LIST (of n elements) whose pointer is root stack
+ * entry r. Re-fetched every time round, because the loop calls back into Nix
+ * (which may collect or turn the window ring over); list_elem makes that cheap
+ * for a long mature list by reading one element rather than copying it. */
+#define RELEM(r, i, n) list_elem(rstack[r], (i), (n))
 
 /* The n values on top of the stack become a fresh LIST. */
 static obj_t *list_from_stack(uint16_t n)
@@ -178,9 +181,9 @@ static void prim_filter(void)                   /* f list. Roots: list, f; kept 
     rpush(lo);
     rpush(pop());                               /* f */
     for (i = 0; i < n; ++i) {
-        call_with(rstack[b + 1], RELEM(b, i));
+        call_with(rstack[b + 1], RELEM(b, i, n));
         v = force_pop_as(T_BOOL, &vo);
-        if (BOOLVAL(v)) { push(RELEM(b, i)); ++kept; }
+        if (BOOLVAL(v)) { push(RELEM(b, i, n)); ++kept; }
     }
     rsp = b;
     push(list_from_stack(kept));
@@ -198,7 +201,7 @@ static void prim_foldl(void)                    /* f z list: the accumulator liv
     for (i = 0; i < n; ++i) {
         obj_t *acc = pop();
         call_with(rstack[b + 1], acc);          /* g = f acc */
-        push(RELEM(b, i));
+        push(RELEM(b, i, n));
         do_call();                              /* acc' = g x */
         force_top();                            /* strict accumulator */
     }
@@ -212,14 +215,14 @@ static void prim_concatlists(void)              /* [ [..] [..] ]: force each, su
     n = AUX16(l);
     rpush(lo);
     for (i = 0; i < n; ++i) {
-        push(RELEM(b, i));
+        push(RELEM(b, i, n));
         e = force_pop_as(T_LIST, &eo);
         if ((uint16_t)(total + AUX16(e)) < total) nomem();
         total += AUX16(e);
     }
     r = list_alloc(total);
     for (i = 0; i < n; ++i) {
-        e = deref_follow(RELEM(b, i));
+        e = deref_follow(RELEM(b, i, n));
         memcpy(ELEMS(r) + w, ELEMS(e), 4 * AUX16(e));
         w += AUX16(e);
     }
@@ -235,7 +238,7 @@ static void prim_concatmap(void)                /* concatLists (map f list), the
     rpush(lo);
     rpush(pop());                               /* f */
     for (i = 0; i < n; ++i) {
-        call_with(rstack[b + 1], RELEM(b, i));
+        call_with(rstack[b + 1], RELEM(b, i, n));
         force_top();                            /* the result stays on the stack */
     }
     rsp = b;
@@ -252,7 +255,7 @@ static void prim_elem(void)                     /* x list */
     rpush(lo);
     rpush(pop());                               /* x */
     for (i = 0; i < n; ++i)
-        if (values_equal(RELEM(b, i), rstack[b + 1])) { found = 1; break; }
+        if (values_equal(RELEM(b, i, n), rstack[b + 1])) { found = 1; break; }
     rsp = b;
     push_bool(found);
 }
@@ -266,7 +269,7 @@ static void any_all(int want)                   /* f list; `want` decides early 
     rpush(lo);
     rpush(pop());                               /* f */
     for (i = 0; i < n; ++i) {
-        call_with(rstack[b + 1], RELEM(b, i));
+        call_with(rstack[b + 1], RELEM(b, i, n));
         v = force_pop_as(T_BOOL, &vo);
         if ((BOOLVAL(v) != 0) == want) { r = want; break; }
     }
@@ -363,7 +366,7 @@ static void prim_removeattrs(void)              /* set [ names ]: keep entries n
     rpush(so);
     rpush(lo);
     for (i = 0; i < nl; ++i) {                  /* force every name */
-        push(RELEM(b + 1, i));
+        push(RELEM(b + 1, i, nl));
         e = force_pop_as(T_STRING, &eo);
     }
     so = rstack[b];
@@ -413,7 +416,7 @@ static void prim_listtoattrs(void)              /* [ { name; value; } ... ] */
     rpush(lo);
     /* pass 1, running bytecode: (name, value) pairs onto the value stack */
     for (i = 0; i < n; ++i) {
-        push(RELEM(b, i));
+        push(RELEM(b, i, n));
         e = force_pop_as(T_ATTRS, &eo);
         rpush(eo);                              /* b+1: the element */
         if (!find_attr(eo, str_name, &ix, &av)) err_exit(E_NOATTR);
@@ -447,9 +450,9 @@ static void prim_partition(void)                /* f list -> { right; wrong; } *
     rpush(lo);
     rpush(pop());                               /* f */
     for (i = 0; i < n; ++i) {                   /* (element, verdict) pairs on the stack */
-        call_with(rstack[b + 1], RELEM(b, i));
+        call_with(rstack[b + 1], RELEM(b, i, n));
         v = force_pop_as(T_BOOL, &vo);
-        push(RELEM(b, i));
+        push(RELEM(b, i, n));
         push(BOOLVAL(v) ? obj_true : obj_false);
     }
     rsp = b;
@@ -534,7 +537,7 @@ static void tostring_top(void)
     n = AUX16(v);
     rpush(vo);                                  /* source */
     for (i = 0; i < n; ++i) {                   /* the converted elements, on the stack */
-        push(RELEM(b, i));
+        push(RELEM(b, i, n));
         tostring_top();
     }
     rsp = b;
@@ -557,7 +560,7 @@ static void concat_strings_sep_top(void)
     rpush(sepo);
     rpush(lo);
     for (i = 0; i < n; ++i) {
-        push(RELEM(b + 1, i));
+        push(RELEM(b + 1, i, n));
         e = force_pop_as(T_STRING, &eo);
         if ((uint16_t)(total + AUX16(e)) < total) nomem();
         total += AUX16(e);

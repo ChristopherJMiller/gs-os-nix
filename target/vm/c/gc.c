@@ -41,6 +41,14 @@ static uint16_t gscan;      /* Cheney scan pointer */
 
 #define STAGE_AT(off) ((obj_t *)(YOUNG_TAG | STAGE_BASE | (uint32_t)(uint16_t)(off)))
 
+/* Evacuate / translate a pointer field in place, testing youth inline first.
+ * After the first promotion almost every root is mature, and the call cost
+ * more than the test: a GC-stress run of eval-okay-remembered-set made 72,212
+ * calls to each from the root walk alone, ~200 cycles a root to return p
+ * unchanged (a2min function profile). x: an lvalue. */
+#define EVAC(x)  do { if (IS_YOUNG(x)) (x) = evac(x); } while (0)
+#define XLATE(x) do { if (IS_YOUNG(x)) (x) = translate(x); } while (0)
+
 /* --- the remembered set -------------------------------------------------------------- */
 /* Every mature field the write barrier stored a young pointer into, as (object,
  * offset). The collection treats each as a root: it reads the field back from
@@ -147,20 +155,20 @@ static void scan_one(void)
     switch (o->tag) {
     case T_LIST:
         f = ELEMS(o);
-        for (i = 0; i < n; ++i) f[i] = evac(f[i]);
+        for (i = 0; i < n; ++i) EVAC(f[i]);
         break;
     case T_ATTRS:
         f = AVALUES(o, n);                      /* values then names: 2n pointers */
-        for (i = 0; i < 2 * n; ++i) f[i] = evac(f[i]);
+        for (i = 0; i < 2 * n; ++i) EVAC(f[i]);
         break;
     case T_THUNK: case T_LAMBDA: case T_BLACKHOLE:
-        CL_ENV(o) = evac(CL_ENV(o));
+        EVAC(CL_ENV(o));
         break;
     case T_INDIRECT:
-        IND_TARGET(o) = evac(IND_TARGET(o));
+        EVAC(IND_TARGET(o));
         break;
     case T_STRING:
-        STRCTX(o, n) = evac(STRCTX(o, n));
+        EVAC(STRCTX(o, n));
         break;
     default:
         break;
@@ -188,20 +196,20 @@ static uint16_t translate_one(uint16_t off)
     switch (o->tag) {
     case T_LIST:
         f = ELEMS(o);
-        for (i = 0; i < n; ++i) f[i] = translate(f[i]);
+        for (i = 0; i < n; ++i) XLATE(f[i]);
         break;
     case T_ATTRS:
         f = AVALUES(o, n);
-        for (i = 0; i < 2 * n; ++i) f[i] = translate(f[i]);
+        for (i = 0; i < 2 * n; ++i) XLATE(f[i]);
         break;
     case T_THUNK: case T_LAMBDA: case T_BLACKHOLE:
-        CL_ENV(o) = translate(CL_ENV(o));
+        XLATE(CL_ENV(o));
         break;
     case T_INDIRECT:
-        IND_TARGET(o) = translate(IND_TARGET(o));
+        XLATE(IND_TARGET(o));
         break;
     case T_STRING:
-        STRCTX(o, n) = translate(STRCTX(o, n));
+        XLATE(STRCTX(o, n));
         break;
     default:
         break;
@@ -214,13 +222,13 @@ void gc_collect(void)
     uint16_t i, off, size;
     ++ST_COLLECT;
     gfree = gscan = gc_water;
-    for (i = 0; i < vsp; ++i) vstack[i] = evac(vstack[i]);
-    env = evac(env);
-    for (i = 0; i < rsp; ++i) rstack[i] = evac(rstack[i]);
-    for (i = 0; i < fstack_n; ++i) fstack[i] = evac(fstack[i]);
-    for (i = 0; i < catch_n; ++i) catches[i].env = evac(catches[i].env);
-    for (i = 0; i < cnext; ++i) ctab_pool[i] = evac(ctab_pool[i]);
-    for (i = 0; i < nchunks; ++i) imports[i] = evac(imports[i]);
+    for (i = 0; i < vsp; ++i) EVAC(vstack[i]);
+    EVAC(env);
+    for (i = 0; i < rsp; ++i) EVAC(rstack[i]);
+    for (i = 0; i < fstack_n; ++i) EVAC(fstack[i]);
+    for (i = 0; i < catch_n; ++i) EVAC(catches[i].env);
+    for (i = 0; i < cnext; ++i) EVAC(ctab_pool[i]);
+    for (i = 0; i < nchunks; ++i) EVAC(imports[i]);
     for (i = 0; i < rs_n; ++i) {                /* the remembered fields, read back */
         struct rs_entry *e = &RSET[i];
         obj_t hdr, *p = 0;
@@ -244,13 +252,13 @@ void gc_collect(void)
     xbase = card_reserve(size);
     for (off = gc_water; off != gfree; off += translate_one(off)) ;
     card_write_at(xbase, STAGE_AT(gc_water), size);
-    for (i = 0; i < vsp; ++i) vstack[i] = translate(vstack[i]);
-    env = translate(env);
-    for (i = 0; i < rsp; ++i) rstack[i] = translate(rstack[i]);
-    for (i = 0; i < fstack_n; ++i) fstack[i] = translate(fstack[i]);
-    for (i = 0; i < catch_n; ++i) catches[i].env = translate(catches[i].env);
-    for (i = 0; i < cnext; ++i) ctab_pool[i] = translate(ctab_pool[i]);
-    for (i = 0; i < nchunks; ++i) imports[i] = translate(imports[i]);
+    for (i = 0; i < vsp; ++i) XLATE(vstack[i]);
+    XLATE(env);
+    for (i = 0; i < rsp; ++i) XLATE(rstack[i]);
+    for (i = 0; i < fstack_n; ++i) XLATE(fstack[i]);
+    for (i = 0; i < catch_n; ++i) XLATE(catches[i].env);
+    for (i = 0; i < cnext; ++i) XLATE(ctab_pool[i]);
+    for (i = 0; i < nchunks; ++i) XLATE(imports[i]);
     for (i = 0; i < rs_n; ++i) {                /* and the remembered fields, on the card */
         struct rs_entry *e = &RSET[i];
         obj_t *t;

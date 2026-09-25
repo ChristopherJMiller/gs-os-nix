@@ -74,7 +74,14 @@ obj_t *attrs_alloc(uint16_t n)
  * object too big to view at all is E_NOMEM. */
 #define WIN_PTR(off) ((obj_t *)(YOUNG_TAG | WINDOW_BASE | (uint32_t)(uint16_t)(off)))
 #define NWIN 64
-static struct { obj_t *card; uint16_t off; } wins[NWIN];
+/* Two ways per set, LRU within the set (D12's rule for the card's cache holds
+ * here too: associativity matters more than policy for pointer chasing). It was
+ * direct-mapped, and foldl' over a promoted list re-copied two 12-byte objects
+ * ~800 times each -- both were needed every iteration and both hash to slot 29,
+ * so each evicted the other (a2min A2MIN_BUSLOG). 8 bytes an entry, not 6, so
+ * indexing is shifts rather than a multiply. 1 KB of bank 0. */
+static struct win { obj_t *card; uint16_t off, pad; } wins[NWIN][2];
+static uint8_t win_lru[NWIN];   /* the way each set fills next */
 uint16_t win_ring;              /* the bump pointer; the dispatch loop reads it */
 
 /* Drop every copy and start the ring again. Only ever called at a bytecode
@@ -87,23 +94,32 @@ void windows_turnover(void)
     win_ring = 0;
 }
 
-static uint16_t win_slot(obj_t *p)
-{
-    uint32_t a = PBITS(p);
-    return (uint16_t)((a >> 2) ^ (a >> 8)) & (NWIN - 1);
-}
+/* p's copy in set h: its window offset (a hit makes the other way the next
+ * victim), or WIN_NONE. A macro: the hit path is the hot one. */
+#define WIN_NONE 0xFFFFU
+#define win_find(p, h) \
+    (wins[h][0].card == (p) ? (win_lru[h] = 1, wins[h][0].off) : \
+     wins[h][1].card == (p) ? (win_lru[h] = 0, wins[h][1].off) : WIN_NONE)
+
+/* ((a >> 2) ^ (a >> 8)) & 63, from the bytes: bits 0-5 of a >> 2 are bits
+ * 2-7 of byte 0, and bits 0-5 of a >> 8 are bits 0-5 of byte 1. The same
+ * slot, without two ~LSHR4 calls -- which made this ~4% of a promoting
+ * program's cycles (vm.h BYTE_OF) -- and a macro, because the call cost
+ * more than the XOR (~100 cycles; ORCA/C does not inline). p: an lvalue. */
+#define win_slot(p) ((uint16_t)((BYTE_OF(p, 0) >> 2) ^ BYTE_OF(p, 1)) & (NWIN - 1))
 
 void windows_invalidate(obj_t *p)
 {
     uint16_t h = win_slot(p);
-    if (wins[h].card == p) wins[h].card = 0;
+    if (wins[h][0].card == p) wins[h][0].card = 0;
+    if (wins[h][1].card == p) wins[h][1].card = 0;
 }
 
 static obj_t *mature_view(obj_t *p)
 {
-    uint16_t h = win_slot(p), size;
+    uint16_t h = win_slot(p), size, k;
     obj_t hdr, *w;
-    if (wins[h].card == p) return WIN_PTR(wins[h].off);
+    if ((k = win_find(p, h)) != WIN_NONE) return WIN_PTR(k);
     card_read_at(PBITS(p), &hdr, 4);
     size = obj_size(&hdr);
     if (size > WINDOW_MAX) nomem();
@@ -115,11 +131,41 @@ static obj_t *mature_view(obj_t *p)
     ++ST_VIEWS;
     ST_VIEW_BYTES += size;
     w = WIN_PTR(win_ring);
-    card_read_at(PBITS(p), w, size);
-    wins[h].card = p;
-    wins[h].off = win_ring;
+    /* The header is already here, and the DATA port has already advanced A0
+     * past it: stream the rest straight on. Re-setting A0 and reading the
+     * whole object again cost 4 address writes and 4 bus reads a copy. */
+    *(uint32_t *)w = *(uint32_t *)&hdr;
+    card_read_more((uint8_t *)w + 4, size - 4);        /* obj_size >= 8 */
+    k = win_lru[h];                             /* the least recently used way */
+    wins[h][k].card = p;
+    wins[h][k].off = win_ring;
+    win_lru[h] = (uint8_t)(k ^ 1);
     win_ring += size;                           /* obj_size is always a multiple of 4 */
     return w;
+}
+
+/* Element i of a LIST that may be mature; count is its length. Young: the list
+ * itself. Mature with its window still cached: the window, free. Mature, not
+ * cached, and long: the ONE element, read from the card -- 5 address writes and
+ * 4 reads -- instead of copying the whole list to read 4 bytes of it.
+ *
+ * Measured (a2min A2MIN_BUSLOG, 2026-09-24): foldl' over a 1,000-element
+ * promoted list copied that list 44 times, because every ring turnover and
+ * every slot collision evicts it while the primop loop calls back into Nix:
+ * 176 KB of the program's 238 KB of card reads were one 4 KB list. Short lists
+ * are still copied, since a copy of a few words costs about what one element
+ * read does and then serves the next iterations for nothing. */
+#define LIST_READ_MIN 64
+obj_t *list_elem(obj_t *l, uint16_t i, uint16_t count)
+{
+    uint16_t h, k;
+    obj_t *e;
+    if (IS_RAM(l)) return ELEMS(l)[i];
+    h = win_slot(l);
+    if ((k = win_find(l, h)) != WIN_NONE) return ELEMS(WIN_PTR(k))[i];
+    if (count < LIST_READ_MIN) return ELEMS(mature_view(l))[i];
+    card_read_at(PBITS(l) + (uint16_t)(4 + 4 * i), &e, 4);   /* i < 16K: the offset fits 16 bits */
+    return e;
 }
 
 /* --- pointers and stacks ---------------------------------------------------------------- */
@@ -265,7 +311,7 @@ static int card_name_eq(uint32_t at, obj_t *name, obj_t *nv)
     uint16_t len = AUX16(nv);
     card_read_at(at, &hdr, 4);
     if ((uint8_t)hdr != T_STRING) return 0;
-    if ((uint16_t)((hdr >> 8) & 0xFFFFUL) != len) return 0;    /* lengths differ */
+    if (AUX16((obj_t *)&hdr) != len) return 0;                  /* lengths differ */
     if (len == 0) return 1;
     if (IS_MATURE(name))
         return card_memcmp(at + 4, PBITS(name) + 4, len) == 0;

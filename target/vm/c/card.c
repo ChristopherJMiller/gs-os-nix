@@ -83,36 +83,61 @@ static void card_wait(void)
     }
 }
 
-/* A0 <- a card address (little-endian through APORT). */
-static void set_a0(uint32_t a)
+/* A0 <- a card address (little-endian through APORT): the select and the four
+ * bytes in one block. As C it was five cw8() calls with four 32-bit shifts, and
+ * ORCA/C calls ~LSHR4 for each shift (~300 cycles) and cannot inline cw8 (~76
+ * cycles a call): ~1,300 cycles to write five bytes, ~15% of a promoting
+ * program (a2min's function profile). Measured again after: see VM.md. */
+static void set_a0(uint32_t ad)
 {
-    cw8(REG_ASEL, 0);
-    cw8(REG_APORT, a & 0xFF);
-    cw8(REG_APORT, (a >> 8) & 0xFF);
-    cw8(REG_APORT, (a >> 16) & 0xFF);
-    cw8(REG_APORT, (a >> 24) & 0xFF);
+    asm {
+        ldx slot_x
+        sep #0x20
+        lda #0
+        sta 0xC082,x
+        lda ad
+        sta 0xC083,x
+        lda ad+1
+        sta 0xC083,x
+        lda ad+2
+        sta 0xC083,x
+        lda ad+3
+        sta 0xC083,x
+        rep #0x20
+    }
 }
 
 /* A1 <- a card address. Selecting a register rewinds the port index, so this
  * is symmetric with set_a0. NB: LOOKUP returns its value pointer in A1, so read
  * that before using A1 as a MEMCMP operand. */
-static void set_a1(uint32_t a)
+static void set_a1(uint32_t ad)
 {
-    cw8(REG_ASEL, 1);
-    cw8(REG_APORT, a & 0xFF);
-    cw8(REG_APORT, (a >> 8) & 0xFF);
-    cw8(REG_APORT, (a >> 16) & 0xFF);
-    cw8(REG_APORT, (a >> 24) & 0xFF);
+    asm {
+        ldx slot_x
+        sep #0x20
+        lda #1
+        sta 0xC082,x
+        lda ad
+        sta 0xC083,x
+        lda ad+1
+        sta 0xC083,x
+        lda ad+2
+        sta 0xC083,x
+        lda ad+3
+        sta 0xC083,x
+        rep #0x20
+    }
 }
 
 static uint32_t get_a1(void)
 {
     uint32_t a;
+    uint8_t *b = (uint8_t *)&a;               /* bytes in, not shifted in (see set_a0) */
     cw8(REG_ASEL, 1);
-    a = cr8(REG_APORT);
-    a |= (uint32_t)cr8(REG_APORT) << 8;
-    a |= (uint32_t)cr8(REG_APORT) << 16;
-    a |= (uint32_t)cr8(REG_APORT) << 24;
+    b[0] = (uint8_t)cr8(REG_APORT);
+    b[1] = (uint8_t)cr8(REG_APORT);
+    b[2] = (uint8_t)cr8(REG_APORT);
+    b[3] = (uint8_t)cr8(REG_APORT);
     return a;
 }
 
@@ -156,6 +181,12 @@ void card_read_at(uint32_t addr, void *dst, uint16_t n)
     set_a0(addr);
     burst_in((uint8_t *)dst, n);
 }
+/* The DATA port auto-increments A0, so a read continues where the last one
+ * stopped -- valid only while nothing else has touched the card since. */
+void card_read_more(void *dst, uint16_t n)
+{
+    burst_in((uint8_t *)dst, n);
+}
 
 void card_write_at(uint32_t addr, const void *src, uint16_t n)
 {
@@ -184,10 +215,10 @@ int card_lookup(uint32_t set, uint32_t h, uint16_t *ix, uint32_t *value)
     uint16_t st;
     set_a0(set);
     cw8(REG_PSEL, 0);
-    cw8(REG_PPORT, h & 0xFF);
-    cw8(REG_PPORT, (h >> 8) & 0xFF);
-    cw8(REG_PPORT, (h >> 16) & 0xFF);
-    cw8(REG_PPORT, (h >> 24) & 0xFF);
+    cw8(REG_PPORT, BYTE_OF(h, 0));
+    cw8(REG_PPORT, BYTE_OF(h, 1));
+    cw8(REG_PPORT, BYTE_OF(h, 2));
+    cw8(REG_PPORT, BYTE_OF(h, 3));
     cw8(REG_CMD, V_LOOKUP);
     do st = cr8(REG_CMD); while (!(st & (ST_DONE | ST_ERR)));
     if (st & ST_ERR) {

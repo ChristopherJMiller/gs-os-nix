@@ -118,11 +118,18 @@ typedef struct obj {
 } obj_t;
 
 #define PBITS(p)     ((uint32_t)(p))
-#define IS_YOUNG(p)  ((uint16_t)(PBITS(p) >> 16) == 0x8001U)   /* in the nursery */
-#define IS_STATIC(p) ((uint16_t)(PBITS(p) >> 16) == 0x8000U)   /* in this program */
+/* Bytes and words of a 32-bit value, read out of its storage. ORCA/C compiles a
+ * 32-bit shift as a call to ~LSHR4/~SHL4, which shifts a bit at a time: `a >> 16`
+ * cost ~300 cycles, and those calls were 28% of eval-okay-foldlStrict's cycles
+ * (a2min's function profile, A2MIN_SYMBOLS). A load costs a few. The argument
+ * must be an lvalue -- an rvalue fails to compile rather than misbehaving. */
+#define BYTE_OF(x, i) (((const uint8_t *)&(x))[i])
+#define HI16(x)       (((const uint16_t *)&(x))[1])
+#define IS_YOUNG(p)  (HI16(p) == 0x8001U)   /* in the nursery */
+#define IS_STATIC(p) (HI16(p) == 0x8000U)   /* in this program */
 #define IS_RAM(p)    ((PBITS(p) & YOUNG_TAG) != 0)               /* dereferenceable */
 #define IS_MATURE(p) ((p) != 0 && !IS_RAM(p))                     /* on the card */
-#define IS_WINDOW(p) ((uint16_t)(PBITS(p) >> 16) == 0x8005U)   /* a copy of a mature object */
+#define IS_WINDOW(p) (HI16(p) == 0x8005U)   /* a copy of a mature object */
 #define LOW16(p)     ((uint16_t)PBITS(p))
 #define YOUNG_PTR(off) ((obj_t *)(YOUNG_TAG | NURSERY_BASE | (uint32_t)(uint16_t)(off)))
 #define STATIC_PTR(o)  ((obj_t *)(YOUNG_TAG | (uint32_t)(o)))
@@ -229,6 +236,7 @@ obj_t *deref_rpop(void);            /* deref(rpop()) */
  * loop that calls back into Nix must re-deref (prims.c RELEM), and anything
  * that outlives the instruction is the pointer, never the view. */
 obj_t *deref(obj_t *p);             /* checks the pointer; E_BADNBC otherwise */
+obj_t *list_elem(obj_t *l, uint16_t i, uint16_t count);   /* element i; reads one element of a long mature list */
 void   windows_invalidate(obj_t *p); /* after a write to the mature object p */
 /* The ring turns over only at a bytecode boundary, where no view is live. The
  * dispatch loop does the test itself; windows_turnover() is the rare case. */
@@ -302,6 +310,7 @@ void remember(obj_t *container, uint16_t off);   /* the field now holds a young 
 void card_find(void);
 int  card_alu64(uint8_t op, const uint8_t *a, const uint8_t *b, uint8_t *r);
 void card_read_at(uint32_t addr, void *dst, uint16_t n);
+void card_read_more(void *dst, uint16_t n);      /* continue from where the last read stopped */
 void card_write_at(uint32_t addr, const void *src, uint16_t n);
 uint32_t card_reserve(uint16_t n);
 int  card_lookup(uint32_t set, uint32_t h, uint16_t *ix, uint32_t *value);

@@ -25,7 +25,7 @@ bank 0
   $0400  C stack, growing down from $1FFF   7 KB: frames and direct-page locals
   $2000  the program                     code + globals, from omf2bin; ≤ $BFFF
          globals: value stack (4 KB), RSTACK (768 B), FSTACK (512 B), CATCH (12 × 16 B),
-                  CTAB (2 KB), CHUNK_INFO (128 × 4 B), the window table (64 × 6 B)
+                  CTAB (2 KB), CHUNK_INFO (128 × 4 B), the window table (64 sets × 2 ways × 8 B)
   $C000  never used: slot I/O, the card at $C0nX, then language-card RAM/ROM
 
 bank 1  NURSERY   $010000-$01FFFF   64 KB, bump-allocated
@@ -171,10 +171,19 @@ each disproved by a slow experiment (DECISIONS.md D19):
   stopped by the cycle budget, which is the one run worth measuring. Every
   counter is on a cold path, so none of them is in the dispatch loop.
 - **A PC-page profiler** (`A2MIN_PROFILE=1`): instructions per 256-byte page of
-  bank 0, top pages printed. There is no symbol map for the ORCA/C output, so a
-  page is the finest honest unit, but the link order (`main run data prims gc
-  card`) is enough to name the routine — which is the question a cycle total
-  cannot answer.
+  bank 0, top pages printed. On its own a page was the finest honest unit, and
+  it was not fine enough: "49% at the tail of bank 0" turned out to be four
+  ORCA runtime helpers sharing one page.
+- **A function profiler** (`A2MIN_PROFILE=1 A2MIN_SYMBOLS=target/build/cvm.map`):
+  cycles per function, and calls into each function by caller, read from the
+  JSL return address. `orcalink` always passes the linker `+S`, which does not
+  change the load file (checked byte for byte), and `orcabuild` has `omf2bin
+  --syms` turn that table into `ADDRESS NAME` lines next to the `.bin`. Its
+  first run named `~LSHR4`, ORCA/C's 32-bit shift, at 28% of foldlStrict
+  (STATUS.md item 4e).
+- **A bus log** (`A2MIN_BUSLOG=1`): DATA-port bytes read per card address,
+  watched from the bus, so it needs nothing from the program. The phase
+  counters say how many window copies; this says which objects they were.
 
 Bound a long run with **`A2MIN_BUDGET`, never `timeout`**: a budgeted run prints
 its counters, DIAG and profile, and a killed one prints nothing.

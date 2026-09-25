@@ -6,13 +6,20 @@
 # fixed bug into the RTL, one at a time, and asserts that sim/regress_main.cpp catches
 # it. If a mutation survives, the corresponding test is decorative and must be fixed.
 #
-# Every mutation is reverted afterwards, including on failure or interrupt.
+# Everything runs in a COPY of rtl/, sim/ and tests/ in a temporary directory, so
+# the tree is never edited. This script used to mutate rtl/*.v in place and
+# restore them from a trap -- but a SIGKILL (the low-memory reaper) skips every
+# trap, which is how scripts/mutation-vm.sh twice left a mutation behind.
 set -uo pipefail
+
+WORK=$(mktemp -d)
+cp -r rtl sim tests "$WORK/"
+cd "$WORK" || exit 1
 
 FILES=(rtl/a2nix_card.v rtl/sha256.v rtl/sha256_core.v rtl/storepath.v rtl/keycam.v rtl/alu64.v)
 BACKUP_DIR=$(mktemp -d)
 restore() { for f in "${FILES[@]}"; do cp "$BACKUP_DIR/$(basename "$f")" "$f"; done; }
-trap 'restore; rm -rf "$BACKUP_DIR"' EXIT INT TERM
+trap 'rm -rf "$BACKUP_DIR" "$WORK"' EXIT
 for f in "${FILES[@]}"; do cp "$f" "$BACKUP_DIR/$(basename "$f")"; done
 
 DIR=sim/build_mutation

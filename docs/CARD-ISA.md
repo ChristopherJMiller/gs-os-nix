@@ -356,6 +356,27 @@ search would have found.
 > STATUS.md item 8 rather than taken here. `MEMCMP` itself stays: it is correct,
 > tested, mutation-tested, and a string compare over the bus is still the thing
 > it was designed for — `find_attr` simply is not a caller that benefits.
+>
+> ### Measured again (2026-09-24): the crossover moved to ~32, and when a field read wins
+>
+> After the VM stopped paying ORCA/C's ~300-cycle `~LSHR4` per address byte and
+> set `A0` in one assembly block (~1,300 → ~170 cycles), the same crossover run
+> reads: **n = 8 scan wins by 1,068 cycles; CAM wins at 32 (+1,284), 64 (+4,420)
+> and 128 (+10,692).** `LOOKUP`'s bus cost is unchanged at 20 accesses; what
+> changed is the CPU time around it. So the crossover was partly the software's
+> overhead, not the verb's, and it moved from 64–128 down to ~32. On the ten
+> fixtures `LOOKUP` still costs slightly (−0.8%, their sets are small). This is
+> evidence for item 8's decision, not the decision.
+>
+> The field-read argument above also has a boundary, found the same day: it
+> holds when the copy is **reused**. `foldl'` over a promoted 1,000-element list
+> re-fetches the list every iteration (the callback may turn the window ring
+> over), and the copy was evicted after ~23 uses on average, 44 whole copies of
+> 4 KB: ~174 bus bytes per element used. Reading the one element costs 9. So
+> `list_elem` (data.c) reads single elements of a long mature list that is not
+> in a window, and still copies short ones. That took the program's card reads
+> from 238 KB to 45 KB. The rule is reuse, not size: bulk-copy what will be
+> read again before it is evicted, field-read what will not.
 
 `ALU64` exists because the 65816 has **no multiply or divide at all** and Nix integers
 are 64-bit. Operands `P0`/`P1` and the result `P3` are 8-byte little-endian integers in

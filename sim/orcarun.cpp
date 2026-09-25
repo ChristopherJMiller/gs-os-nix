@@ -72,6 +72,7 @@
 #include <dirent.h>
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -1723,7 +1724,46 @@ int run_program(const std::string &prog_host, const std::string &cmdline) {
 }
 
 // --- omf2bin ---------------------------------------------------------------------------------
-int omf2bin(const std::string &in, const std::string &out, uint32_t org) {
+// The ORCA linker's `+S` symbol table gives each symbol as (offset, segment
+// number); only omf2bin knows where each segment lands. With --syms, turn the
+// table into "ADDRESS NAME" lines, sorted, for a2min's profiler
+// (A2MIN_SYMBOLS). A page-granular profile could only say "the tail of bank 0";
+// this is what names the routine.
+void write_symbol_map(const std::string &table, const std::string &out,
+                      const std::map<uint16_t, uint32_t> &segbase) {
+    std::vector<uint8_t> raw;
+    if (!read_host_file(table, raw)) fatal("cannot read %s", table.c_str());
+    std::istringstream in(std::string(raw.begin(), raw.end()));
+    std::vector<std::pair<uint32_t, std::string>> syms;
+    std::string line;
+    bool inside = false;
+    while (std::getline(in, line)) {
+        if (line.find("Global symbol table") != std::string::npos) { inside = true; continue; }
+        if (!inside) continue;
+        // Two entries per line: OFFSET G|P SEG 00 NAME
+        std::istringstream ls(line);
+        std::string off, gp, seg, zero, name;
+        while (ls >> off >> gp >> seg >> zero >> name) {
+            // Only real entries: the table is followed by prose ("There are 2
+            // segments, for a length of ...") that would otherwise parse.
+            if (off.size() != 8 || off.find_first_not_of("0123456789ABCDEFabcdef") != std::string::npos ||
+                (gp != "G" && gp != "P")) break;
+            const auto it = segbase.find(static_cast<uint16_t>(std::strtoul(seg.c_str(), nullptr, 16)));
+            if (it == segbase.end()) continue;              // a segment omf2bin did not place
+            syms.emplace_back(it->second + static_cast<uint32_t>(std::strtoul(off.c_str(), nullptr, 16)), name);
+        }
+    }
+    if (syms.empty()) fatal("%s: no symbols found (was the linker given +S?)", table.c_str());
+    std::sort(syms.begin(), syms.end());
+    std::string text;
+    char buf[16];
+    for (const auto &s : syms) { std::snprintf(buf, sizeof buf, "%06X ", s.first); text += buf + s.second + "\n"; }
+    if (!write_host_file(out, std::vector<uint8_t>(text.begin(), text.end()))) fatal("cannot write %s", out.c_str());
+}
+
+int omf2bin(const std::string &in, const std::string &out, uint32_t org,
+            const std::string &syms_in = "", const std::string &map_out = "") {
+    std::map<uint16_t, uint32_t> segbase;                         // segment number -> load address
     std::vector<uint8_t> image;
     if (!read_host_file(in, image)) fatal("cannot read %s", in.c_str());
     // The stub a2min enters in emulation mode: go native with 16-bit registers,
@@ -1753,6 +1793,7 @@ int omf2bin(const std::string &in, const std::string &out, uint32_t org) {
                 fatal("omf2bin: segment '%s' (%u bytes) does not fit in bank 0 below $C000; "
                       "move code into a `segment` of its own", s.segname.c_str(), size);
             cursor += size;
+            segbase[s.segnum] = at;
             return at;
         }
         if (size > 0x10000) fatal("omf2bin: segment '%s' is larger than a bank", s.segname.c_str());
@@ -1760,6 +1801,7 @@ int omf2bin(const std::string &in, const std::string &out, uint32_t org) {
         const uint32_t at = (code_bank << 16) | bank_cursor;
         bank_cursor = (bank_cursor + size + 0xFF) & ~0xFFu;
         extra.emplace_back(at, size);
+        segbase[s.segnum] = at;
         return at;
     });
     const uint8_t stub[stub_len] = { 0x18, 0xFB, 0xC2, 0x30, 0x3B, 0x8D, 0xFE, 0x03, 0xA9, 0xFF, 0x1F, 0x1B,
@@ -1787,6 +1829,7 @@ int omf2bin(const std::string &in, const std::string &out, uint32_t org) {
     std::printf("omf2bin: %s -> %s: %u bytes in bank 0 at $%04X", in.c_str(), out.c_str(), cursor - org, org);
     for (const auto &e : extra) std::printf(", %u at $%06X", e.second, e.first);
     std::printf(", entry $%06X\n", L.entry);
+    if (!syms_in.empty()) write_symbol_map(syms_in, map_out, segbase);
     return 0;
 }
 
@@ -1795,7 +1838,7 @@ void usage() {
         "usage: orcarun [--map N=DIR]... [--orca ROOT] [--var NAME=VALUE]... [--trace] [--stack N]\n"
         "               [--sfile S] [--dfile D] [--parms P] [--istring I] [--minus abc] [--plus xyz]\n"
         "               [--lops N] [--merr N] [--keep] [--org N] <program> [command line...]\n"
-        "       orcarun --omf2bin [--org 0x2000] <load-file> <out.bin>\n");
+        "       orcarun --omf2bin [--org 0x2000] [--syms TABLE OUT.map] <load-file> <out.bin>\n");
     std::exit(2);
 }
 
@@ -1818,16 +1861,20 @@ int main(int argc, char **argv) {
 
     if (args[0] == "--omf2bin") {
         uint32_t org = 0x2000;
+        std::string syms_in, map_out;
         std::vector<std::string> files;
         for (size_t i = 1; i < args.size(); ++i) {
             if (args[i] == "--org") {
                 if (i + 1 >= args.size()) fatal("--org needs a value");
                 org = static_cast<uint32_t>(std::strtoul(args[++i].c_str(), nullptr, 0));
+            } else if (args[i] == "--syms") {
+                if (i + 2 >= args.size()) fatal("--syms needs TABLE and OUT.map");
+                syms_in = args[++i]; map_out = args[++i];
             } else if (args[i].rfind("--", 0) == 0) { std::fprintf(stderr, "unknown option %s\n", args[i].c_str()); usage(); }
             else files.push_back(args[i]);
         }
         if (files.size() != 2) usage();
-        return omf2bin(files[0], files[1], org);
+        return omf2bin(files[0], files[1], org, syms_in, map_out);
     }
 
     std::string program, cmdline;

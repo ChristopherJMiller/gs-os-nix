@@ -97,10 +97,18 @@ let
         done
         list="$list''${list:+ }$b"
       done
-      "$RUN" --orca "$ORCA" --map "0=$work" --sfile "$list" --dfile "$out" \
-        --lops 2 --merr 8 \
-        "$ORCA/Languages/Linker#B5DB01" link "$list" "keep=$out"
+      # +S: the linker prints its global symbol table, (offset, segment) per
+      # symbol. It does not change the load file (checked byte for byte). It is
+      # kept as OUT.sym, and omf2bin --syms turns it into addresses for a2min's
+      # function profiler (A2MIN_SYMBOLS); the console shows the rest as before.
+      if ! "$RUN" --orca "$ORCA" --map "0=$work" --sfile "$list" --dfile "$out" \
+          --lops 2 --merr 8 --plus S \
+          "$ORCA/Languages/Linker#B5DB01" link "$list" "keep=$out" > "$work/link.log" 2>&1; then
+        cat "$work/link.log"; exit 1
+      fi
+      sed '/Global symbol table:/,/^There are/{/^There are/!d}' "$work/link.log"
       mkdir -p "$outdir"
+      sed -n '/Global symbol table:/,/^There are/p' "$work/link.log" > "$outdir/$out.sym"
       found=""
       for f in "$work/$out#"*; do
         [ -f "$f" ] || continue
@@ -145,7 +153,8 @@ let
       done
       name=$(basename "$out"); name=''${name%.*}
       orcalink -d "$stage" -o "$name" "''${names[@]}"
-      omf2bin "''${org[@]}" "$stage/$name" "$out"
+      # OUT.map: "ADDRESS NAME" per symbol, for A2MIN_SYMBOLS (docs/VM.md)
+      omf2bin "''${org[@]}" --syms "$stage/$name.sym" "''${out%.*}.map" "$stage/$name" "$out"
       # the OMF load file next to the binary, for coff/lseg-style inspection
       cp "$stage/$name" "''${out%.*}.omf"
     '';

@@ -12,19 +12,24 @@
 # The whole card is Verilated once; each mutation then rebuilds only a2min.o via the
 # generated makefile, so the loop is seconds per mutation rather than minutes.
 #
-# Every mutation is reverted afterwards, including on failure or interrupt.
+# The mutations are applied to a COPY of rtl/ and sim/ in a temporary directory,
+# never to the tree. This script used to edit sim/cpu65816.h in place and restore
+# it from a trap -- but a SIGKILL (the low-memory reaper) skips every trap, which
+# is how scripts/mutation-vm.sh twice left a mutation behind in target/vm/c.
 set -uo pipefail
 
-FILE=sim/cpu65816.h
-HARNESS=sim/a2min.cpp
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+cp -r rtl sim "$WORK/"
+FILE="$WORK/sim/cpu65816.h"
+HARNESS="$WORK/sim/a2min.cpp"
+ORIG="$WORK/cpu65816.h.orig"
+cp "$FILE" "$ORIG"
 BIN=target/build/native_test.bin
-DIR=sim/build_mutation_a2min
+DIR="$WORK/build"
 JOBS="${NIX_BUILD_CORES:-0}"
 
-BACKUP=$(mktemp)
-cp "$FILE" "$BACKUP"
-restore() { cp "$BACKUP" "$FILE"; }
-trap 'restore; rm -f "$BACKUP"' EXIT INT TERM
+restore() { cp "$ORIG" "$FILE"; }
 
 pass=0
 fail=0
@@ -40,10 +45,10 @@ fi
 build() {
     if [ ! -f "$DIR/Va2nix_card.mk" ]; then
         rm -rf "$DIR"
-        verilator --cc --exe --build -j "$JOBS" -Irtl --top-module a2nix_card \
+        ( cd "$WORK" && verilator --cc --exe --build -j "$JOBS" -Irtl --top-module a2nix_card \
             -Wall -Wno-DECLFILENAME \
-            --Mdir "$DIR" -o a2min \
-            rtl/a2nix_card.v "$HARNESS" > /dev/null 2>&1 || return 2
+            --Mdir build -o a2min \
+            rtl/a2nix_card.v sim/a2min.cpp ) > /dev/null 2>&1 || return 2
     else
         touch "$FILE" "$HARNESS"
         make -s -C "$DIR" -f Va2nix_card.mk > /dev/null 2>&1 || return 2
@@ -53,7 +58,7 @@ build() {
 # Run the self-test against the current interpreter. 0 = it passed.
 run_suite() {
     build || return 2
-    ./"$DIR"/a2min --selftest "$BIN" > /dev/null 2>&1
+    "$DIR"/a2min --selftest "$BIN" > /dev/null 2>&1
 }
 
 # mutate <name> <sed-expression>
@@ -67,7 +72,7 @@ mutate() {
     restore
     sed -i "$expr" "$FILE"
 
-    if cmp -s "$BACKUP" "$FILE"; then
+    if cmp -s "$ORIG" "$FILE"; then
         printf '  %-48s PATTERN MISS -- update this script\n' "$name"
         fail=$((fail + 1))
         restore

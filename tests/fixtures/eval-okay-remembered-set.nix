@@ -20,8 +20,8 @@ let
   a = "0123456789abcdef";
   s = let b = a + a + a + a; c = b + b + b + b; in c + c + c + c + c + c + c;   # 1792 bytes
   burn = k: builtins.deepSeq (builtins.genList (i: s + builtins.toString i) k) k;
-  churn = burn 38;
-  churn2 = burn 38;
+  churn = burn 19 + burn 19;     # never more than ~34 KB live: the fixture also runs with no card
+  churn2 = burn 19 + burn 19;
   sumPairs = l: builtins.foldl' (acc: p: acc + builtins.elemAt p 0 + builtins.elemAt p 1) 0 l;
   sumCalls = l: builtins.foldl' (acc: f: acc + f 1) 0 l;
   first = [ (sumPairs xs) (sumCalls fs) ];

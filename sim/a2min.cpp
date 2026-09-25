@@ -59,6 +59,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -143,7 +144,33 @@ void advance(int n) {
 bool is_slot_io(uint32_t a) { return a >= 0xC080 && a <= 0xC0FF; }
 int  slot_of(uint32_t a) { return static_cast<int>((a & 0xF0) >> 4) - 8; }
 
+// A2MIN_BUSLOG=1: which card addresses the CPU reads through the DATA port,
+// how often, and how many bytes -- watched from the bus, so it needs nothing
+// from the program. The VM's counters say "4,950 window copies moving 238 KB";
+// this says which objects they were, which is what decides whether the fix is
+// a bigger window cache, a smarter one, or reading less. A burst starts at the
+// first DATA read after A0 is set and runs until A0 is set again.
+bool buslog_on = false;
+uint8_t bl_sel = 0, bl_idx = 0;
+uint32_t bl_a0 = 0, bl_start = 0;
+bool bl_fresh = false;
+std::map<uint32_t, std::pair<std::uint64_t, std::uint64_t>> bl_reads;   // start -> (bursts, bytes)
+
+void buslog_write(uint8_t off, uint8_t v) {
+    if (off == 2) { bl_sel = v; bl_idx = 0; }                        // ASEL rewinds the port index
+    else if (off == 3 && bl_sel == 0 && bl_idx < 4) {                // APORT, A0
+        bl_a0 = (bl_a0 & ~(0xFFu << (8 * bl_idx))) | (static_cast<uint32_t>(v) << (8 * bl_idx));
+        if (++bl_idx == 4) bl_fresh = true;
+    }
+}
+void buslog_read(uint8_t off) {
+    if (off != 4) return;                                            // DATA
+    if (bl_fresh) { bl_start = bl_a0; bl_fresh = false; ++bl_reads[bl_start].first; }
+    ++bl_reads[bl_start].second;
+}
+
 uint8_t card_read(uint8_t off) {
+    if (buslog_on) buslog_read(off);
     card->c0n_addr  = off;
     card->c0n_read  = 1;
     card->c0n_write = 0;
@@ -158,6 +185,7 @@ uint8_t card_read(uint8_t off) {
 }
 
 void card_write(uint8_t off, uint8_t v) {
+    if (buslog_on) buslog_write(off, v);
     card->c0n_addr  = off;
     card->c0n_wdata = v;
     card->c0n_write = 1;
@@ -280,6 +308,87 @@ bool profile_on = false;
 std::uint64_t pc_pages[256];      // bank-0 page (pc >> 8) -> instructions seen
 std::uint64_t pc_other = 0;       // anything outside bank 0
 
+// A2MIN_SYMBOLS=<file.map> ("ADDRESS NAME" lines; orcabuild writes one next to
+// the .bin from the linker's +S table): the profile by FUNCTION, in cycles, and
+// who calls each one. The page profile could only say "half the time is at the
+// tail of bank 0", which is four ORCA runtime helpers sharing a page; a helper
+// is only fixable through its callers, so calls are counted per caller -- read
+// from the JSL return address at the moment execution reaches a function's
+// first byte (ORCA/C calls everything with JSL).
+struct Sym { uint32_t addr; std::string name; };
+std::vector<Sym> syms;
+std::unordered_map<uint32_t, std::size_t> sym_at;             // first byte -> index
+std::vector<std::vector<std::uint64_t>> prof_cycles(256);     // per bank, 64K, lazily
+std::map<std::pair<std::size_t, std::size_t>, std::uint64_t> prof_calls;   // (caller, callee)
+constexpr std::size_t NO_SYM = ~std::size_t{0};
+
+std::size_t sym_of(uint32_t a) {
+    auto it = std::upper_bound(syms.begin(), syms.end(), a,
+                               [](uint32_t v, const Sym &s) { return v < s.addr; });
+    return it == syms.begin() ? NO_SYM : static_cast<std::size_t>(it - syms.begin() - 1);
+}
+
+void load_symbols(const char *path) {
+    std::ifstream f(path);
+    if (!f) { std::fprintf(stderr, "a2min: cannot read A2MIN_SYMBOLS=%s\n", path); std::exit(2); }
+    std::string addr, name;
+    while (f >> addr >> name) syms.push_back({static_cast<uint32_t>(std::strtoul(addr.c_str(), nullptr, 16)), name});
+    std::sort(syms.begin(), syms.end(), [](const Sym &a, const Sym &b) { return a.addr < b.addr; });
+    for (std::size_t i = 0; i < syms.size(); ++i) sym_at.emplace(syms[i].addr, i);
+}
+
+// Called after each step with the instruction's address and its cycle cost.
+void profile_step(uint32_t pa, std::uint64_t cyc) {
+    auto &bank = prof_cycles[(pa >> 16) & 0xFF];
+    if (bank.empty()) bank.assign(0x10000, 0);
+    bank[pa & 0xFFFF] += cyc;
+}
+
+void profile_entry(uint32_t pa) {
+    const auto it = sym_at.find(pa);
+    if (it == sym_at.end()) return;
+    // JSL pushed PBR, then PC-1 high, low: the return address sits at S+1..S+3.
+    const uint32_t ret = (static_cast<uint32_t>(ram[(cpu.sp + 3) & 0xFFFF]) << 16 |
+                          static_cast<uint32_t>(ram[(cpu.sp + 2) & 0xFFFF]) << 8 |
+                          ram[(cpu.sp + 1) & 0xFFFF]) + 1;
+    ++prof_calls[{sym_of(ret), it->second}];
+}
+
+void print_symbol_profile() {
+    std::vector<std::uint64_t> cyc(syms.size(), 0);
+    std::uint64_t unattributed = 0, total = 0;
+    for (uint32_t b = 0; b < 256; ++b) {
+        if (prof_cycles[b].empty()) continue;
+        for (uint32_t o = 0; o < 0x10000; ++o) {
+            const std::uint64_t c = prof_cycles[b][o];
+            if (!c) continue;
+            total += c;
+            const std::size_t s = sym_of((b << 16) | o);
+            if (s == NO_SYM) unattributed += c; else cyc[s] += c;
+        }
+    }
+    std::vector<std::size_t> order(syms.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return cyc[a] > cyc[b]; });
+    std::printf("  profile by function (A2MIN_SYMBOLS), CPU cycles; callers are counted calls\n");
+    for (std::size_t k = 0; k < order.size() && k < 15 && cyc[order[k]]; ++k) {
+        const std::size_t s = order[k];
+        std::uint64_t ncalls = 0;
+        std::vector<std::pair<std::uint64_t, std::size_t>> callers;
+        for (const auto &e : prof_calls)
+            if (e.first.second == s) { ncalls += e.second; callers.push_back({e.second, e.first.first}); }
+        std::sort(callers.rbegin(), callers.rend());
+        std::printf("    %5.1f%% %12llu  %-24s %9llu calls", 100.0 * cyc[s] / (total ? total : 1),
+                    static_cast<unsigned long long>(cyc[s]), syms[s].name.c_str(),
+                    static_cast<unsigned long long>(ncalls));
+        for (std::size_t c = 0; c < callers.size() && c < 3; ++c)
+            std::printf("%s %s %llu", c ? "," : "  <-", callers[c].second == NO_SYM ? "?" : syms[callers[c].second].name.c_str(),
+                        static_cast<unsigned long long>(callers[c].first));
+        std::printf("\n");
+    }
+    if (unattributed) std::printf("    %5.1f%% outside every symbol\n", 100.0 * unattributed / (total ? total : 1));
+}
+
 // The default budget is a hang detector. It was 50M cycles when the card was
 // clocked every cycle and 50M took two minutes; with the quiet clock it takes
 // ~0.3 s, and eval-okay-foldlStrict -- which needs 86M -- was scored as an
@@ -289,6 +398,8 @@ bool run_to_halt(uint64_t budget = 500'000'000) {
     // A2MIN_BUDGET overrides the cycle budget: GC-stress runs of the C VM need more.
     if (const char *b = std::getenv("A2MIN_BUDGET")) budget = std::strtoull(b, nullptr, 0);
     if (const char *p = std::getenv("A2MIN_PROFILE")) profile_on = (p[0] == '1');
+    if (const char *s = std::getenv("A2MIN_SYMBOLS"); s && *s && profile_on && syms.empty()) load_symbols(s);
+    if (const char *b = std::getenv("A2MIN_BUSLOG")) buslog_on = (b[0] == '1');
     cpu.reset(LOAD_ADDR);
     bus.halted = false;
     const uint16_t seed = HALT_ADDR - 1;
@@ -303,6 +414,13 @@ bool run_to_halt(uint64_t budget = 500'000'000) {
             const std::uint32_t pa = cpu.pcaddr();
             if ((pa >> 16) == 0) ++pc_pages[(pa >> 8) & 0xFF];
             else ++pc_other;
+            if (!syms.empty()) {
+                profile_entry(pa);
+                const std::uint64_t c0 = cpu.cycles;
+                cpu.step();
+                profile_step(pa, cpu.cycles - c0);
+                continue;
+            }
         }
         cpu.step();
     }
@@ -595,6 +713,21 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
             std::printf("    $%02X00-$%02XFF %12llu  %5.1f%%\n", v[i].second, v[i].second,
                         static_cast<unsigned long long>(v[i].first),
                         100.0 * v[i].first / cpu.instructions);
+        if (!syms.empty()) print_symbol_profile();
+    }
+    if (buslog_on) {
+        std::uint64_t bursts = 0, bytes = 0;
+        std::vector<std::pair<std::uint64_t, uint32_t>> v;
+        for (const auto &e : bl_reads) { bursts += e.second.first; bytes += e.second.second; v.push_back({e.second.second, e.first}); }
+        std::sort(v.rbegin(), v.rend());
+        std::printf("  buslog: %llu DATA bytes read in %llu bursts from %zu card addresses; top by bytes:\n",
+                    static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(bursts), bl_reads.size());
+        for (std::size_t i = 0; i < v.size() && i < 10; ++i) {
+            const auto &e = bl_reads[v[i].second];
+            std::printf("    $%06X %8llu bytes %6llu reads  (%llu bytes each)\n", v[i].second,
+                        static_cast<unsigned long long>(e.second), static_cast<unsigned long long>(e.first),
+                        static_cast<unsigned long long>(e.first ? e.second / e.first : 0));
+        }
     }
     if (!halted) { std::printf("error: did not halt\n"); return 1; }
 

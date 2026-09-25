@@ -134,15 +134,28 @@ number rises by widening the lowering and the VM together, one slice at a time
    Fixed, with two mutations of its own. The rule in ARCHITECTURE.md and CARD-ISA.md now reads
    *"… except through a recorded field"*, and **`MARK`/`FOLLOW` may be issued
    only with the set empty** — one more thing card-side `MARK` must respect.
-   **Two findings from building it, not fixed:** (1) foldlStrict at `n` = 1000
-   is still 2.2× slower with the card than without (85.7M vs 38.8M cycles), and
-   it is window copies now, not collections — 4,950 copies, 238 KB; the profile's
-   top page (`$A500`, 25%) needs naming before anything is changed. The same
-   page (`$A600` after the binary grew by $100) is **49%** of a GC-stress run of
-   `eval-okay-remembered-set`, where a stress collection costs ~160K cycles. It
-   is the tail of bank 0, where the link order puts `card.c` and then the ORCA
-   runtime; naming it needs a symbol map from the linker, which the toolchain
-   does not produce yet. That is the next instrument to build. (2) **One
+   **Two findings from building it.** (1) ~~foldlStrict at `n` = 1000 was 2.2×
+   slower with the card than without~~ **1.29× now** (2026-09-24), after two new
+   instruments named the cost instead of guessing at it:
+   - **A symbol map** (`orcalink` passes `+S`; `omf2bin --syms` writes
+     `cvm.map`; `A2MIN_PROFILE=1 A2MIN_SYMBOLS=target/build/cvm.map` profiles by
+     function, in cycles, with callers). The unnamed hot page was ORCA/C's
+     `~LSHR4`: every 32-bit shift in C is a library call at ~300 cycles, and it
+     was **28%** of foldlStrict (from `set_a0`, the window hash, `IS_YOUNG`).
+     `vm.h BYTE_OF`/`HI16` read the bytes instead; `set_a0` is one asm block.
+   - **A bus log** (`A2MIN_BUSLOG=1`: DATA-port reads by card address). **74%**
+     of the card traffic was one 4 KB list, copied whole 44 times to read one
+     element per iteration: `list_elem` now reads single elements of a long
+     mature list that is not in a window (CARD-ISA.md, "when a field read
+     wins"). And two hot 12-byte objects shared a direct-mapped window slot and
+     evicted each other ~800 times: the window table is 2-way now.
+
+   foldlStrict with the card: **86.3M → 46.0M cycles**, bus accesses 366K →
+   124K, card bytes read 238 KB → 45 KB. A GC-stress run of
+   `eval-okay-remembered-set`: 133M → 36.6M, after the collector's root walk
+   stopped calling `evac`/`translate` for roots that are already mature. What
+   remains of the gap is shared VM cost (`deref`, `run`, the call path; the
+   "C is 2.5× slower" thread in VM.md), not the card. (2) **One
    instruction that allocates more than the free nursery is `E_NOMEM`, and
    whether it happens depends on where the nursery happens to be:** `genList 300`
    allocates ~8 KB (a thunk per element) and fails if forced with less free,
@@ -207,6 +220,9 @@ number rises by widening the lowering and the VM together, one slice at a time
    the gate is answered on real programs rather than micro-benchmarks. It is also
    a correctness check: moving an operation to the CPU must not change an answer.
    Two results, both in [CARD-ISA.md](CARD-ISA.md):
+   **Update 2026-09-24: the crossover moved to ~32 attributes** once the VM
+   stopped paying ~1,300 cycles to set the card's address register (CARD-ISA.md
+   "Measured again (2026-09-24)"); the decision below is still Chris's.
    **`LOOKUP` does not pay below ~70 attributes** — the 2.7x it was justified by
    was against a binary search *through the `DATA` port*, and the VM instead
    copies the set into a window once and scans it in RAM, so the CPU path pays
@@ -240,7 +256,11 @@ number rises by widening the lowering and the VM together, one slice at a time
 - **`checks.regress` + `checks.mutation`** — every silent-corruption bug found gets a
   permanent named test, *and* the mutation runner reintroduces each bug to prove the
   test can fail. See DECISIONS.md **D14**: R4's first two mutations both survived, so
-  this is not a formality.
+  this is not a formality. **All three mutation runners** (`mutation-test.sh`,
+  `mutation-a2min.sh`, `mutation-vm.sh`) work on a copy of the sources in a
+  temporary directory and never edit the tree: a SIGKILL skips every trap, and the
+  in-place versions twice left a mutation behind. Verified by killing
+  `mutation-a2min.sh` with `-9` mid-run and checking `git status`.
 - **`checks.a2min-native` + `checks.mutation-a2min`** — the 65816 model the VM runs
   on is tested against data-sheet-derived expectations, and that self-test is proven
   to fail when the interpreter is broken. A wrong CPU model would make every VM
