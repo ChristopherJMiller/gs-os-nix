@@ -252,6 +252,7 @@ obj_t *list_alloc(uint16_t n);
 obj_t *attrs_alloc(uint16_t n);
 void   attr_name(void);                     /* ATTR_NAME (prims.c) */
 void   attrs_dynamic(void);                 /* ATTRS_DYN (prims.c): reads its operands at pc */
+void   lambda_args(void);                   /* LAMBDA_ARGS (prims.c): likewise */
 obj_t *deref_follow(obj_t *p);      /* checks, and follows INDIRECTs */
 obj_t *deref_pop(void);             /* deref(pop()) */
 obj_t *deref_rpop(void);            /* deref(rpop()) */

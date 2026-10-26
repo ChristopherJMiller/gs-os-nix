@@ -42,7 +42,7 @@ NBC="$2"
 # The derivation fixtures first: they are cheap, and run_suite stops at the
 # first wrong answer, so a mutation they catch costs seconds. The refusal is a
 # fixture too -- its .exp is the error line (scripts/scoreboard.py).
-FIXTURES="eval-okay-versions-names eval-fail-compareversions-context eval-fail-compareversions-order eval-fail-splitversion-int eval-fail-parsedrvname-context eval-fail-replacestrings-from eval-fail-replacestrings-lengths eval-fail-replacestrings-to eval-fail-replacestrings-s-first eval-fail-replacestrings-from-first eval-fail-replacestrings-first-use eval-okay-sort eval-okay-sort-noorder eval-fail-sort-bool eval-fail-sort-elements-first eval-fail-sort-function eval-fail-sort-function-first eval-fail-sort-list eval-okay-attr-primops eval-fail-catattrs-element eval-fail-catattrs-name-context eval-fail-groupby-name eval-fail-groupby-context eval-fail-groupby-function eval-fail-zipattrswith-function eval-fail-mapattrs-set eval-fail-closure-mixed-keys eval-fail-closure-no-key eval-fail-closure-no-operator eval-fail-closure-operator-list eval-fail-closure-set-keys eval-okay-dynamic-attrs eval-fail-dynattr-context eval-fail-dynattr-has-null eval-fail-dynattr-int eval-fail-dynattr-nested eval-fail-dynattr-path eval-fail-dynattr-prefix eval-fail-dynattr-select-context eval-fail-dynattr-select-int eval-fail-dynattr-select-null eval-fail-dynattr-select-or-null eval-fail-dynattr-static eval-fail-dynattr-tostring eval-fail-dynattr-tryeval eval-fail-dynattr-twice eval-okay-floats eval-okay-float-identity eval-fail-float-add-string eval-fail-float-ceil-range eval-fail-float-compare eval-fail-float-concat eval-fail-float-div-zero eval-fail-float-floor-nan eval-fail-float-floor-precision eval-fail-float-interp eval-okay-tofile eval-fail-tofile-contents eval-fail-tofile-name eval-fail-tofile-name-context eval-fail-tofile-output eval-fail-tofile-whole eval-okay-context-builtins eval-fail-context-adddrv-output eval-fail-context-adddrv-source eval-fail-context-adddrv-two eval-fail-context-append-alloutputs eval-fail-context-append-hash eval-fail-context-append-key eval-fail-context-append-output-ctx eval-fail-context-append-outputs eval-fail-context-getattr eval-fail-context-hasattr eval-fail-context-hascontext-path eval-fail-context-hashstring eval-fail-context-listtoattrs eval-fail-context-removeattrs eval-okay-int-limits eval-fail-int-overflow-add eval-fail-int-overflow-sub eval-fail-int-overflow-neg eval-fail-int-overflow-mul eval-fail-int-overflow-mul-min eval-fail-int-overflow-square eval-fail-int-overflow-div eval-fail-int-overflow-uncaught eval-okay-derivation eval-okay-derivation-fixed-output eval-fail-derivation-fixed-bin eval-fail-derivation-fixed-outputs eval-fail-derivation-hash-base16-digit eval-fail-derivation-hash-base64-digit eval-fail-derivation-hash-empty eval-fail-derivation-hash-length eval-fail-derivation-hash-mode eval-fail-derivation-hash-nix32-digit eval-fail-derivation-hash-nix32 eval-fail-derivation-hash-prefix eval-fail-derivation-hash-sri-long eval-fail-derivation-hash-sri-short eval-fail-derivation-hash-type eval-fail-derivation-hash-untyped refuse-derivation-hash-blake3 refuse-derivation-hash-git refuse-derivation-hash-text eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists eval-okay-derivation-deep eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
+FIXTURES="eval-okay-function-args eval-fail-functionargs-int eval-fail-functionargs-functor eval-okay-versions-names eval-fail-compareversions-context eval-fail-compareversions-order eval-fail-splitversion-int eval-fail-parsedrvname-context eval-fail-replacestrings-from eval-fail-replacestrings-lengths eval-fail-replacestrings-to eval-fail-replacestrings-s-first eval-fail-replacestrings-from-first eval-fail-replacestrings-first-use eval-okay-sort eval-okay-sort-noorder eval-fail-sort-bool eval-fail-sort-elements-first eval-fail-sort-function eval-fail-sort-function-first eval-fail-sort-list eval-okay-attr-primops eval-fail-catattrs-element eval-fail-catattrs-name-context eval-fail-groupby-name eval-fail-groupby-context eval-fail-groupby-function eval-fail-zipattrswith-function eval-fail-mapattrs-set eval-fail-closure-mixed-keys eval-fail-closure-no-key eval-fail-closure-no-operator eval-fail-closure-operator-list eval-fail-closure-set-keys eval-okay-dynamic-attrs eval-fail-dynattr-context eval-fail-dynattr-has-null eval-fail-dynattr-int eval-fail-dynattr-nested eval-fail-dynattr-path eval-fail-dynattr-prefix eval-fail-dynattr-select-context eval-fail-dynattr-select-int eval-fail-dynattr-select-null eval-fail-dynattr-select-or-null eval-fail-dynattr-static eval-fail-dynattr-tostring eval-fail-dynattr-tryeval eval-fail-dynattr-twice eval-okay-floats eval-okay-float-identity eval-fail-float-add-string eval-fail-float-ceil-range eval-fail-float-compare eval-fail-float-concat eval-fail-float-div-zero eval-fail-float-floor-nan eval-fail-float-floor-precision eval-fail-float-interp eval-okay-tofile eval-fail-tofile-contents eval-fail-tofile-name eval-fail-tofile-name-context eval-fail-tofile-output eval-fail-tofile-whole eval-okay-context-builtins eval-fail-context-adddrv-output eval-fail-context-adddrv-source eval-fail-context-adddrv-two eval-fail-context-append-alloutputs eval-fail-context-append-hash eval-fail-context-append-key eval-fail-context-append-output-ctx eval-fail-context-append-outputs eval-fail-context-getattr eval-fail-context-hasattr eval-fail-context-hascontext-path eval-fail-context-hashstring eval-fail-context-listtoattrs eval-fail-context-removeattrs eval-okay-int-limits eval-fail-int-overflow-add eval-fail-int-overflow-sub eval-fail-int-overflow-neg eval-fail-int-overflow-mul eval-fail-int-overflow-mul-min eval-fail-int-overflow-square eval-fail-int-overflow-div eval-fail-int-overflow-uncaught eval-okay-derivation eval-okay-derivation-fixed-output eval-fail-derivation-fixed-bin eval-fail-derivation-fixed-outputs eval-fail-derivation-hash-base16-digit eval-fail-derivation-hash-base64-digit eval-fail-derivation-hash-empty eval-fail-derivation-hash-length eval-fail-derivation-hash-mode eval-fail-derivation-hash-nix32-digit eval-fail-derivation-hash-nix32 eval-fail-derivation-hash-prefix eval-fail-derivation-hash-sri-long eval-fail-derivation-hash-sri-short eval-fail-derivation-hash-type eval-fail-derivation-hash-untyped refuse-derivation-hash-blake3 refuse-derivation-hash-git refuse-derivation-hash-text eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists eval-okay-derivation-deep eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
 MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1 mask:4"
 SRCS=$(grep -v '^#' target/vm/c/SOURCES)           # link order: main.c first
 WORK=$(mktemp -d)
@@ -56,30 +56,78 @@ for t in $FIXTURES; do
     "$NBC" "tests/fixtures/$t.nix" -o "$WORK/$t.nbc" || { echo "cannot compile $t" >&2; exit 1; }
 done
 
-# Build the VM from $WORK/src and run every fixture in every mode. 0 = right
-# answers everywhere, 1 = something was wrong (or stopped), 2 = did not build.
-run_suite() {
-    local s list=""
-    for s in $SRCS; do list="$list $WORK/src/$s"; done
-    orcabuild -o "$WORK/cvm.bin" -O $list > "$WORK/build.log" 2>&1 || return 2
-    local t mode got want
+# One fixture in one mode: 0 if the VM gives the right answer.
+run_one() {
+    local mode=$1 t=$2 got want
+    want=$(tr -d '\n' < "tests/fixtures/$t.exp")
+    case $mode in
+        limit:*)  got=$(A2MIN_RSET_LIMIT=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
+                        --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
+        period:*) got=$(A2MIN_GC_PERIOD=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
+                        --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
+        both:*)   got=$(A2MIN_GC_PERIOD=${mode#*:} A2MIN_RSET_LIMIT=1 A2MIN_BUDGET=$BUDGET "$A2MIN" \
+                        --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
+        reserve:*) got=$(A2MIN_RESERVE_STRESS=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
+                        --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
+        mask:*)   got=$(A2MIN_VERB_MASK=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
+                        --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
+    esac
+    [ "$got" = "$want" ]
+}
+
+# ORCA/C compiles each source to an object of its own, and a mutation
+# changes one file: the baseline compiles them all into $WORK/obj, a mutation
+# only its own file, linked with the baseline's others (measured: 9.5 s of
+# compiling per mutation down to 0.2-1.8 s). A header changes everything.
+# The steps are orcabuild's.
+build() {
+    local changed=${1:-} s n d objs=""
+    rm -rf "$WORK/stage"
+    mkdir -p "$WORK/stage" "$WORK/obj"
+    : > "$WORK/build.log"
+    for s in $SRCS; do
+        n=${s%.c}
+        if [ -z "$changed" ]; then d="$WORK/obj"
+        elif [ "$changed" = "$s" ] || [ "${changed%.h}" != "$changed" ]; then d="$WORK/stage"
+        else objs="$objs $WORK/obj/$n"; continue
+        fi
+        orcacc -O -d "$d" -o "$n" "$WORK/src/$s" >> "$WORK/build.log" 2>&1 || return 1
+        objs="$objs $d/$n"
+    done
+    # shellcheck disable=SC2086
+    orcalink -d "$WORK/stage" -o cvm $objs >> "$WORK/build.log" 2>&1 || return 1
+    omf2bin --syms "$WORK/stage/cvm.sym" "$WORK/cvm.map" "$WORK/stage/cvm" "$WORK/cvm.bin" >> "$WORK/build.log" 2>&1
+}
+
+# The baseline: every fixture in every mode, each fixture timed, so that the
+# mutations can run the cheap ones first (ORDER). 0 = right everywhere, 1 =
+# something was wrong, 2 = did not build.
+ORDER=""
+baseline() {
+    local t mode t0 costs=""
+    build || return 2
     for t in $FIXTURES; do
-        want=$(tr -d '\n' < "tests/fixtures/$t.exp")
-        for mode in $MODES; do
-            case $mode in
-                limit:*)  got=$(A2MIN_RSET_LIMIT=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
-                                --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
-                period:*) got=$(A2MIN_GC_PERIOD=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
-                                --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
-                both:*)   got=$(A2MIN_GC_PERIOD=${mode#*:} A2MIN_RSET_LIMIT=1 A2MIN_BUDGET=$BUDGET "$A2MIN" \
-                                --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
-                reserve:*) got=$(A2MIN_RESERVE_STRESS=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
-                                --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
-                mask:*)   got=$(A2MIN_VERB_MASK=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
-                                --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
-            esac
-            [ "$got" = "$want" ] || return 1
-        done
+        t0=$(date +%s%N)
+        for mode in $MODES; do run_one "$mode" "$t" || return 1; done
+        costs="$costs$(( ($(date +%s%N) - t0) / 1000000 )) $t
+"
+    done
+    ORDER=$(printf '%s' "$costs" | sort -n | cut -d' ' -f2 | tr '\n' ' ')
+    return 0
+}
+
+# A mutated VM: the same checks as the baseline, in the order that finds a
+# wrong answer soonest. First every fixture in the first mode (a plain run),
+# cheapest first: most mutations break a plain run, and one costs a seventh
+# of the fixture's whole suite. Then the other modes, fixture by fixture,
+# cheapest first: a collector bug shows under stress, often in the first
+# fixture. 0 = right everywhere, 1 = caught, 2 = did not build.
+run_suite() {
+    local first=${MODES%% *} rest=${MODES#* } t mode
+    build "$1" || return 2
+    for t in $ORDER; do run_one "$first" "$t" || return 1; done
+    for t in $ORDER; do
+        for mode in $rest; do run_one "$mode" "$t" || return 1; done
     done
     return 0
 }
@@ -102,7 +150,7 @@ mutate() {
         printf '  %-52s PATTERN MISS -- update this script\n' "$name"
         fail=$((fail + 1)); return
     fi
-    run_suite
+    run_suite "$file"
     case $? in
         0) printf '  %-52s SURVIVED -- the test is decorative!\n' "$name"; fail=$((fail + 1)) ;;
         2) printf '  %-52s DID NOT BUILD -- fix the mutation\n' "$name"; fail=$((fail + 1)) ;;
@@ -113,7 +161,7 @@ mutate() {
 echo "=== mutation testing the collector (remembered set, object sizes, reserves) ==="
 echo "Baseline: the fixtures must pass in every mode on the unmutated VM."
 fresh
-run_suite
+baseline
 case $? in
     0) echo "  baseline passes" ;;
     2) echo "  BASELINE DID NOT BUILD" >&2; cat "$WORK/build.log" >&2; exit 1 ;;
@@ -596,6 +644,15 @@ mutate "replaceStrings takes the last from that matches" strings.c \
 
 mutate "replaceStrings drops the used to's context" strings.c \
        's/^    x = ctx_join(vsp - used - 1, used + 1);$/    x = ctx_join(vsp - used - 1, 1);/'
+
+mutate "a lambda with formals forgets its functionArgs chunk" prims.c \
+       's/^    SET_HDR(o, T_LAMBDA, a + 1);$/    SET_HDR(o, T_LAMBDA, 0);/'
+
+mutate "functionArgs takes any value" prims.c \
+       's/^    if (v->tag != T_LAMBDA) type_err();$//'
+
+mutate "functionArgs runs the chunk after its own" prims.c \
+       's/^    CL_CODE(o) = chunk_info\[a - 1\].code;$/    CL_CODE(o) = chunk_info[a].code;/'
 
 echo
 echo "$pass mutations caught, $fail not caught"

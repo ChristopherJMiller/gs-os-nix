@@ -63,7 +63,7 @@ null pointer, so address 0 is never allocated.
 | `$06` | `LIST` | element count | `count` × 4-byte element pointers |
 | `$07` | `ATTRS` | attribute count | three parallel arrays — see below |
 | `$08` | `THUNK` | — | 4-byte code pointer, 4-byte env pointer |
-| `$09` | `LAMBDA` | — | 4-byte code pointer, 4-byte env pointer |
+| `$09` | `LAMBDA` | 0, or 1 + the chunk that builds its `builtins.functionArgs` set (`LAMBDA_ARGS`) | 4-byte code pointer, 4-byte env pointer |
 | `$0A` | `INDIRECT` | — | 4-byte pointer. What `FOLLOW` chases |
 | `$0B` | `BLACKHOLE` | — | —. Under evaluation; re-entry is an infinite recursion |
 | `$0C` | `FORWARDED` | — | 4-byte pointer to the object's copy in to-space. **Only ever in from-space, only during a collection** |

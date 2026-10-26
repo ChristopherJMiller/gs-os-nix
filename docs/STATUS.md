@@ -175,8 +175,15 @@ comparator shows the algorithm (`sort (a: b: true) [ 1 2 3 ]` is `[ 3 2 1
 model of the algorithm found inputs that tell each planted bug apart -- the
 first fixture's "pseudo-random" lists had every element alike mod 5, so its
 "no order" comparator was a constant and a cutoff of 8 for 16 survived. 3
-corpus tests, 7 fixtures, 6 mutations; `functionArgs` (the generator must keep
-the formals it desugars); `toJSON`/`fromJSON` (a float's shortest
+corpus tests, 7 fixtures, 6 mutations; ~~`functionArgs`~~ **done**: the
+generator keeps what it desugars away -- a lambda with formals is
+`LAMBDA_ARGS`, its `aux` naming a chunk that builds `{ name = hasDefault;
+}` -- so `functionArgs derivation` is `{ outputs = true; }` as on the host (3
+corpus tests, 3 fixtures, 3 mutations; bank 0 +7). **`mutation-vm` is three
+times faster per mutation** (20 s to 6 s, measured on eight): the baseline
+times each fixture, a mutated VM runs every fixture plainly first, cheapest
+first, before the stress modes, and only the mutated file is recompiled
+(the split build is byte-identical to `orcabuild`'s); `toJSON`/`fromJSON` (a float's shortest
 round-trip text), `toXML`, `fromTOML`; ~~`compareVersions`, `splitVersion`,
 `parseDrvName`, `replaceStrings`~~ **done** (`names.cc` and `primops.cc` rule
 by rule: a run of digits is a version number only while it fits a C++
@@ -247,7 +254,7 @@ a2min.
   other, were decided -- soft-float in C -- and are done: [FLOAT.md](FLOAT.md).)
 - **Card-side `MARK`** only when the promoted-bytes counter shows the 512 KB
   ceiling binding on a real program; nothing has yet.
-- **Bank 0** (38,203 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
+- **Bank 0** (38,210 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
   far pointers would buy the md5/sha1/sha512 tables. Watch for ORCA/C library
   routines: a struct copy links `~MOVE`, a variable left shift `~SHIFTLEFT`.
 - **The `eval-fail` corpus**, and **L5** (self-hosting, D7's exit).
@@ -280,8 +287,9 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-**Bank 0: 38,203 of 40,960 bytes** (2026-10-26, after dynamic attribute
-names, +14 for two opcode cases; 38,189 after floats: +419, a tag
+**Bank 0: 38,210 of 40,960 bytes** (2026-10-26, after `functionArgs`, +7
+for `LAMBDA_ARGS`; 38,203 after dynamic attribute names, +14 for two opcode
+cases; 38,189 after floats: +419, a tag
 test in each operation that can see a float -- the work is in bank 4 -- and
 `~SHL8`/`~LSHR8`, which ORCA/C links for any 64-bit shift; 37,770 after the
 maintainability phase). It was 38,406 (2026-10-25, after string context, and
@@ -301,8 +309,9 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **467 / 532** (2026-10-26, after the version and name
-primops; 0 fail, 6 error, 41 unsupported, 18 notyetpassing). It was 446 /
+The scoreboard reads **473 / 535** (2026-10-26, after `functionArgs`; 0
+fail, 6 error, 38 unsupported, 18 notyetpassing). It was 467 / 532 after
+the version and name primops (41 unsupported). It was 446 /
 521 after `sort` (6 error, 50 unsupported). It was 436 / 514 after the
 attribute-set primops (7 error, 52 unsupported). It was 406 / 501
 after dynamic attribute names (0 fail, 8 error, 67 unsupported, 20

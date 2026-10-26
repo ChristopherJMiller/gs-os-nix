@@ -141,6 +141,32 @@ impl Compiler {
         self.emit_u16(chunk, idx);
         Ok(())
     }
+    /// A one-argument lambda: its body runs in a fresh environment whose
+    /// element 1 is the argument and whose parent is the closure's environment
+    /// -- the same shape as a one-binding let, so the scope chain is the same.
+    /// With `args`, a lambda with formals: LAMBDA_ARGS, and that chunk builds
+    /// its builtins.functionArgs set.
+    fn emit_lambda(&mut self, param: &str, body: &Expr, chunk: usize, args: Option<usize>) -> Result<(), Unsupported> {
+        self.chunks.push(Chunk::default());
+        let body_chunk = self.chunks.len() - 1;
+        self.scopes.push(Scope { names: vec![param.to_string()], with: false });
+        self.strict(body, body_chunk)?;
+        self.emit_return(body_chunk);
+        self.scopes.pop();
+        match args {
+            None => {
+                self.emit(chunk, OP_LAMBDA);
+                self.emit_u16(chunk, body_chunk as u16);
+            }
+            Some(a) => {
+                self.emit(chunk, OP_LAMBDA_ARGS);
+                self.emit_u16(chunk, body_chunk as u16);
+                self.emit_u16(chunk, a as u16);
+            }
+        }
+        Ok(())
+    }
+
     /// One step of a selection's path: a name's constant, or a computed key,
     /// forced and checked to be a string without context (ATTR_NAME).
     fn emit_key(&mut self, key: &Key, chunk: usize) -> Result<(), Unsupported> {
@@ -433,19 +459,7 @@ impl Compiler {
                 self.emit(chunk, OP_ENV_POP);
                 self.scopes.pop();
             }
-            Expr::Lambda(Param::Ident(param), _, body) => {
-                // The body runs in a fresh environment whose element 1 is the
-                // argument and whose parent is the closure's environment -- the
-                // same shape as a one-binding let, so the scope chain is the same.
-                self.chunks.push(Chunk::default());
-                let body_chunk = self.chunks.len() - 1;
-                self.scopes.push(Scope { names: vec![param.clone()], with: false });
-                self.strict(body, body_chunk)?;
-                self.emit_return(body_chunk);
-                self.scopes.pop();
-                self.emit(chunk, OP_LAMBDA);
-                self.emit_u16(chunk, body_chunk as u16);
-            }
+            Expr::Lambda(Param::Ident(param), _, body) => self.emit_lambda(param, body, chunk, None)?,
             Expr::Lambda(Param::Formals { entries, bind, .. }, pos, body) => {
                 // { a, b ? d } @ s: body  ==  s: let a = s.a; b = s.b or d; in body
                 // Lazy, defaults may refer to other formals. The closed-formals
@@ -465,12 +479,22 @@ impl Compiler {
                 // Nix forces the argument set before anything else, so a
                 // throwing argument fails the call even if no formal is used.
                 let force_arg = Expr::Var(arg.clone(), *pos);
-                let desugared = Expr::Lambda(
-                    Param::Ident(arg),
-                    *pos,
-                    Box::new(Expr::Seq(Box::new(force_arg), Box::new(Expr::Let(binds, body.clone())))),
-                );
-                self.strict(&desugared, chunk)?;
+                let body = Expr::Seq(Box::new(force_arg), Box::new(Expr::Let(binds, body.clone())));
+                // What builtins.functionArgs answers: a chunk that builds
+                // { name = hasDefault; }, sorted, named by LAMBDA_ARGS.
+                let args = self.chunks.len();
+                self.chunks.push(Chunk::default());
+                let mut formals: Vec<(&String, bool)> = entries.iter().map(|(f, _, d)| (f, d.is_some())).collect();
+                formals.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+                for (name, has_default) in &formals {
+                    self.emit_const(args, Const::Str((*name).clone()))?;
+                    self.emit(args, if *has_default { OP_TRUE } else { OP_FALSE });
+                }
+                let n = Self::count(formals.len(), "formals")?;
+                self.emit(args, OP_ATTRS);
+                self.emit_u16(args, n);
+                self.emit_return(args);
+                self.emit_lambda(&arg, &body, chunk, Some(args))?;
             }
             Expr::Seq(a, b) => {
                 self.strict(a, chunk)?;

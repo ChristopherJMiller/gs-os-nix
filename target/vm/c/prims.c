@@ -573,6 +573,47 @@ static obj_t *lit_attr(obj_t *set, const char *lit, uint16_t n)
     return 0;
 }
 
+/* LAMBDA_ARGS c a: LAMBDA c, which keeps a + 1 in its aux -- the chunk that
+ * builds its builtins.functionArgs set. Operands read here, not in run(). */
+void lambda_args(void)
+{
+    uint16_t c = pc[0] | ((uint16_t)pc[1] << 8), a = pc[2] | ((uint16_t)pc[3] << 8);
+    obj_t *o;
+    pc += 4;
+    if (c >= CHUNK_MAX || a >= CHUNK_MAX) badnbc();
+    o = alloc(12);
+    SET_HDR(o, T_LAMBDA, a + 1);
+    CL_CODE(o) = chunk_info[c].code;
+    CL_CTAB(o) = chunk_info[c].ctab;
+    CL_ENV(o) = env;
+    push(o);
+}
+
+/* functionArgs f: a LAMBDA with formals runs its LAMBDA_ARGS chunk, closed,
+ * for a fresh set; any other LAMBDA is { }; anything else E_TYPE (Nix's
+ * "'functionArgs' requires a function", a __functor set included). */
+static void prim_functionargs(void)
+{
+    obj_t *v, *o;
+    uint16_t a;
+    (void)force_pop_view(&v);
+    if (v->tag != T_LAMBDA) type_err();
+    a = AUX16(v);
+    if (a == 0) {
+        nursery_reserve(8);
+        push(attrs_alloc(0));
+        return;
+    }
+    nursery_reserve(12);
+    o = alloc(12);
+    SET_HDR(o, T_THUNK, 0);
+    CL_CODE(o) = chunk_info[a - 1].code;
+    CL_CTAB(o) = chunk_info[a - 1].ctab;
+    CL_ENV(o) = 0;
+    push(o);
+    force_top();
+}
+
 static void prim_mapattrs(void)                 /* f set -> { n = f n v; }, each a thunk */
 {
     obj_t *s = view_top_as(T_ATTRS), *f, *r;
@@ -1159,6 +1200,7 @@ void op_prim(void)
     case PRIM_SPLITVERSION:    prim_splitversion(); break;
     case PRIM_PARSEDRVNAME:    prim_parsedrvname(); break;
     case PRIM_REPLACESTRINGS:  prim_replacestrings(); break;
+    case PRIM_FUNCTIONARGS:    prim_functionargs(); break;
     default:                   err_exit(E_BADOP);
     }
 }

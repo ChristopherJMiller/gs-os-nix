@@ -48,6 +48,7 @@ pub const OP_TRY_WITH_GET: u8 = 0x38;
 pub const OP_TAIL_CALL: u8 = 0x39;
 pub const OP_ATTR_NAME: u8 = 0x3A;
 pub const OP_ATTRS_DYN: u8 = 0x3B;
+pub const OP_LAMBDA_ARGS: u8 = 0x3C;
 
 pub const OP_THUNK: u8 = 0x40;
 pub const OP_FORCE: u8 = 0x41;
@@ -139,6 +140,7 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("splitVersion", 0x44, 1),
     ("parseDrvName", 0x45, 1),
     ("replaceStrings", 0x46, 3),
+    ("functionArgs", 0x47, 1),
 ];
 
 /// The builtins Nix also exposes unqualified.
@@ -209,6 +211,7 @@ pub fn describe(op: u8) -> Option<(&'static str, usize)> {
         OP_TAIL_CALL => ("TAIL_CALL", 0),
         OP_ATTR_NAME => ("ATTR_NAME", 0),
         OP_ATTRS_DYN => ("ATTRS_DYN", 4),
+        OP_LAMBDA_ARGS => ("LAMBDA_ARGS", 4),
         OP_THUNK => ("THUNK", 2),
         OP_FORCE => ("FORCE", 0),
         OP_RETURN => ("RETURN", 0),

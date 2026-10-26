@@ -62,6 +62,8 @@ fixtures/eval-fail-float-div-zero
 fixtures/eval-fail-float-floor-nan
 fixtures/eval-fail-float-floor-precision
 fixtures/eval-fail-float-interp
+fixtures/eval-fail-functionargs-functor
+fixtures/eval-fail-functionargs-int
 fixtures/eval-fail-groupby-context
 fixtures/eval-fail-groupby-function
 fixtures/eval-fail-groupby-name
@@ -122,6 +124,7 @@ fixtures/eval-okay-dynamic-attrs
 fixtures/eval-okay-float-identity
 fixtures/eval-okay-floats
 fixtures/eval-okay-formals
+fixtures/eval-okay-function-args
 fixtures/eval-okay-function-equality
 fixtures/eval-okay-functor
 fixtures/eval-okay-hash-collision
@@ -198,6 +201,7 @@ tvix/nix_tests/eval-okay-float
 tvix/nix_tests/eval-okay-foldlStrict
 tvix/nix_tests/eval-okay-foldlStrict-lazy-elements
 tvix/nix_tests/eval-okay-foldlStrict-lazy-initial-accumulator
+tvix/nix_tests/eval-okay-functionargs
 tvix/nix_tests/eval-okay-groupBy
 tvix/nix_tests/eval-okay-if
 tvix/nix_tests/eval-okay-ind-string
@@ -278,6 +282,7 @@ tvix/tvix_tests/eval-okay-builtins-filter
 tvix/tvix_tests/eval-okay-builtins-filter-catchable
 tvix/tvix_tests/eval-okay-builtins-filter-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-foldl-propagate-catchable
+tvix/tvix_tests/eval-okay-builtins-function-args-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-gen-list-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-genList-function-strictness
 tvix/tvix_tests/eval-okay-builtins-genericClosure-pointer-equality
@@ -376,6 +381,7 @@ tvix/tvix_tests/eval-okay-foldlStrict
 tvix/tvix_tests/eval-okay-foldlStrict-lazy-elements
 tvix/tvix_tests/eval-okay-foldlStrict-lazy-initial-accumulator
 tvix/tvix_tests/eval-okay-formals-miscompilation-b-261-regression
+tvix/tvix_tests/eval-okay-functionargs
 tvix/tvix_tests/eval-okay-functor-call
 tvix/tvix_tests/eval-okay-genlist
 tvix/tvix_tests/eval-okay-hasattr-catchable

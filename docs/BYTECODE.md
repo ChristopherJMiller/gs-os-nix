@@ -187,6 +187,7 @@ instruction even if it was a thunk before (in-place update, see below).
 | `$39` | `TAIL_CALL` | | `f a → ` | `CALL` without a frame: sets `pc`/`ctab`/`env` to the callee and continues, so the callee's `RETURN` returns to *this* chunk's caller. Emitted for a `CALL` immediately before `RETURN` |
 | `$3A` | `ATTR_NAME` | | `k → k` | forces `k`; a `STRING` with context is `E_TYPE`. After a computed key in `e.${k}`, `e ? ${k}` and `e.${k} or d` ("Dynamic attribute names"): the `SELECT`, `TRY_SELECT` or `HAS_ATTR` that follows refuses anything but a `STRING`, so the two make Nix's `forceStringNoCtx` |
 | `$3B` | `ATTRS_DYN` | `u16 n, u16 m` | `k1 v1 … kn vn d1 w1 … dm wm → s` | `ATTRS` with `m` computed names after the `n` sorted static ones: each `d` is a forced name, `null` drops its pair, anything but a `STRING` without context is `E_TYPE`, and a name already in the set is `E_DUPATTR`. Values are not forced |
+| `$3C` | `LAMBDA_ARGS` | `u16 c, u16 a` | `→ f` | `LAMBDA c`, for a lambda with formals: chunk `a` builds its `builtins.functionArgs` set, `{ name = hasDefault; }`, and the `LAMBDA`'s `aux` keeps `a + 1` (HEAP.md). The formals themselves are desugared ("Desugarings"), so this is all that is left of them at run time |
 
 ### Catch frames: `tryEval` and `throw`
 
@@ -332,6 +333,7 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$44` | `splitVersion` | 1 | the same components, as a list of strings |
 | `$45` | `parseDrvName` | 1 | `{ name; version; }`: split at the first `-` followed by a non-letter (C locale), or all name |
 | `$46` | `replaceStrings` | 3 | `from to s`: both lists forced and as long (`E_TYPE` otherwise), each `from` forced (a string; context dropped), then `s`; at each position the first matching `from` is replaced, its `to` forced on first use; an empty `from` matches before each byte and at the end. Context: `s`'s and every used `to`'s. `3n` value-stack slots |
+| `$47` | `functionArgs` | 1 | forced; a `LAMBDA` with formals gives a fresh copy of the set its `LAMBDA_ARGS` chunk builds, any other `LAMBDA` (a plain one, a primop, a primop partly applied) `{ }`; anything else, a `__functor` set too, is `E_TYPE` |
 | `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`
@@ -351,7 +353,7 @@ the harness maps a `LAMBDA`'s code pointer, an offset in the image, back to its
 chunk.
 
 Every gap in the numbering is deliberate room for the next slice (`$06`–`$0C`
-and `$0E`–`$0F` constants, `$15` string ops, `$2D`–`$2F` more attrs/list ops, `$3C`–`$3F`, `$44`+).
+and `$0E`–`$0F` constants, `$15` string ops, `$2D`–`$2F` more attrs/list ops, `$3D`–`$3F`, `$44`+).
 
 ### `FORCE`, blackholing, in-place update
 

@@ -52,6 +52,7 @@
 #define OP_TAIL_CALL    0x39
 #define OP_ATTR_NAME    0x3A
 #define OP_ATTRS_DYN    0x3B
+#define OP_LAMBDA_ARGS  0x3C
 
 #define OP_THUNK        0x40
 #define OP_FORCE        0x41
@@ -133,6 +134,7 @@
 #define PRIM_SPLITVERSION       0x44 /* 1 */
 #define PRIM_PARSEDRVNAME       0x45 /* 1 */
 #define PRIM_REPLACESTRINGS     0x46 /* 3 */
+#define PRIM_FUNCTIONARGS       0x47 /* 1 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */
