@@ -46,6 +46,8 @@ pub const OP_WITH_PUSH: u8 = 0x36;
 pub const OP_WITH_GET: u8 = 0x37;
 pub const OP_TRY_WITH_GET: u8 = 0x38;
 pub const OP_TAIL_CALL: u8 = 0x39;
+pub const OP_ATTR_NAME: u8 = 0x3A;
+pub const OP_ATTRS_DYN: u8 = 0x3B;
 
 pub const OP_THUNK: u8 = 0x40;
 pub const OP_FORCE: u8 = 0x41;
@@ -194,6 +196,8 @@ pub fn describe(op: u8) -> Option<(&'static str, usize)> {
         OP_WITH_GET => ("WITH_GET", 0),
         OP_TRY_WITH_GET => ("TRY_WITH_GET", 0),
         OP_TAIL_CALL => ("TAIL_CALL", 0),
+        OP_ATTR_NAME => ("ATTR_NAME", 0),
+        OP_ATTRS_DYN => ("ATTRS_DYN", 4),
         OP_THUNK => ("THUNK", 2),
         OP_FORCE => ("FORCE", 0),
         OP_RETURN => ("RETURN", 0),

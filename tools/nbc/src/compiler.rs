@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{unsupported, BinOp, Expr, Param, Pos, StrPart, Unsupported};
+use crate::ast::{unsupported, BinOp, Expr, Key, Param, Pos, StrPart, Unsupported};
 use crate::opcodes::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -140,6 +140,18 @@ impl Compiler {
         self.emit(chunk, OP_CONST);
         self.emit_u16(chunk, idx);
         Ok(())
+    }
+    /// One step of a selection's path: a name's constant, or a computed key,
+    /// forced and checked to be a string without context (ATTR_NAME).
+    fn emit_key(&mut self, key: &Key, chunk: usize) -> Result<(), Unsupported> {
+        match key {
+            Key::Name(n) => self.emit_const(chunk, Const::Str(n.clone())),
+            Key::Expr(e) => {
+                self.strict(e, chunk)?;
+                self.emit(chunk, OP_ATTR_NAME);
+                Ok(())
+            }
+        }
     }
     fn count(n: usize, what: &str) -> Result<u16, Unsupported> {
         u16::try_from(n).map_err(|_| Unsupported { pos: nowhere(), what: format!("more than 65535 {what}") })
@@ -444,7 +456,7 @@ impl Compiler {
                     .map(|(f, fpos, default)| {
                         let sel = Expr::Select(
                             Box::new(Expr::Var(arg.clone(), *fpos)),
-                            vec![f.clone()],
+                            vec![Key::Name(f.clone())],
                             default.clone().map(Box::new),
                         );
                         (f.clone(), *fpos, sel)
@@ -519,9 +531,32 @@ impl Compiler {
                 self.emit(chunk, OP_ATTRS);
                 self.emit_u16(chunk, n);
             }
+            Expr::DynAttrSet(binds, dyns) => {
+                // The static attributes as for ATTRS, then each computed name,
+                // forced, and its value; the VM drops a null name's pair, sorts
+                // and refuses a clash (BYTECODE.md "Dynamic attribute names").
+                let mut sorted: Vec<&(String, Pos, Expr)> = binds.iter().collect();
+                sorted.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+                for (name, _, value) in sorted {
+                    self.emit_const(chunk, Const::Str(name.clone()))?;
+                    self.lazy(value, chunk)?;
+                }
+                for (name, _, value) in dyns {
+                    // Forced here, in source order as Nix does: `strict` leaves
+                    // a selected attribute unforced, for its consumer.
+                    self.strict(name, chunk)?;
+                    self.emit(chunk, OP_FORCE);
+                    self.lazy(value, chunk)?;
+                }
+                let n = Self::count(binds.len(), "attributes")?;
+                let m = Self::count(dyns.len(), "computed attribute names")?;
+                self.emit(chunk, OP_ATTRS_DYN);
+                self.emit_u16(chunk, n);
+                self.emit_u16(chunk, m);
+            }
             Expr::Select(base, path, default) => {
                 // builtins.NAME is a primop reference unless `builtins` is shadowed.
-                if let (Expr::Var(b, pos), [name], None) = (&**base, path.as_slice(), default) {
+                if let (Expr::Var(b, pos), [Key::Name(name)], None) = (&**base, path.as_slice(), default) {
                     if b == "builtins" && !self.is_shadowed("builtins") {
                         return self.emit_builtin(name, *pos, chunk);
                     }
@@ -548,16 +583,16 @@ impl Compiler {
                 self.strict(base, chunk)?;
                 match default {
                     None => {
-                        for name in path {
-                            self.emit_const(chunk, Const::Str(name.clone()))?;
+                        for key in path {
+                            self.emit_key(key, chunk)?;
                             self.emit(chunk, OP_SELECT);
                         }
                     }
                     Some(d) => {
                         // Any missing step (or a non-set) takes the default.
                         let mut misses = Vec::new();
-                        for name in path {
-                            self.emit_const(chunk, Const::Str(name.clone()))?;
+                        for key in path {
+                            self.emit_key(key, chunk)?;
                             self.emit(chunk, OP_TRY_SELECT);
                             misses.push(self.emit_jump(chunk, OP_JMP_IF_NOTFOUND));
                         }
@@ -575,12 +610,12 @@ impl Compiler {
                 self.strict(base, chunk)?;
                 let (last, init) = path.split_last().expect("non-empty attrpath");
                 let mut misses = Vec::new();
-                for name in init {
-                    self.emit_const(chunk, Const::Str(name.clone()))?;
+                for key in init {
+                    self.emit_key(key, chunk)?;
                     self.emit(chunk, OP_TRY_SELECT);
                     misses.push(self.emit_jump(chunk, OP_JMP_IF_NOTFOUND));
                 }
-                self.emit_const(chunk, Const::Str(last.clone()))?;
+                self.emit_key(last, chunk)?;
                 self.emit(chunk, OP_HAS_ATTR);
                 if !misses.is_empty() {
                     let to_end = self.emit_jump(chunk, OP_JMP);
@@ -632,7 +667,7 @@ impl Compiler {
                 Binding::With(_) => return self.lazy_thunk(e, chunk),
             },
             Expr::Select(base, path, None) => {
-                if let (Expr::Var(b, pos), [name]) = (&**base, path.as_slice()) {
+                if let (Expr::Var(b, pos), [Key::Name(name)]) = (&**base, path.as_slice()) {
                     if b == "builtins" && !self.is_shadowed("builtins") {
                         return self.emit_builtin(name, *pos, chunk);
                     }

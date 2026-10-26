@@ -50,6 +50,8 @@
 #define OP_WITH_GET     0x37
 #define OP_TRY_WITH_GET 0x38
 #define OP_TAIL_CALL    0x39
+#define OP_ATTR_NAME    0x3A
+#define OP_ATTRS_DYN    0x3B
 
 #define OP_THUNK        0x40
 #define OP_FORCE        0x41
@@ -144,5 +146,6 @@
 #define E_NOVAR         0x0D
 #define E_UNSUP         0x0E    /* valid Nix the VM does not implement yet (DERIVATION.md) */
 #define E_OVERFLOW      0x0F    /* + - * / overflowed: an error in Nix 2.34, not a wrap */
+#define E_DUPATTR       0x10    /* a computed attribute name already in its set */
 
 #endif

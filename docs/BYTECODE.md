@@ -185,6 +185,8 @@ instruction even if it was a thunk before (in-place update, see below).
 | `$37` | `WITH_GET` | | `k → v` | walk the environment chain; at each marked environment force `[1]` (must be `ATTRS`) and look `k` up; the first hit is pushed unforced. None → `E_NOVAR` |
 | `$38` | `TRY_WITH_GET` | | `k → v \| ∅` | as `WITH_GET`, but a miss pushes ∅ — the compiler uses it when a global (`map`, `toString`, …) is the fallback |
 | `$39` | `TAIL_CALL` | | `f a → ` | `CALL` without a frame: sets `pc`/`ctab`/`env` to the callee and continues, so the callee's `RETURN` returns to *this* chunk's caller. Emitted for a `CALL` immediately before `RETURN` |
+| `$3A` | `ATTR_NAME` | | `k → k` | forces `k`; a `STRING` with context is `E_TYPE`. After a computed key in `e.${k}`, `e ? ${k}` and `e.${k} or d` ("Dynamic attribute names"): the `SELECT`, `TRY_SELECT` or `HAS_ATTR` that follows refuses anything but a `STRING`, so the two make Nix's `forceStringNoCtx` |
+| `$3B` | `ATTRS_DYN` | `u16 n, u16 m` | `k1 v1 … kn vn d1 w1 … dm wm → s` | `ATTRS` with `m` computed names after the `n` sorted static ones: each `d` is a forced name, `null` drops its pair, anything but a `STRING` without context is `E_TYPE`, and a name already in the set is `E_DUPATTR`. Values are not forced |
 
 ### Catch frames: `tryEval` and `throw`
 
@@ -214,6 +216,27 @@ them so the VM and the compiler never see them:
 | `let { a = 1; body = a; }` (legacy) | `(rec { a = 1; body = a; }).body` |
 | `{ a.b = 1; a.c = 2; }` | `{ a = { b = 1; c = 2; }; }` — paths are merged at compile time; a path that lands on a non-literal is refused |
 | `{ a, b ? d, ... } @ s: body` | `s: let a = s.a; b = s.b or d; in body` — formals are lazy, defaults may refer to other formals, `@` names the whole set. (The "unexpected argument" check on closed formals is **not** yet performed.) |
+
+**Dynamic attribute names.** `${e}` and `"…${e}…"` as a name are computed,
+with two rules from Nix's parser and evaluator (measured, Nix 2.34.9):
+
+- `${"a"}` -- an interpolation whose expression is a plain string literal,
+  in parentheses or not, `"…"` or `''…''` -- is the **static** name `a`: it is
+  visible in a `rec` set, allowed in a `let`, and merges and clashes as `a`
+  does. `"${"a"}"` is computed (a concatenation).
+- Any other is computed **when the set is evaluated**, in source order after
+  the static attributes, in the set's scope (a `rec` set's own, so `rec { a =
+  "x"; ${a} = 1; }` has `x`). Its value is lazy, and is never in scope. A
+  computed name that is `null` drops its attribute; anything but a string
+  without context is a type error; and one that equals another name, static
+  or computed, is an error -- computed names are never merged, so `{ a.b = 1;
+  ${n}.c = 2; }` with `n = "a"` fails, while `{ a.${n} = 1; a.c = 2; }` is one
+  set `a` with a computed name inside. A `let` or an `inherit` with a computed
+  name is Nix's parse error, refused like one.
+
+A set with computed names compiles to `ATTRS_DYN`: the static pairs as for
+`ATTRS`, then per computed name its expression, forced, and its value. A
+computed key in a selection is its expression, forced, then `ATTR_NAME`.
 
 `ADD` is polymorphic at runtime: two `INT`s add, two `STRING`s concatenate (context
 union), anything else is `E_TYPE`. **A `FLOAT` with an `INT` or a `FLOAT`** makes
@@ -316,8 +339,8 @@ escapes (`\"`, `\\`, `\n`, `\r`, `\t`, `\${`), and a function as `<LAMBDA>`, or 
 the harness maps a `LAMBDA`'s code pointer, an offset in the image, back to its
 chunk.
 
-Every gap in the numbering is deliberate room for the next slice (`$06`–`$0F`
-constants, `$15` string ops, `$2D`–`$2F` more attrs/list ops, `$3A`–`$3F`, `$44`+).
+Every gap in the numbering is deliberate room for the next slice (`$06`–`$0C`
+and `$0E`–`$0F` constants, `$15` string ops, `$2D`–`$2F` more attrs/list ops, `$3C`–`$3F`, `$44`+).
 
 ### `FORCE`, blackholing, in-place update
 
@@ -489,7 +512,9 @@ $07` (`MUL`/`DIV` with no card in any slot), `E_ASSERT $08`, `E_THROW $09`,
 yet: a `drvPath` in a derivation, an experimental hash mode or `blake3`, a path
 copied into the store, `md5`; [DERIVATION.md](DERIVATION.md)), `E_OVERFLOW $0F`
 (`+`, `-`, unary `-`, `*` or `/` left the 64-bit range -- in Nix 2.34 an
-evaluation error, which `tryEval` does not catch, never a wraparound). The harness (`a2min --run-nbc`) prints the value in
+evaluation error, which `tryEval` does not catch, never a wraparound),
+`E_DUPATTR $10` (a computed attribute name already in its set: Nix's "dynamic
+attribute already defined", which `tryEval` does not catch either). The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.
 

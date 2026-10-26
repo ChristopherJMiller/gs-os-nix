@@ -602,6 +602,8 @@ void run(void)
         case OP_CLOSED_THUNK: closure(T_THUNK, 1); break;   /* an import */
         case OP_CALL:   do_call(); break;
         case OP_TAIL_CALL: call_enter(); break; /* the callee's RETURN returns to our caller */
+        case OP_ATTR_NAME: attr_name(); break;
+        case OP_ATTRS_DYN: attrs_dynamic(); break;
         case OP_WITH_PUSH:                      /* the set (unforced) becomes a marked environment */
             a = pop();
             o = alloc(12);

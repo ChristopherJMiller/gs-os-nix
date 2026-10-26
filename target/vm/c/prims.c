@@ -465,6 +465,49 @@ void insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, obj_t *v
     ++*cnt;
 }
 
+/* --- computed attribute names (BYTECODE.md "Dynamic attribute names") ------------------ */
+/* ATTR_NAME: a computed key in a selection, forced. SELECT, TRY_SELECT and
+ * HAS_ATTR take nothing but a STRING; this adds the rest of Nix's
+ * forceStringNoCtx, no context. The key stays on the stack for them. */
+void attr_name(void)
+{
+    obj_t *v;
+    force_top();
+    v = deref(peek());
+    if (v->tag == T_STRING && CTX(v)) type_err();
+}
+
+/* ATTRS_DYN n m: n (name, value) pairs with static names, sorted, then m whose
+ * names the generator computed and forced (a THUNK here is its bug: E_TYPE). A null name drops its pair; any
+ * other must be a STRING without context; a name already in the set -- static
+ * or computed -- is E_DUPATTR, Nix's "dynamic attribute already defined".
+ * Everything is on the stack, a root, while the set is reserved. The operands
+ * are read here, not in run(): each fetch there is bank-0 code. */
+void attrs_dynamic(void)
+{
+    uint16_t n = pc[0] | ((uint16_t)pc[1] << 8), m = pc[2] | ((uint16_t)pc[3] << 8);
+    uint16_t at = vsp - 2 * (n + m), keep = n, cnt = 0, before, i;
+    obj_t *nm, *set;
+    pc += 4;
+    for (i = n; i < n + m; ++i) {
+        nm = deref(vstack[at + 2 * i]);
+        if (nm->tag == T_NULL) continue;
+        if (nm->tag != T_STRING || CTX(nm)) type_err();
+        ++keep;
+    }
+    nursery_reserve_n(keep, 12, 4);             /* as ATTRS */
+    set = attrs_alloc(keep);
+    for (i = 0; i < n + m; ++i) {
+        nm = vstack[at + 2 * i];
+        if (i >= n && deref(nm)->tag == T_NULL) continue;
+        before = cnt;
+        insert_entry(set, keep, &cnt, nm, vstack[at + 2 * i + 1]);
+        if (cnt == before) err_exit(E_DUPATTR);
+    }
+    vsp = at;
+    push(set);
+}
+
 static void prim_listtoattrs(void)              /* [ { name; value; } ... ] */
 {
     uint16_t b = rsp, n, i, cnt = 0, ix, at;

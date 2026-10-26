@@ -53,6 +53,20 @@ pub enum BinOp {
     Ge,
 }
 
+/// One step of an attribute path in a selection: a name, or `${e}` computed
+/// at run time. (`${"a"}` is the name `a`, as Nix's parser has it.)
+#[derive(Debug, Clone, PartialEq)]
+pub enum Key {
+    Name(String),
+    Expr(Expr),
+}
+
+impl From<&str> for Key {
+    fn from(s: &str) -> Key {
+        Key::Name(s.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Int(i64),
@@ -88,11 +102,15 @@ pub enum Expr {
     List(Vec<Expr>),
     /// Static keys only, unsorted here; the compiler sorts by bytes.
     AttrSet(Vec<(String, Pos, Expr)>),
+    /// A set with computed names (BYTECODE.md "Dynamic attribute names"): the
+    /// static attributes, unsorted, then each computed name's expression and
+    /// its value, in source order.
+    DynAttrSet(Vec<(String, Pos, Expr)>, Vec<(Expr, Pos, Expr)>),
     /// `e.a.b`, optionally `or default` — the default applies if any step is
     /// missing or not a set.
-    Select(Box<Expr>, Vec<String>, Option<Box<Expr>>),
+    Select(Box<Expr>, Vec<Key>, Option<Box<Expr>>),
     /// `e ? a.b`.
-    HasAttr(Box<Expr>, Vec<String>),
+    HasAttr(Box<Expr>, Vec<Key>),
     /// `a // b`.
     Update(Box<Expr>, Box<Expr>),
     /// `a ++ b`.

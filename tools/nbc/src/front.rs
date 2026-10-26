@@ -11,7 +11,7 @@
 //! wrong-but-plausible answer, which is the failure mode this project guards
 //! against hardest.
 
-use crate::ast::{unsupported, BinOp, Expr, Param, Pos, StrPart, Unsupported};
+use crate::ast::{unsupported, BinOp, Expr, Key, Param, Pos, StrPart, Unsupported};
 use rnix::ast::{self, AstNode, BinOpKind, HasEntry, LiteralKind, UnaryOpKind};
 use std::path::{Path, PathBuf};
 
@@ -161,48 +161,93 @@ impl<'a> Lower<'a> {
         unsupported(self.pos(node), what)
     }
 
-    /// A static attribute name: an identifier, or a quoted string without
-    /// interpolation. `${…}` keys are dynamic and not in this slice.
-    fn static_attr(&self, attr: &ast::Attr) -> Result<String, Unsupported> {
+    /// An attribute name: an identifier, a quoted string, or `${e}`. Nix's
+    /// parser makes `${"a"}` -- a plain string literal, in parentheses or
+    /// not, `"…"` or `''…''` -- the static name `a`; `"…${e}…"` and any other
+    /// `${e}` are computed at run time (BYTECODE.md "Dynamic attribute names").
+    fn attr_key(&self, attr: &ast::Attr) -> Result<Key, Unsupported> {
         match attr {
             ast::Attr::Ident(id) => match id.ident_token() {
-                Some(tok) => Ok(tok.text().to_string()),
+                Some(tok) => Ok(Key::Name(tok.text().to_string())),
                 None => self.refuse(id, "identifier `or` as attribute name"),
             },
-            ast::Attr::Str(s) => {
-                let mut name = String::new();
-                for part in s.normalized_parts() {
-                    match part {
-                        ast::InterpolPart::Literal(t) => name.push_str(&t),
-                        ast::InterpolPart::Interpolation(_) => {
-                            return self.refuse(s, "dynamic attribute name")
-                        }
+            ast::Attr::Str(s) => match Self::literal_str(s) {
+                Some(name) => Ok(Key::Name(name)),
+                None => Ok(Key::Expr(self.expr(&ast::Expr::Str(s.clone()))?)),
+            },
+            ast::Attr::Dynamic(d) => {
+                let Some(mut e) = d.expr() else { return self.refuse(d, "empty `${}` attribute name") };
+                while let ast::Expr::Paren(p) = &e {
+                    match p.expr() {
+                        Some(inner) => e = inner,
+                        None => return self.refuse(p, "empty parentheses"),
                     }
                 }
-                Ok(name)
+                if let ast::Expr::Str(s) = &e {
+                    if let Some(name) = Self::literal_str(s) {
+                        return Ok(Key::Name(name));
+                    }
+                }
+                Ok(Key::Expr(self.expr(&e)?))
             }
-            ast::Attr::Dynamic(d) => self.refuse(d, "dynamic attribute name"),
         }
     }
 
-    fn static_path(&self, path: &ast::Attrpath) -> Result<Vec<String>, Unsupported> {
-        path.attrs().map(|a| self.static_attr(&a)).collect()
+    /// A string with no interpolation: its text.
+    fn literal_str(s: &ast::Str) -> Option<String> {
+        let mut name = String::new();
+        for part in s.normalized_parts() {
+            match part {
+                ast::InterpolPart::Literal(t) => name.push_str(&t),
+                ast::InterpolPart::Interpolation(_) => return None,
+            }
+        }
+        Some(name)
+    }
+
+    /// A name that must be static: in an `inherit`, Nix's parse error otherwise.
+    fn static_attr(&self, attr: &ast::Attr) -> Result<String, Unsupported> {
+        match self.attr_key(attr)? {
+            Key::Name(n) => Ok(n),
+            Key::Expr(_) => self.refuse(attr, "dynamic attributes not allowed in inherit"),
+        }
+    }
+
+    fn path_keys(&self, path: &ast::Attrpath) -> Result<Vec<Key>, Unsupported> {
+        path.attrs().map(|a| self.attr_key(&a)).collect()
     }
 
     /// `rec { a = 1; b = a; }`  ==  `let a = 1; b = a; in { inherit a b; }`.
-    /// `inherit x;` inside it reads the scope outside, as in a let.
+    /// `inherit x;` inside it reads the scope outside, as in a let. Computed
+    /// names, and their values, are in the let's body: they see the set's
+    /// attributes, and are not themselves in scope.
     fn rec_set(&self, node: &impl HasEntry, what: &str) -> Result<Expr, Unsupported> {
-        let binds = self.bindings(node, what, true)?;
+        let (binds, dyns) = self.bindings(node, what, true)?;
         let set = binds
             .iter()
             .map(|(n, pos, _)| (n.clone(), *pos, Expr::Var(n.clone(), *pos)))
             .collect();
-        Ok(Expr::Let(binds, Box::new(Expr::AttrSet(set))))
+        Ok(Expr::Let(binds, Box::new(Self::set_of(set, dyns))))
+    }
+
+    /// A set literal: AttrSet, or DynAttrSet when a name is computed.
+    fn set_of(statics: Vec<(String, Pos, Expr)>, dyns: Vec<(Expr, Pos, Expr)>) -> Expr {
+        if dyns.is_empty() { Expr::AttrSet(statics) } else { Expr::DynAttrSet(statics, dyns) }
+    }
+
+    /// A set literal's static and computed attributes, or None.
+    fn set_parts(e: Expr) -> Result<(Vec<(String, Pos, Expr)>, Vec<(Expr, Pos, Expr)>), Expr> {
+        match e {
+            Expr::AttrSet(s) => Ok((s, Vec::new())),
+            Expr::DynAttrSet(s, d) => Ok((s, d)),
+            e => Err(e),
+        }
     }
 
     /// Adds `name = value` to a binding list, merging attribute-set literals so
     /// that `a.b = 1; a.c = 2;` and `a = { b = 1; }; a.c = 2;` both become
-    /// `a = { b = 1; c = 2; }`. Anything else landing twice is refused.
+    /// `a = { b = 1; c = 2; }`; their computed names are kept, unmerged, as
+    /// Nix does. Anything else landing twice is refused.
     fn insert_binding(
         binds: &mut Vec<(String, Pos, Expr)>,
         name: String,
@@ -211,14 +256,20 @@ impl<'a> Lower<'a> {
         what: &str,
     ) -> Result<(), Unsupported> {
         if let Some(existing) = binds.iter_mut().find(|(n, _, _)| *n == name) {
-            match (&mut existing.2, value) {
-                (Expr::AttrSet(old), Expr::AttrSet(new)) => {
-                    for (n, p, v) in new {
-                        Self::insert_binding(old, n, p, v, what)?;
+            let old = std::mem::replace(&mut existing.2, Expr::Int(0));
+            match (Self::set_parts(old), Self::set_parts(value)) {
+                (Ok((mut s1, mut d1)), Ok((s2, d2))) => {
+                    for (n, p, v) in s2 {
+                        Self::insert_binding(&mut s1, n, p, v, what)?;
                     }
+                    d1.extend(d2);
+                    existing.2 = Self::set_of(s1, d1);
                     Ok(())
                 }
-                _ => unsupported(pos, format!("`{name}` bound twice in one {what}")),
+                (old, _) => {
+                    existing.2 = match old { Ok((s, d)) => Self::set_of(s, d), Err(e) => e };
+                    unsupported(pos, format!("`{name}` bound twice in one {what}"))
+                }
             }
         } else {
             binds.push((name, pos, value));
@@ -227,31 +278,40 @@ impl<'a> Lower<'a> {
     }
 
     /// The bindings of a `let` or an attribute set: `name = value;`, `inherit
-    /// a b;` and `inherit (e) a b;`. Nested paths (`a.b = 1;`) are not in this
-    /// slice. In a `let`, `inherit a;` refers to the scope OUTSIDE the let.
+    /// a b;` and `inherit (e) a b;`, and the computed ones, `${e} = value;`, in
+    /// source order. In a `let`, `inherit a;` refers to the scope OUTSIDE the
+    /// let.
+    #[allow(clippy::type_complexity)]
     fn bindings(
         &self,
         node: &impl HasEntry,
         what: &str,
         is_let: bool,
-    ) -> Result<Vec<(String, Pos, Expr)>, Unsupported> {
+    ) -> Result<(Vec<(String, Pos, Expr)>, Vec<(Expr, Pos, Expr)>), Unsupported> {
         let mut binds: Vec<(String, Pos, Expr)> = Vec::new();
-        let mut push = |name: String, pos: Pos, e: Expr| -> Result<(), Unsupported> {
-            Self::insert_binding(&mut binds, name, pos, e, what)
-        };
+        let mut dyns: Vec<(Expr, Pos, Expr)> = Vec::new();
         for entry in node.attrpath_values() {
             let Some(path) = entry.attrpath() else { return self.refuse(&entry, "binding without a name") };
-            let names = self.static_path(&path)?;
+            let keys = self.path_keys(&path)?;
             let Some(value) = entry.value() else { return self.refuse(&entry, "binding without a value") };
             let pos = self.pos(&path);
             // a.b.c = v  ==  a = { b = { c = v; }; }, merged with its siblings
             let mut value = self.expr(&value)?;
-            let (first, rest) = names.split_first().expect("non-empty attrpath");
-            for n in rest.iter().rev() {
-                value = Expr::AttrSet(vec![(n.clone(), pos, value)]);
+            let (first, rest) = keys.split_first().expect("non-empty attrpath");
+            for k in rest.iter().rev() {
+                value = match k {
+                    Key::Name(n) => Expr::AttrSet(vec![(n.clone(), pos, value)]),
+                    Key::Expr(e) => Expr::DynAttrSet(Vec::new(), vec![(e.clone(), pos, value)]),
+                };
             }
-            push(first.clone(), pos, value)?;
+            match first {
+                Key::Name(n) => Self::insert_binding(&mut binds, n.clone(), pos, value, what)?,
+                Key::Expr(e) => dyns.push((e.clone(), pos, value)),
+            }
         }
+        let mut push = |name: String, pos: Pos, e: Expr| -> Result<(), Unsupported> {
+            Self::insert_binding(&mut binds, name, pos, e, what)
+        };
         for inh in node.inherits() {
             let from = match inh.from() {
                 Some(f) => match f.expr() {
@@ -264,14 +324,14 @@ impl<'a> Lower<'a> {
                 let name = self.static_attr(&attr)?;
                 let pos = self.pos(&attr);
                 let e = match &from {
-                    Some(src) => Expr::Select(Box::new(src.clone()), vec![name.clone()], None),
+                    Some(src) => Expr::Select(Box::new(src.clone()), vec![Key::Name(name.clone())], None),
                     None if is_let => Expr::Inherit(name.clone(), pos),
                     None => Expr::Var(name.clone(), pos),
                 };
                 push(name, pos, e)?;
             }
         }
-        Ok(binds)
+        Ok((binds, dyns))
     }
 
     fn expr(&self, e: &ast::Expr) -> Result<Expr, Unsupported> {
@@ -368,7 +428,10 @@ impl<'a> Lower<'a> {
                 ))
             }
             ast::Expr::LetIn(l) => {
-                let binds = self.bindings(l, "let", true)?;
+                let (binds, dyns) = self.bindings(l, "let", true)?;
+                if let Some((_, pos, _)) = dyns.first() {
+                    return unsupported(*pos, "dynamic attributes not allowed in let");   // Nix's parse error
+                }
                 // The lowering has no scope tracking, so it cannot tell a
                 // shadowed `import` from the builtin. Refuse rather than pick.
                 if binds.iter().any(|(n, _, _)| n == "import") {
@@ -381,7 +444,8 @@ impl<'a> Lower<'a> {
                 if s.rec_token().is_some() {
                     return self.rec_set(s, "attribute set");
                 }
-                Ok(Expr::AttrSet(self.bindings(s, "attribute set", false)?))
+                let (binds, dyns) = self.bindings(s, "attribute set", false)?;
+                Ok(Self::set_of(binds, dyns))
             }
             ast::Expr::List(l) => {
                 let mut items = Vec::new();
@@ -407,7 +471,7 @@ impl<'a> Lower<'a> {
                 let (Some(e), Some(path)) = (sel.expr(), sel.attrpath()) else {
                     return self.refuse(sel, "incomplete selection");
                 };
-                let names = self.static_path(&path)?;
+                let names = self.path_keys(&path)?;
                 let default = match sel.default_expr() {
                     Some(d) => Some(Box::new(self.expr(&d)?)),
                     None => None,
@@ -418,7 +482,7 @@ impl<'a> Lower<'a> {
                 let (Some(e), Some(path)) = (h.expr(), h.attrpath()) else {
                     return self.refuse(h, "incomplete `?`");
                 };
-                let names = self.static_path(&path)?;
+                let names = self.path_keys(&path)?;
                 Ok(Expr::HasAttr(Box::new(self.expr(&e)?), names))
             }
             ast::Expr::Lambda(lam) => {
@@ -606,16 +670,23 @@ mod tests {
             Expr::AttrSet(bs) => Expr::AttrSet(
                 bs.into_iter().map(|(n, _, e)| (n, Pos { line: 1, col: 0 }, strip(e))).collect(),
             ),
+            Expr::DynAttrSet(bs, ds) => Expr::DynAttrSet(
+                bs.into_iter().map(|(n, _, e)| (n, Pos { line: 1, col: 0 }, strip(e))).collect(),
+                ds.into_iter().map(|(n, _, e)| (strip(n), Pos { line: 1, col: 0 }, strip(e))).collect(),
+            ),
             Expr::Select(e, path, d) => {
-                Expr::Select(Box::new(strip(*e)), path, d.map(|d| Box::new(strip(*d))))
+                Expr::Select(Box::new(strip(*e)), strip_keys(path), d.map(|d| Box::new(strip(*d))))
             }
-            Expr::HasAttr(e, path) => Expr::HasAttr(Box::new(strip(*e)), path),
+            Expr::HasAttr(e, path) => Expr::HasAttr(Box::new(strip(*e)), strip_keys(path)),
             Expr::Update(a, b) => Expr::Update(Box::new(strip(*a)), Box::new(strip(*b))),
             Expr::Concat(a, b) => Expr::Concat(Box::new(strip(*a)), Box::new(strip(*b))),
             Expr::Inherit(n, _) => Expr::Inherit(n, Pos { line: 1, col: 0 }),
             Expr::Seq(a, b) => Expr::Seq(Box::new(strip(*a)), Box::new(strip(*b))),
             e => e,
         }
+    }
+    fn strip_keys(ks: Vec<Key>) -> Vec<Key> {
+        ks.into_iter().map(|k| match k { Key::Expr(e) => Key::Expr(strip(e)), k => k }).collect()
     }
     fn strip_param(p: Param) -> Param {
         match p {
@@ -712,10 +783,29 @@ mod tests {
     }
 
     #[test]
+    fn a_literal_in_dollar_braces_is_a_static_name() {
+        // Nix's parser: `${"a"}`, `${("a")}` and `${''a''}` are the name `a`;
+        // `"${"a"}"` is a concatenation, computed (measured with rec sets).
+        for src in ["{ ${\"a\"} = 1; }", "{ ${(\"a\")} = 1; }", "{ ${''a''} = 1; }", "{ \"a\" = 1; }"] {
+            assert!(matches!(p(src), Expr::AttrSet(_)), "{src}: {:?}", p(src));
+        }
+        for src in ["{ \"${\"a\"}\" = 1; }", "{ ${a} = 1; }", "{ \"x${a}\" = 1; }"] {
+            assert!(matches!(p(src), Expr::DynAttrSet(..)), "{src}: {:?}", p(src));
+        }
+        // a computed name inside a static one merges with its siblings
+        assert!(matches!(p("{ a.${b} = 1; a.c = 2; }"), Expr::AttrSet(ref s) if s.len() == 1
+            && matches!(s[0].2, Expr::DynAttrSet(ref st, ref d) if st.len() == 1 && d.len() == 1)));
+        // ...and computed names are never merged with each other
+        assert!(matches!(p("{ ${a}.b = 1; ${a}.c = 2; }"), Expr::DynAttrSet(ref st, ref d) if st.is_empty() && d.len() == 2));
+        assert!(matches!(p("x.${a}.b"), Expr::Select(_, ref k, None) if matches!(k[0], Key::Expr(_)) && k[1] == Key::Name("b".into())));
+    }
+
+    #[test]
     fn refuses_by_feature_name() {
         let cases = [
-            ("{ ${a} = 1; }", "dynamic attribute name"),
-            ("{ \"${a}\" = 1; }", "dynamic attribute name"),
+            ("let ${a} = 1; in 1", "dynamic attributes not allowed in let"),
+            ("let \"${a}\" = 1; in 1", "dynamic attributes not allowed in let"),
+            ("{ inherit ${a}; }", "dynamic attributes not allowed in inherit"),
             ("./p/${a}", "path antiquotation"),
             ("<nixpkgs>", "search path literal"),
             ("1.0e309", "invalid float"),

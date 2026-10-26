@@ -31,6 +31,20 @@ fixtures/eval-fail-derivation-hash-type
 fixtures/eval-fail-derivation-hash-untyped
 fixtures/eval-fail-derivation-name
 fixtures/eval-fail-derivation-no-builder
+fixtures/eval-fail-dynattr-context
+fixtures/eval-fail-dynattr-has-null
+fixtures/eval-fail-dynattr-int
+fixtures/eval-fail-dynattr-nested
+fixtures/eval-fail-dynattr-path
+fixtures/eval-fail-dynattr-prefix
+fixtures/eval-fail-dynattr-select-context
+fixtures/eval-fail-dynattr-select-int
+fixtures/eval-fail-dynattr-select-null
+fixtures/eval-fail-dynattr-select-or-null
+fixtures/eval-fail-dynattr-static
+fixtures/eval-fail-dynattr-tostring
+fixtures/eval-fail-dynattr-tryeval
+fixtures/eval-fail-dynattr-twice
 fixtures/eval-fail-float-add-string
 fixtures/eval-fail-float-ceil-range
 fixtures/eval-fail-float-compare
@@ -76,6 +90,7 @@ fixtures/eval-okay-derivation-escapes
 fixtures/eval-okay-derivation-fixed-output
 fixtures/eval-okay-derivation-nulls
 fixtures/eval-okay-div-truncates
+fixtures/eval-okay-dynamic-attrs
 fixtures/eval-okay-float-identity
 fixtures/eval-okay-floats
 fixtures/eval-okay-formals
@@ -138,6 +153,9 @@ tvix/nix_tests/eval-okay-concatmap
 tvix/nix_tests/eval-okay-concatstringssep
 tvix/nix_tests/eval-okay-deepseq
 tvix/nix_tests/eval-okay-delayed-with-inherit
+tvix/nix_tests/eval-okay-dynamic-attrs
+tvix/nix_tests/eval-okay-dynamic-attrs-2
+tvix/nix_tests/eval-okay-dynamic-attrs-bare
 tvix/nix_tests/eval-okay-elem
 tvix/nix_tests/eval-okay-empty-args
 tvix/nix_tests/eval-okay-eq
@@ -156,6 +174,7 @@ tvix/nix_tests/eval-okay-logic
 tvix/nix_tests/eval-okay-map
 tvix/nix_tests/eval-okay-nested-with
 tvix/nix_tests/eval-okay-new-let
+tvix/nix_tests/eval-okay-null-dynamic-attrs
 tvix/nix_tests/eval-okay-partition
 tvix/nix_tests/eval-okay-patterns
 tvix/nix_tests/eval-okay-regression-20220122
@@ -182,6 +201,7 @@ tvix/tvix_tests/eval-okay-arithmetic-float
 tvix/tvix_tests/eval-okay-arithmetic-int
 tvix/tvix_tests/eval-okay-assert-thunk-condition
 tvix/tvix_tests/eval-okay-attempt-to-call-catchable
+tvix/tvix_tests/eval-okay-attr-key-catchable
 tvix/tvix_tests/eval-okay-attrs-eq
 tvix/tvix_tests/eval-okay-attrs-inherit-literal
 tvix/tvix_tests/eval-okay-attrs-simple-inherit
@@ -231,6 +251,7 @@ tvix/tvix_tests/eval-okay-builtins-map-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-mul
 tvix/tvix_tests/eval-okay-builtins-partition
 tvix/tvix_tests/eval-okay-builtins-partition-propagate-catchable
+tvix/tvix_tests/eval-okay-builtins-remove-attrs-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-string-length
 tvix/tvix_tests/eval-okay-builtins-string-length-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-sub
@@ -315,6 +336,7 @@ tvix/tvix_tests/eval-okay-lazy-with-nested
 tvix/tvix_tests/eval-okay-legacy-let
 tvix/tvix_tests/eval-okay-legacy-let-fix
 tvix/tvix_tests/eval-okay-legacy-let-in-with
+tvix/tvix_tests/eval-okay-let-identifiers
 tvix/tvix_tests/eval-okay-let-inherit
 tvix/tvix_tests/eval-okay-let-inherit-from-later-bound
 tvix/tvix_tests/eval-okay-let-sibling-access
@@ -354,9 +376,11 @@ tvix/tvix_tests/eval-okay-or-operator-nested-default
 tvix/tvix_tests/eval-okay-or-operator-non-set
 tvix/tvix_tests/eval-okay-overlapping-nested-attrs
 tvix/tvix_tests/eval-okay-poisoned-scopes
+tvix/tvix_tests/eval-okay-rec-dynamic-keys
 tvix/tvix_tests/eval-okay-rec-nested-access
 tvix/tvix_tests/eval-okay-recursive-attrs-all-features
 tvix/tvix_tests/eval-okay-remove
+tvix/tvix_tests/eval-okay-repeated-list-to-attrs
 tvix/tvix_tests/eval-okay-seq
 tvix/tvix_tests/eval-okay-simple-closure
 tvix/tvix_tests/eval-okay-simple-interpol
@@ -379,5 +403,6 @@ tvix/tvix_tests/eval-okay-value-display
 tvix/tvix_tests/eval-okay-value-pointer-compare
 tvix/tvix_tests/eval-okay-value-pointer-equality
 tvix/tvix_tests/eval-okay-with-closure
+tvix/tvix_tests/eval-okay-with-in-dynamic-key
 tvix/tvix_tests/eval-okay-with-in-list
 tvix/tvix_tests/notyetpassing/eval-okay-cycle-display-cppnix-2.13

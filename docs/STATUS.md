@@ -150,8 +150,15 @@ for its float until then, printed one as `<LAMBDA>`. A primop is a
 synthesised lambda, whose code can be the same as a user's, so the
 generator marks a primop's chunks (BYTECODE.md "Chunk kinds", in the
 header's reserved word) and the printer shows `<PRIMOP>` and
-`<PRIMOP-APP>`; the VM never reads them. Then dynamic attribute
-names; `toJSON`/`fromJSON`/`toXML`/`fromTOML`; the primop tail (`mapAttrs`,
+`<PRIMOP-APP>`; the VM never reads them. ~~Dynamic attribute names~~
+**done** (BYTECODE.md "Dynamic attribute names"): `{ ${e} = v; }`, `"…${e}…"`
+names, and `e.${k}`, `e ? ${k}`, `e.${k} or d`, as Nix 2.34 has them --
+`${"a"}` of a plain literal is a static name (Nix's parser), a computed one
+is evaluated when the set is, in its scope, never merged, dropped when
+`null`, and a clash is `E_DUPATTR` (new, `$10`). Two opcodes, `ATTR_NAME` and
+`ATTRS_DYN`, whose work is in bank 4 (bank 0 +14). 10 corpus tests, 15
+fixtures, 4 mutations; one of them caught the first version, which took a
+computed name that was a selection of a thunk for a type error. Then `toJSON`/`fromJSON`/`toXML`/`fromTOML`; the primop tail (`mapAttrs`,
 `catAttrs`, `groupBy`, `genericClosure`, `functionArgs`, `splitVersion`,
 `compareVersions`, `parseDrvName`, `replaceStrings`, `sort`, regex `match`/
 `split`, ...); positions (`unsafeGetAttrPos`, `__curPos`); search paths, URI
@@ -213,7 +220,7 @@ a2min.
   other, were decided -- soft-float in C -- and are done: [FLOAT.md](FLOAT.md).)
 - **Card-side `MARK`** only when the promoted-bytes counter shows the 512 KB
   ceiling binding on a real program; nothing has yet.
-- **Bank 0** (38,189 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
+- **Bank 0** (38,203 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
   far pointers would buy the md5/sha1/sha512 tables. Watch for ORCA/C library
   routines: a struct copy links `~MOVE`, a variable left shift `~SHIFTLEFT`.
 - **The `eval-fail` corpus**, and **L5** (self-hosting, D7's exit).
@@ -246,7 +253,8 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-**Bank 0: 38,189 of 40,960 bytes** (2026-10-26, after floats: +419, a tag
+**Bank 0: 38,203 of 40,960 bytes** (2026-10-26, after dynamic attribute
+names, +14 for two opcode cases; 38,189 after floats: +419, a tag
 test in each operation that can see a float -- the work is in bank 4 -- and
 `~SHL8`/`~LSHR8`, which ORCA/C links for any 64-bit shift; 37,770 after the
 maintainability phase). It was 38,406 (2026-10-25, after string context, and
@@ -266,8 +274,9 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **381 / 486** (2026-10-26, after the primop printer;
-0 fail, 8 error, 77 unsupported, 20 notyetpassing). It was 379 / 485 after
+The scoreboard reads **406 / 501** (2026-10-26, after dynamic attribute
+names; 0 fail, 8 error, 67 unsupported, 20 notyetpassing). It was 381 / 486
+after the primop printer (0 fail, 8 error, 77 unsupported). It was 379 / 485 after
 floats (1 fail, 8 error, 77 unsupported, 20 notyetpassing). Floats brought 18 corpus tests and
 10 fixtures. The fail is tvix's `eval-okay-value-display`, refused for its
 `42.0` until now and wrong on the printer (`<LAMBDA>` for a primop). The new

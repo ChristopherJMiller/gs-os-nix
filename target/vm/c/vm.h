@@ -250,6 +250,8 @@ obj_t *path_alloc(uint16_t len);    /* a PATH, no context word (HEAP.md) */
 obj_t *path_join(const char *a, uint16_t na, const char *b, uint16_t nb);   /* canonPath(a ++ b); caller reserves na+nb+1 */
 obj_t *list_alloc(uint16_t n);
 obj_t *attrs_alloc(uint16_t n);
+void   attr_name(void);                     /* ATTR_NAME (prims.c) */
+void   attrs_dynamic(void);                 /* ATTRS_DYN (prims.c): reads its operands at pc */
 obj_t *deref_follow(obj_t *p);      /* checks, and follows INDIRECTs */
 obj_t *deref_pop(void);             /* deref(pop()) */
 obj_t *deref_rpop(void);            /* deref(rpop()) */
