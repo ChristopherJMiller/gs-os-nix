@@ -10,6 +10,9 @@ use std::collections::HashMap;
 use crate::ast::{unsupported, BinOp, Expr, Key, Param, Pos, StrPart, Unsupported};
 use crate::opcodes::*;
 
+/// emit_builtins_set's key in `imported`: no file is named so.
+const BUILTINS_CHUNK: &str = "<builtins>";
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Const {
     Int(i64),
@@ -260,26 +263,46 @@ impl Compiler {
         Ok(())
     }
 
-    /// `builtins` as a value: an attribute set with one entry per primop, whose
-    /// values are the same synthesised lambdas `builtins.NAME` would give. Nix
-    /// keeps attributes sorted by name bytes and the VM relies on it, so the
-    /// names are sorted here rather than taken in table order.
-    ///
-    /// This is not cheap -- 47 attributes, a name constant each, and 73 chunks
-    /// of curried lambdas -- but `with builtins;` is once per program, which is
-    /// how the corpus uses it. Every primop is eagerly built, because the set is
-    /// a value: something may iterate it with `attrNames`.
+    /// `builtins` as a value: one attribute set per program, as in Nix, whose
+    /// entries are the primops' synthesised lambdas and the value builtins, and
+    /// whose `builtins` is the set itself -- so `builtins.builtins == builtins`
+    /// and `[ builtins ] == [ builtins.builtins ]`, by the pointer. It is a
+    /// closed thunk the VM memoises by chunk (CLOSED_THUNK, as an import),
+    /// built the first time it is forced; every site names the same chunk,
+    /// and the `builtins` entry is that thunk again. Nix keeps attributes
+    /// sorted by name bytes and the VM relies on it, so the names are sorted.
     fn emit_builtins_set(&mut self, pos: Pos, chunk: usize) -> Result<(), Unsupported> {
-        let mut names: Vec<&'static str> = PRIMOPS.iter().map(|(n, _, _)| *n)
-            .chain(BUILTIN_VALUES.iter().map(|(n, _)| *n)).collect();
-        names.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
-        for name in &names {
-            self.emit_const(chunk, Const::Str((*name).to_string()))?;
-            self.emit_builtin(name, pos, chunk)?;
-        }
-        let n = Self::count(names.len(), "attributes")?;
-        self.emit(chunk, OP_ATTRS);
-        self.emit_u16(chunk, n);
+        let body = match self.imported.get(BUILTINS_CHUNK) {
+            Some(&b) => b,
+            None => {
+                self.chunks.push(Chunk::default());
+                let b = self.chunks.len() - 1;
+                self.imported.insert(BUILTINS_CHUNK.to_string(), b);
+                let outer = std::mem::take(&mut self.scopes);
+                let mut names: Vec<&'static str> = PRIMOPS.iter().map(|(n, _, _)| *n)
+                    .chain(BUILTIN_VALUES.iter().map(|(n, _)| *n))
+                    .chain(std::iter::once("builtins")).collect();
+                names.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+                for name in &names {
+                    self.emit_const(b, Const::Str((*name).to_string()))?;
+                    if *name == "builtins" {
+                        self.emit(b, OP_CLOSED_THUNK);
+                        self.emit_u16(b, b as u16);
+                    } else {
+                        self.emit_builtin(name, pos, b)?;
+                    }
+                }
+                self.scopes = outer;
+                let n = Self::count(names.len(), "attributes")?;
+                self.emit(b, OP_ATTRS);
+                self.emit_u16(b, n);
+                self.emit_return(b);
+                b
+            }
+        };
+        self.emit(chunk, OP_CLOSED_THUNK);
+        self.emit_u16(chunk, body as u16);
+        self.emit(chunk, OP_FORCE);
         Ok(())
     }
 
@@ -291,10 +314,23 @@ impl Compiler {
             return self.emit_derivation(pos, chunk);
         }
         if let Some(v) = builtin_value(name) {
-            return self.emit_const(chunk, Const::Str(v.to_string()));
+            return match v {
+                BuiltinValue::Str(s) => self.emit_const(chunk, Const::Str(s.to_string())),
+                BuiltinValue::Int(i) => self.emit_const(chunk, Const::Int(i)),
+            };
+        }
+        if name == "builtins" {
+            return self.emit_builtins_set(pos, chunk);
         }
         let Some((id, arity)) = primop(name) else {
-            return unsupported(pos, format!("builtins.{name}"));
+            if NIX_BUILTINS.contains(&name) {
+                return unsupported(pos, format!("builtins.{name}"));
+            }
+            // Not a Nix builtin at all: Nix's missing attribute, when evaluated.
+            self.emit_builtins_set(pos, chunk)?;
+            self.emit_const(chunk, Const::Str(name.to_string()))?;
+            self.emit(chunk, OP_SELECT);
+            return Ok(());
         };
         let entry = match self.builtins.get(name) {
             Some(&c) => c,
@@ -565,6 +601,12 @@ impl Compiler {
                 self.emit(chunk, OP_ATTRS);
                 self.emit_u16(chunk, n);
             }
+            Expr::RecSet(binds, dyns) => {
+                // let <bindings> in { inherit <names>; <computed> } (front.rs rec_set)
+                let set = binds.iter().map(|(n, pos, _)| (n.clone(), *pos, Expr::Var(n.clone(), *pos))).collect();
+                let body = if dyns.is_empty() { Expr::AttrSet(set) } else { Expr::DynAttrSet(set, dyns.clone()) };
+                self.strict(&Expr::Let(binds.clone(), Box::new(body)), chunk)?;
+            }
             Expr::DynAttrSet(binds, dyns) => {
                 // The static attributes as for ATTRS, then each computed name,
                 // forced, and its value; the VM drops a null name's pair, sorts
@@ -702,7 +744,11 @@ impl Compiler {
             },
             Expr::Select(base, path, None) => {
                 if let (Expr::Var(b, pos), [Key::Name(name)]) = (&**base, path.as_slice()) {
-                    if b == "builtins" && !self.is_shadowed("builtins") {
+                    // Directly only what cannot fail: a name that is no
+                    // builtin is a missing attribute, lazily (a thunk), as in Nix.
+                    let known = primop(name).is_some() || builtin_value(name).is_some()
+                        || name == "derivation" || name == "builtins";
+                    if b == "builtins" && !self.is_shadowed("builtins") && known {
                         return self.emit_builtin(name, *pos, chunk);
                     }
                 }
@@ -983,7 +1029,10 @@ mod tests {
         let _ = outer;
         // shadowed builtins is an ordinary variable; unknown primops are refused by name
         assert!(c("let builtins = { length = 1; }; in builtins.length").iter().all(|k| !k.code.contains(&OP_PRIM)));
-        assert_eq!(compile(&parse("builtins.nope").unwrap()).unwrap_err().what, "builtins.nope");
+        // a Nix builtin the VM lacks is refused by name; a name that is no
+        // builtin at all is Nix's missing attribute, at run time
+        assert_eq!(compile(&parse("builtins.readDir").unwrap()).unwrap_err().what, "builtins.readDir");
+        assert!(compile(&parse("builtins.nope").unwrap()).is_ok());
         // A value builtin is a constant, not a primop lambda (D23).
         assert!(c("builtins.currentSystem").iter().all(|k| !k.code.contains(&OP_LAMBDA)));
     }

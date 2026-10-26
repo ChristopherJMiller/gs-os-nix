@@ -106,6 +106,11 @@ pub enum Expr {
     /// static attributes, unsorted, then each computed name's expression and
     /// its value, in source order.
     DynAttrSet(Vec<(String, Pos, Expr)>, Vec<(Expr, Pos, Expr)>),
+    /// `rec { ... }`: its bindings, let-style (`inherit x;` reads the scope
+    /// outside), and its computed names. Kept as a set until the compiler
+    /// lowers it to `let <bindings> in { inherit <names>; <computed> }`, so
+    /// that a later `name = { ... };` can still merge into it.
+    RecSet(Vec<(String, Pos, Expr)>, Vec<(Expr, Pos, Expr)>),
     /// `e.a.b`, optionally `or default` — the default applies if any step is
     /// missing or not a set.
     Select(Box<Expr>, Vec<Key>, Option<Box<Expr>>),

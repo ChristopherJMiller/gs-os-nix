@@ -1204,6 +1204,7 @@ void op_prim(void)
     case PRIM_TOJSON:          prim_tojson(); break;
     case PRIM_FROMJSON:        prim_fromjson(); break;
     case PRIM_TOXML:           prim_toxml(); break;
+    case PRIM_TOPATH:          prim_topath(); break;
     default:                   err_exit(E_BADOP);
     }
 }

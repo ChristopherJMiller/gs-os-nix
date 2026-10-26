@@ -60,6 +60,7 @@ void prim_replacestrings(void);
 void prim_tojson(void);                             /* json.c */
 void prim_fromjson(void);
 void prim_toxml(void);
+void prim_topath(void);                             /* strings.c */
 void copy_entry(obj_t *dst, uint16_t n, uint16_t i, obj_t *src, uint16_t ns, uint16_t j);   /* prims.c */
 obj_t *lit_attr(obj_t *set, const char *lit, uint16_t n);   /* the value a C literal names in set, or 0; no bytecode */
 void prim_unsafediscardstringcontext(void);

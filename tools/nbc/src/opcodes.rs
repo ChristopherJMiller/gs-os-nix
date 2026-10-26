@@ -144,6 +144,7 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("toJSON", 0x48, 1),
     ("fromJSON", 0x49, 1),
     ("toXML", 0x4A, 1),
+    ("toPath", 0x4B, 1),
 ];
 
 /// The builtins Nix also exposes unqualified.
@@ -155,11 +156,50 @@ pub const GLOBALS: &[&str] = &[
 /// Builtins that are values rather than functions: a string constant each,
 /// emitted where `builtins.NAME` is and included in `builtins` as a set.
 /// `currentSystem` is what an IIgs reports (DECISIONS.md D23).
-pub const BUILTIN_VALUES: &[(&str, &str)] = &[("currentSystem", "w65-gsos")];
+/// A builtin that is a value, not a function.
+#[derive(Clone, Copy)]
+pub enum BuiltinValue {
+    Str(&'static str),
+    Int(i64),
+}
 
-pub fn builtin_value(name: &str) -> Option<&'static str> {
+/// currentSystem is D23's; nixVersion and langVersion are the Nix whose
+/// answers the fixtures are (2.34.9; D24).
+pub const BUILTIN_VALUES: &[(&str, BuiltinValue)] = &[
+    ("currentSystem", BuiltinValue::Str("w65-gsos")),
+    ("langVersion", BuiltinValue::Int(6)),
+    ("nixVersion", BuiltinValue::Str("2.34.9")),
+];
+
+pub fn builtin_value(name: &str) -> Option<BuiltinValue> {
     BUILTIN_VALUES.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
 }
+
+/// Every name in Nix 2.34.9's `builtins` (`builtins.attrNames builtins` on the
+/// host). `builtins.NAME` for one of these the VM lacks is refused by name; for
+/// any other it is Nix's own missing attribute, at run time.
+pub const NIX_BUILTINS: &[&str] = &[
+    "abort", "add", "addDrvOutputDependencies", "addErrorContext", "all", "any",
+    "appendContext", "attrNames", "attrValues", "baseNameOf", "bitAnd", "bitOr",
+    "bitXor", "break", "builtins", "catAttrs", "ceil", "compareVersions",
+    "concatLists", "concatMap", "concatStringsSep", "convertHash", "currentSystem", "currentTime",
+    "deepSeq", "derivation", "derivationStrict", "dirOf", "div", "elem",
+    "elemAt", "false", "fetchGit", "fetchMercurial", "fetchTarball", "fetchTree",
+    "fetchurl", "filter", "filterSource", "findFile", "flakeRefToString", "floor",
+    "foldl'", "fromJSON", "fromTOML", "functionArgs", "genList", "genericClosure",
+    "getAttr", "getContext", "getEnv", "getFlake", "groupBy", "hasAttr",
+    "hasContext", "hashFile", "hashString", "head", "import", "intersectAttrs",
+    "isAttrs", "isBool", "isFloat", "isFunction", "isInt", "isList",
+    "isNull", "isPath", "isString", "langVersion", "length", "lessThan",
+    "listToAttrs", "map", "mapAttrs", "match", "mul", "nixPath",
+    "nixVersion", "null", "parseDrvName", "parseFlakeRef", "partition", "path",
+    "pathExists", "placeholder", "readDir", "readFile", "readFileType", "removeAttrs",
+    "replaceStrings", "scopedImport", "seq", "sort", "split", "splitVersion",
+    "storeDir", "storePath", "stringLength", "sub", "substring", "tail",
+    "throw", "toFile", "toJSON", "toPath", "toString", "toXML",
+    "trace", "traceVerbose", "true", "tryEval", "typeOf", "unsafeDiscardOutputDependency",
+    "unsafeDiscardStringContext", "unsafeGetAttrPos", "warn", "zipAttrsWith",
+];
 
 pub fn primop(name: &str) -> Option<(u8, u8)> {
     PRIMOPS.iter().find(|(n, _, _)| *n == name).map(|(_, id, arity)| (*id, *arity))

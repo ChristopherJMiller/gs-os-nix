@@ -1,5 +1,6 @@
 # Tests the 65816 VM passes. scripts/scoreboard.py --update maintains it;
 # checks.scoreboard fails if any of these stops passing.
+fixtures/eval-fail-builtins-missing
 fixtures/eval-fail-catattrs-element
 fixtures/eval-fail-catattrs-name-context
 fixtures/eval-fail-closure-mixed-keys
@@ -120,6 +121,7 @@ fixtures/eval-fail-tojson-function
 fixtures/eval-fail-tojson-incomplete
 fixtures/eval-fail-tojson-order
 fixtures/eval-fail-tojson-tostring-int
+fixtures/eval-fail-topath-relative
 fixtures/eval-fail-toxml-drvpath-first
 fixtures/eval-fail-toxml-throw
 fixtures/eval-fail-toxml-type-first
@@ -130,6 +132,7 @@ fixtures/eval-okay-attr-primops
 fixtures/eval-okay-attrs
 fixtures/eval-okay-big-operations
 fixtures/eval-okay-bool-ops
+fixtures/eval-okay-builtins-corners
 fixtures/eval-okay-carry-chain
 fixtures/eval-okay-closure-capture
 fixtures/eval-okay-coerce-sets
@@ -210,6 +213,7 @@ tvix/nix_tests/eval-okay-attrs4
 tvix/nix_tests/eval-okay-attrs5
 tvix/nix_tests/eval-okay-backslash-newline-1
 tvix/nix_tests/eval-okay-backslash-newline-2
+tvix/nix_tests/eval-okay-builtins
 tvix/nix_tests/eval-okay-builtins-add
 tvix/nix_tests/eval-okay-callable-attrs
 tvix/nix_tests/eval-okay-catattrs
@@ -304,6 +308,7 @@ tvix/tvix_tests/eval-okay-builtins-attrvalues-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-bitand
 tvix/tvix_tests/eval-okay-builtins-bitor
 tvix/tvix_tests/eval-okay-builtins-bitxor
+tvix/tvix_tests/eval-okay-builtins-builtins
 tvix/tvix_tests/eval-okay-builtins-catAttrs
 tvix/tvix_tests/eval-okay-builtins-catattrs-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-compareVersions
@@ -339,6 +344,7 @@ tvix/tvix_tests/eval-okay-builtins-length-catchable
 tvix/tvix_tests/eval-okay-builtins-lessThan
 tvix/tvix_tests/eval-okay-builtins-list-to-attrs-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-map
+tvix/tvix_tests/eval-okay-builtins-map-function-strictness
 tvix/tvix_tests/eval-okay-builtins-map-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-mapAttrs-function-strictness
 tvix/tvix_tests/eval-okay-builtins-mul
@@ -361,6 +367,7 @@ tvix/tvix_tests/eval-okay-builtins-tail
 tvix/tvix_tests/eval-okay-builtins-tail-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-thunked-function-calls
 tvix/tvix_tests/eval-okay-builtins-to-json-propagate-catchable
+tvix/tvix_tests/eval-okay-builtins-to-path-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-to-string-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-to-xml-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-toString
@@ -459,6 +466,7 @@ tvix/tvix_tests/eval-okay-logical-and-catchable
 tvix/tvix_tests/eval-okay-logical-or-catchable
 tvix/tvix_tests/eval-okay-manual-rec
 tvix/tvix_tests/eval-okay-merge-nested-attrs
+tvix/tvix_tests/eval-okay-merge-nested-rec-attrs
 tvix/tvix_tests/eval-okay-multiline-string
 tvix/tvix_tests/eval-okay-multiple-nested-attrs
 tvix/tvix_tests/eval-okay-mutually-recursive-let-binding
@@ -477,6 +485,7 @@ tvix/tvix_tests/eval-okay-nested-set-thunks
 tvix/tvix_tests/eval-okay-nested-siblings
 tvix/tvix_tests/eval-okay-nested-thunks
 tvix/tvix_tests/eval-okay-nested-with
+tvix/tvix_tests/eval-okay-nix-version-cmp
 tvix/tvix_tests/eval-okay-observable-eval-cache
 tvix/tvix_tests/eval-okay-observe-infinite-attrs
 tvix/tvix_tests/eval-okay-optimised-bools
@@ -519,4 +528,5 @@ tvix/tvix_tests/eval-okay-value-pointer-equality
 tvix/tvix_tests/eval-okay-with-closure
 tvix/tvix_tests/eval-okay-with-in-dynamic-key
 tvix/tvix_tests/eval-okay-with-in-list
+tvix/tvix_tests/notyetpassing/eval-okay-builtins-set-pointer-equality
 tvix/tvix_tests/notyetpassing/eval-okay-cycle-display-cppnix-2.13

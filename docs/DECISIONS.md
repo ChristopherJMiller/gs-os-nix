@@ -622,3 +622,15 @@ a string constant, because a primop is a curried lambda and this is a value;
 at L5 the on-target compiler does the same. It is one constant
 (`tools/nbc/src/opcodes.rs BUILTIN_VALUES`) and a regenerated fixture to
 change.
+
+## D24 — `builtins.nixVersion` is `"2.34.9"`, `langVersion` 6
+
+**Chosen as D23 was (2026-10-26), easy to revisit.** The VM evaluates Nix as
+2.34.9 does, rule for rule -- every fixture is that version's answer (D7) --
+so it says so. nixpkgs reads `nixVersion` only to refuse evaluators older
+than it supports (`lib.versionAtLeast builtins.nixVersion ...`), which this
+one is not, and tvix answers `"2.3-compat"` for the same reason (its
+`eval-okay-nix-version-cmp` asks only that the version be past 2.18).
+`langVersion` 6 is 2.34's. If the VM ever claims a different Nix's semantics,
+both move with it; the generator emits them as constants (`opcodes.rs`
+`BUILTIN_VALUES`).

@@ -607,6 +607,26 @@ void prim_replacestrings(void)
     push(r);
 }
 
+/* builtins.toPath s: Nix's coerceToPath -- s coerced as "${}" does, a path
+ * as its text (no store copy), which must be absolute, then canonical -- but
+ * as a STRING, with s's context (toPath is deprecated, and returns a string). */
+void prim_topath(void)
+{
+    obj_t *s, *p, *r;
+    uint16_t n;
+    coerce_top(CO_PATH);
+    s = deref(peek());
+    n = AUX16(s);
+    if (n == 0 || STRBYTES(s)[0] != '/') type_err();   /* "doesn't represent an absolute path" */
+    nursery_reserve(2 * (round4(n + 1) + 12));          /* the canonical PATH, then the STRING */
+    s = deref(peek());
+    p = path_join(STRBYTES(s), n, "", 0);
+    r = str_alloc(AUX16(p));
+    memcpy(STRBYTES(r), STRBYTES(p), AUX16(p));
+    STRCTX(r, AUX16(p)) = CTX(deref(peek()));
+    vstack[vsp - 1] = r;
+}
+
 /* --- the context builtins (DERIVATION.md "String context") -------------------------------- */
 
 /* Where the store path an element (a view) names begins: after the second "!"

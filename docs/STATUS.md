@@ -203,7 +203,15 @@ scoreboard's own parsing was wrong: it split a2min's output with
 records every lambda's parameter name, `@` name and ellipsis there (BYTECODE.md
 "Chunk kinds"), read only by toXML and costing nothing at load -- and floats
 by an exact `printf("%g")` (`f_g`, FLOAT.md); 4 corpus tests, 4 fixtures, 7
-mutations; `fromTOML`; ~~`compareVersions`, `splitVersion`,
+mutations. ~~The small corners~~ **done**: one `builtins` set per program,
+holding itself (a closed thunk shared by every site, so `[ builtins ] == [
+builtins.builtins ]`); a name that is no Nix builtin is a missing attribute
+at run time, lazily, while a Nix builtin the VM lacks is still refused by
+name (`opcodes.rs` `NIX_BUILTINS`, the host's 118); `nixVersion` and
+`langVersion` (D24); `toPath`; URI literals, which are strings; merging into
+a `rec` set, whose rec-ness is the first definition's (the generator keeps
+`RecSet` until it lowers it). `getEnv` waits with the file builtins: the VM
+has no environment; `fromTOML`; ~~`compareVersions`, `splitVersion`,
 `parseDrvName`, `replaceStrings`~~ **done** (`names.cc` and `primops.cc` rule
 by rule: a run of digits is a version number only while it fits a C++
 `int`; a `to` is forced on first use; 10 corpus tests -- one, tvix's
@@ -329,8 +337,10 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **520 / 566** (2026-10-26, after `toXML`; 0 fail, 6
-error, 22 unsupported, 18 notyetpassing). It was 512 / 562 after `fromJSON`
+The scoreboard reads **530 / 569** (2026-10-26, after the small corners; 0
+fail, 6 error, 16 unsupported, 17 notyetpassing -- one of the seven corpus
+tests they bring is tvix's own notyetpassing builtins-set-pointer-equality).
+It was 520 / 566 after `toXML` (22 unsupported). It was 512 / 562 after `fromJSON`
 (26 unsupported). It was 487 / 542 after `toJSON`
 (31 unsupported). It was 473 / 535 after
 `functionArgs` (38 unsupported). It was 467 / 532 after

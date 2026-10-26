@@ -223,11 +223,7 @@ impl<'a> Lower<'a> {
     /// attributes, and are not themselves in scope.
     fn rec_set(&self, node: &impl HasEntry, what: &str) -> Result<Expr, Unsupported> {
         let (binds, dyns) = self.bindings(node, what, true)?;
-        let set = binds
-            .iter()
-            .map(|(n, pos, _)| (n.clone(), *pos, Expr::Var(n.clone(), *pos)))
-            .collect();
-        Ok(Expr::Let(binds, Box::new(Self::set_of(set, dyns))))
+        Ok(Expr::RecSet(binds, dyns))
     }
 
     /// A set literal: AttrSet, or DynAttrSet when a name is computed.
@@ -235,11 +231,14 @@ impl<'a> Lower<'a> {
         if dyns.is_empty() { Expr::AttrSet(statics) } else { Expr::DynAttrSet(statics, dyns) }
     }
 
-    /// A set literal's static and computed attributes, or None.
-    fn set_parts(e: Expr) -> Result<(Vec<(String, Pos, Expr)>, Vec<(Expr, Pos, Expr)>), Expr> {
+    /// A set literal's static and computed attributes and whether it is rec,
+    /// or the expression back.
+    #[allow(clippy::type_complexity)]
+    fn set_parts(e: Expr) -> Result<(Vec<(String, Pos, Expr)>, Vec<(Expr, Pos, Expr)>, bool), Expr> {
         match e {
-            Expr::AttrSet(s) => Ok((s, Vec::new())),
-            Expr::DynAttrSet(s, d) => Ok((s, d)),
+            Expr::AttrSet(s) => Ok((s, Vec::new(), false)),
+            Expr::DynAttrSet(s, d) => Ok((s, d, false)),
+            Expr::RecSet(s, d) => Ok((s, d, true)),
             e => Err(e),
         }
     }
@@ -247,7 +246,10 @@ impl<'a> Lower<'a> {
     /// Adds `name = value` to a binding list, merging attribute-set literals so
     /// that `a.b = 1; a.c = 2;` and `a = { b = 1; }; a.c = 2;` both become
     /// `a = { b = 1; c = 2; }`; their computed names are kept, unmerged, as
-    /// Nix does. Anything else landing twice is refused.
+    /// Nix does. The first one's rec-ness is the merged set's, as in Nix's
+    /// parser: `a = rec { x = 1; }; a = { y = x; };` is one rec set, where y
+    /// is 1, and `a = { x = 1; }; a = rec { y = x; };` is not, where x is the
+    /// one outside. Anything else landing twice is refused.
     fn insert_binding(
         binds: &mut Vec<(String, Pos, Expr)>,
         name: String,
@@ -258,16 +260,23 @@ impl<'a> Lower<'a> {
         if let Some(existing) = binds.iter_mut().find(|(n, _, _)| *n == name) {
             let old = std::mem::replace(&mut existing.2, Expr::Int(0));
             match (Self::set_parts(old), Self::set_parts(value)) {
-                (Ok((mut s1, mut d1)), Ok((s2, d2))) => {
+                (Ok((mut s1, mut d1, rec1)), Ok((s2, d2, rec2))) => {
                     for (n, p, v) in s2 {
+                        // a rec set's `inherit x;` reads outside it; in a plain
+                        // set that is the variable itself
+                        let v = match v { Expr::Inherit(x, ip) if rec2 && !rec1 => Expr::Var(x, ip), v => v };
                         Self::insert_binding(&mut s1, n, p, v, what)?;
                     }
                     d1.extend(d2);
-                    existing.2 = Self::set_of(s1, d1);
+                    existing.2 = if rec1 { Expr::RecSet(s1, d1) } else { Self::set_of(s1, d1) };
                     Ok(())
                 }
                 (old, _) => {
-                    existing.2 = match old { Ok((s, d)) => Self::set_of(s, d), Err(e) => e };
+                    existing.2 = match old {
+                        Ok((s, d, true)) => Expr::RecSet(s, d),
+                        Ok((s, d, false)) => Self::set_of(s, d),
+                        Err(e) => e,
+                    };
                     unsupported(pos, format!("`{name}` bound twice in one {what}"))
                 }
             }
@@ -346,7 +355,9 @@ impl<'a> Lower<'a> {
                     // Nix's parse error, for the whole file: refused like one.
                     None => self.refuse(lit, "invalid float"),
                 },
-                LiteralKind::Uri(_) => self.refuse(lit, "URI literal"),
+                // A URI literal is a string (Nix 2.34, without the
+                // no-url-literals experimental feature).
+                LiteralKind::Uri(u) => Ok(Expr::Str(vec![StrPart::Lit(u.to_string())])),
             },
             ast::Expr::Ident(id) => match id.ident_token() {
                 // `import` reaching here is `import` used as anything other
@@ -670,6 +681,10 @@ mod tests {
             Expr::AttrSet(bs) => Expr::AttrSet(
                 bs.into_iter().map(|(n, _, e)| (n, Pos { line: 1, col: 0 }, strip(e))).collect(),
             ),
+            Expr::RecSet(bs, ds) => Expr::RecSet(
+                bs.into_iter().map(|(n, _, e)| (n, Pos { line: 1, col: 0 }, strip(e))).collect(),
+                ds.into_iter().map(|(n, _, e)| (strip(n), Pos { line: 1, col: 0 }, strip(e))).collect(),
+            ),
             Expr::DynAttrSet(bs, ds) => Expr::DynAttrSet(
                 bs.into_iter().map(|(n, _, e)| (n, Pos { line: 1, col: 0 }, strip(e))).collect(),
                 ds.into_iter().map(|(n, _, e)| (strip(n), Pos { line: 1, col: 0 }, strip(e))).collect(),
@@ -957,21 +972,18 @@ mod tests {
     fn desugars_rec_legacy_let_and_attr_paths() {
         assert_eq!(
             p("rec { a = 1; b = a; }"),
-            Expr::Let(
+            Expr::RecSet(
                 vec![("a".into(), Pos { line: 1, col: 0 }, Expr::Int(1)), ("b".into(), Pos { line: 1, col: 0 }, *var("a"))],
-                Box::new(Expr::AttrSet(vec![
-                    ("a".into(), Pos { line: 1, col: 0 }, *var("a")),
-                    ("b".into(), Pos { line: 1, col: 0 }, *var("b")),
-                ]))
+                vec![]
             )
         );
+        // merged: the first one's rec-ness (Nix's parser)
+        assert!(matches!(p("{ s = rec { a = 1; }; s = { b = a; }; }"), Expr::AttrSet(ref v) if matches!(v[0].2, Expr::RecSet(ref b, _) if b.len() == 2)));
+        assert!(matches!(p("{ s = { a = 1; }; s = rec { b = a; }; }"), Expr::AttrSet(ref v) if matches!(v[0].2, Expr::AttrSet(ref b) if b.len() == 2)));
         assert_eq!(
             p("let { body = 1; }"),
             Expr::Select(
-                Box::new(Expr::Let(
-                    vec![("body".into(), Pos { line: 1, col: 0 }, Expr::Int(1))],
-                    Box::new(Expr::AttrSet(vec![("body".into(), Pos { line: 1, col: 0 }, *var("body"))]))
-                )),
+                Box::new(Expr::RecSet(vec![("body".into(), Pos { line: 1, col: 0 }, Expr::Int(1))], vec![])),
                 vec!["body".into()],
                 None
             )
