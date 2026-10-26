@@ -1212,6 +1212,9 @@ void op_prim(void)
     case PRIM_READDIR: case PRIM_READFILE: case PRIM_READFILETYPE: case PRIM_STOREPATH:
                                prim_gsos(id, 1);
     case PRIM_FILTERSOURCE: case PRIM_HASHFILE: prim_gsos(id, 2);
+    case PRIM_FINDFILE:        prim_findfile(); break;
+    case PRIM_IMPORT:          prim_import(0);
+    case PRIM_SCOPEDIMPORT:    prim_import(1);
     default:                   err_exit(E_BADOP);
     }
 }

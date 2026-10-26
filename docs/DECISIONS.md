@@ -674,3 +674,12 @@ name. Forcing first keeps Nix's order: a throw in an argument is still
 caught, as it is by the host before any file is touched. The scoreboard
 counts these in a bucket of their own, `need GS/OS`, which no change to the
 generator can move and L7 will.
+
+`builtins.nixPath` is `[ ]`. Nix's search path comes from `NIX_PATH`, and
+without it from the default, which lists only the directories that exist
+(the channels); the VM has neither an environment nor a directory, so the
+list is empty, and `<x>` is `findFile [ ] "x"`: not found, a throw that
+`tryEval` catches, as on a host with no search path (tvix's tryeval and
+Nix's redefine-builtin tests ask exactly that). A search path given in the
+program -- `findFile [ { path = ...; } ] "x"`, or a `__nixPath` of its own --
+names directories, and looking in them is GS/OS's again.

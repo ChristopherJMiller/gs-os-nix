@@ -235,8 +235,13 @@ the environment, the network, the store -- compile like any primop (as
 now every builtin Nix registers that way), force their arguments as Nix
 does, and are `E_GSOS` with their name; the scoreboard's own bucket, `need
 GS/OS` (9 corpus tests), is L7's to move (a2min implementing the GS/OS calls
-`orcarun` already does is the likely route). **Left before nbc refuses
-nothing: search paths (2), `import` as a value (1), `fromTOML` (1).** Past
+`orcarun` already does is the likely route); ~~search paths, `import` as a
+value~~ **done**: `<x>` is Nix's `__findFile __nixPath "x"`, and `nixPath`
+is `[ ]` (D26), so not found is a throw `tryEval` catches -- a search path
+that fits is GS/OS's, `<nix/...>` (corepkgs) `E_UNSUP`; `import` and
+`scopedImport` as values, and an import of anything but a literal path, are
+primops that force their argument and are GS/OS's; 3 corpus tests, 10
+fixtures, 6 mutations. **Left before nbc refuses nothing: `fromTOML` (1).** Past
 the finish line -- tvix's notyetpassing, or in no test: positions
 (`unsafeGetAttrPos`, `__curPos`), path antiquotation, `scopedImport`,
 `trace`, `warn`, `break`, `addErrorContext`, `storeDir`, `placeholder`,
@@ -353,8 +358,10 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **550 / 583** (2026-10-26, after the GS/OS builtins;
-0 fail, 3 error, 9 need GS/OS, 4 unsupported, 17 notyetpassing). It was
+The scoreboard reads **564 / 593** (2026-10-26, after search paths and
+`import` as a value; 0 fail, 3 error, 9 need GS/OS, 1 unsupported, 16
+notyetpassing -- one of tvix's own, cppnix-non-identifier-pointer-inequality,
+passes now). It was 550 / 583 after the GS/OS builtins (4 unsupported). It was
 546 / 579 after `match` and `split` (13 unsupported). It was 530 / 569 after
 the small corners (6 error, 16 unsupported -- one of the seven corpus tests
 they brought is tvix's own notyetpassing builtins-set-pointer-equality).

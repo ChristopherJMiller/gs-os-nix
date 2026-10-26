@@ -382,6 +382,12 @@ static obj_t *lit_str(const char *t, uint16_t n)
  * The names are PRIM_FETCHGIT's onward, in order. */
 #define GSOS_NAMES \
     "fetchGit fetchMercurial fetchTarball fetchTree fetchurl filterSource getEnv getFlake hashFile path pathExists readDir readFile readFileType storePath "
+_Noreturn static void gsos_exit(const char *t, uint16_t n)
+{
+    *(obj_t **)RESULT_ADDR = lit_str(t, n);
+    err_exit(E_GSOS);
+}
+
 _Noreturn void prim_gsos(uint16_t id, uint16_t arity)
 {
     const char *t = GSOS_NAMES;
@@ -392,8 +398,96 @@ _Noreturn void prim_gsos(uint16_t id, uint16_t arity)
         ++t;
     }
     for (n = 0; t[n] != ' '; ++n) ;
-    *(obj_t **)RESULT_ADDR = lit_str(t, n);
-    err_exit(E_GSOS);
+    gsos_exit(t, n);
+}
+
+/* import p, and scopedImport scope p, applied at run time -- an import the
+ * generator could not resolve (a literal path it reads itself). Nix forces
+ * the scope, a set, then realises the path; reading the file is GS/OS's. */
+_Noreturn void prim_import(uint16_t scoped)
+{
+    if (scoped) {
+        force_slot(2);
+        if (deref(vstack[vsp - 2])->tag != T_ATTRS) type_err();
+        force_slot(1);
+        gsos_exit("scopedImport", 12);
+    }
+    force_slot(1);
+    gsos_exit("import", 6);
+}
+
+/* builtins.findFile path name, which <name> is: Nix's parser makes it
+ * __findFile __nixPath "name", and nixPath is [ ] here (D26). Nix's
+ * prim_findFile and EvalState::findFile: the list forced, then each element,
+ * a set whose prefix (if it has one) is a string without context and whose
+ * path is coerced as "${}" does but a path is its text; then the name, a
+ * string without context. An element whose prefix fits the name names a
+ * directory to look in, and looking is GS/OS's, as is a path with context
+ * (Nix realises it); a name under nix/ is one of Nix's own files (corepkgs,
+ * E_UNSUP); and otherwise the name is not found -- a throw, which tryEval
+ * catches. */
+#define FF_MSG "' was not found in the Nix search path (add it using $NIX_PATH or -I)"
+void prim_findfile(void)
+{
+    uint16_t b = rsp, n, i, pl, nl, len;
+    obj_t *lo, *l, *eo, *v, *p, *nm, *msg;
+    rpush(pop());                               /* b: the name */
+    l = force_pop_as(T_LIST, &lo);
+    n = AUX16(l);
+    rpush(lo);                                  /* b+1: the list */
+    for (i = 0; i < n; ++i) {
+        push(RELEM(b + 1, i, n));
+        (void)force_pop_as(T_ATTRS, &eo);
+        rpush(eo);                              /* b+2: the element */
+        v = lit_attr(eo, "prefix", 6);
+        if (v) {
+            push(v);
+            p = force_pop_as(T_STRING, &v);
+            if (CTX(p)) type_err();
+        }
+        v = lit_attr(rstack[b + 2], "path", 4);
+        if (!v) err_exit(E_NOATTR);
+        push(v);
+        coerce_top(CO_PATH);
+        if (CTX(deref(vstack[vsp - 1]))) gsos_exit("findFile", 8);
+        --vsp;
+        --rsp;
+    }
+    push(rstack[b]);
+    nm = force_pop_as(T_STRING, &v);
+    if (CTX(nm)) type_err();
+    rstack[b] = v;
+    for (i = 0; i < n; ++i) {                   /* LookupPath::Prefix::suffixIfPotentialMatch */
+        push(RELEM(b + 1, i, n));
+        (void)force_pop_as(T_ATTRS, &eo);
+        v = lit_attr(eo, "prefix", 6);
+        pl = 0;
+        p = 0;
+        if (v) {
+            push(v);
+            p = force_pop_as(T_STRING, &v);
+            pl = AUX16(p);
+        }
+        nm = deref(rstack[b]);
+        nl = AUX16(nm);
+        if (pl > nl) continue;
+        if (pl && pl < nl && STRBYTES(nm)[pl] != '/') continue;
+        if (pl && memcmp(STRBYTES(nm), STRBYTES(p), pl)) continue;
+        gsos_exit("findFile", 8);
+    }
+    nm = deref(rstack[b]);
+    nl = AUX16(nm);
+    if (nl >= 4 && !memcmp(STRBYTES(nm), "nix/", 4)) err_exit(E_UNSUP);
+    len = 6 + nl + (sizeof FF_MSG - 1);
+    nursery_reserve(round4(len) + 8);
+    msg = str_alloc(len);
+    nm = deref(rstack[b]);
+    memcpy(STRBYTES(msg), "file '", 6);
+    memcpy(STRBYTES(msg) + 6, STRBYTES(nm), nl);
+    memcpy(STRBYTES(msg) + 6 + nl, FF_MSG, sizeof FF_MSG - 1);
+    rsp = b;
+    *(obj_t **)RESULT_ADDR = msg;
+    err_exit(E_THROW);
 }
 
 /* --- versions and names: Nix's libstore/names.cc, rule by rule ------------------------- */

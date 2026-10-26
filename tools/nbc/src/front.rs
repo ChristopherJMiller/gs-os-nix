@@ -94,13 +94,17 @@ impl<'a> Lower<'a> {
 
     /// `import <path literal>`: read that file, lower it, and wrap it so the
     /// compiler gives it its own chunk and a CLOSED_THUNK. Only a literal
-    /// relative or absolute path can be resolved here -- anything computed is
-    /// refused (docs/BYTECODE.md "Imports").
+    /// relative or absolute path can be resolved here; anything computed is
+    /// the `import` primop, applied at run time, where reading a file is
+    /// GS/OS's (D26; docs/BYTECODE.md "Imports").
     fn import(&self, app: &ast::Apply, arg: &ast::Expr) -> Result<Expr, Unsupported> {
         let text = match arg {
             ast::Expr::PathRel(p) => p.to_string(),
             ast::Expr::PathAbs(p) => p.to_string(),
-            _ => return self.refuse(app, "computed import"),
+            _ => {
+                let pos = self.pos(app);
+                return Ok(Expr::Apply(Box::new(Expr::Var("import".into(), pos)), Box::new(self.expr(arg)?)));
+            }
         };
         if text.contains("${") {
             return self.refuse(app, "interpolated import path");
@@ -361,11 +365,8 @@ impl<'a> Lower<'a> {
             },
             ast::Expr::Ident(id) => match id.ident_token() {
                 // `import` reaching here is `import` used as anything other
-                // than the head of `import <path literal>` -- passed around,
-                // or applied to something the generator cannot resolve. Either
-                // way it cannot be resolved at compile time, and guessing would
-                // produce a fixture that runs and answers wrongly.
-                Some(tok) if tok.text() == "import" => self.refuse(id, "import as a value"),
+                // than the head of `import <path literal>`: passed around, it is
+                // the primop, which reads its file at run time (D26).
                 Some(tok) => Ok(Expr::Var(tok.text().to_string(), self.pos(id))),
                 None => self.refuse(id, "identifier `or`"),
             },
@@ -566,7 +567,20 @@ impl<'a> Lower<'a> {
                 let text = n.to_string();
                 self.path_value(n, text.trim_start_matches('~'), Some(FIXTURE_HOME))
             }
-            ast::Expr::PathSearch(n) => self.refuse(n, "search path literal"),
+            // <x>: Nix's parser makes it `__findFile __nixPath "x"`, both names
+            // looked up in scope, so a let or a with may redefine either.
+            ast::Expr::PathSearch(n) => {
+                let text = n.to_string();
+                let name = text.trim_start_matches('<').trim_end_matches('>').to_string();
+                let pos = self.pos(n);
+                Ok(Expr::Apply(
+                    Box::new(Expr::Apply(
+                        Box::new(Expr::Var("__findFile".into(), pos)),
+                        Box::new(Expr::Var("__nixPath".into(), pos)),
+                    )),
+                    Box::new(Expr::Str(vec![StrPart::Lit(name)])),
+                ))
+            }
             ast::Expr::CurPos(n) => self.refuse(n, "__curPos"),
             ast::Expr::Root(n) => self.refuse(n, "nested root"),
             ast::Expr::Error(n) => self.refuse(n, "syntax error"),
@@ -816,23 +830,41 @@ mod tests {
     }
 
     #[test]
+    fn imports_not_resolved_here_are_the_primop() {
+        // a computed import, and import passed around: the primop, applied
+        // at run time (D26), never a guess at the file
+        assert!(matches!(p("import (f 1)"), Expr::Apply(ref f, _) if matches!(**f, Expr::Var(ref n, _) if n == "import")));
+        assert!(matches!(p("[ import ]"), Expr::List(ref l) if matches!(l[0], Expr::Var(ref n, _) if n == "import")));
+    }
+
+    #[test]
+    fn search_paths_are_find_file_calls() {
+        // <x> is Nix's `__findFile __nixPath "x"`, both names looked up in scope
+        match p("<nixpkgs/lib>") {
+            Expr::Apply(f, a) => {
+                assert!(matches!(*f, Expr::Apply(ref g, ref np)
+                    if matches!(**g, Expr::Var(ref n, _) if n == "__findFile")
+                    && matches!(**np, Expr::Var(ref n, _) if n == "__nixPath")));
+                assert!(matches!(*a, Expr::Str(ref parts) if matches!(parts[..], [StrPart::Lit(ref t)] if t == "nixpkgs/lib")));
+            }
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
     fn refuses_by_feature_name() {
         let cases = [
             ("let ${a} = 1; in 1", "dynamic attributes not allowed in let"),
             ("let \"${a}\" = 1; in 1", "dynamic attributes not allowed in let"),
             ("{ inherit ${a}; }", "dynamic attributes not allowed in inherit"),
             ("./p/${a}", "path antiquotation"),
-            ("<nixpkgs>", "search path literal"),
             ("1.0e309", "invalid float"),
             ("2.2250738585072011e-308", "invalid float"),
             ("let x = 1; x = 2; in x", "`x` bound twice in one let"),
             ("{ a = 1; inherit a; }", "`a` bound twice in one attribute set"),
             // Imports the generator will not guess at (docs/BYTECODE.md).
             ("import ./lib.nix", "import with no file to resolve against"),
-            ("import (f 1)", "computed import"),
             ("let import = 1; in 2", "import is shadowed"),
-            ("[ import ]", "import as a value"),
-            ("map import [ 1 ]", "import as a value"),
         ];
         for (src, want) in cases {
             let err = parse(src).unwrap_err();
@@ -897,7 +929,7 @@ mod tests {
 
     #[test]
     fn positions_are_line_and_column() {
-        let err = parse("let\n  x = 1;\n  in <x>").unwrap_err();   // any refused construct
+        let err = parse("let\n  x = 1;\n  in __curPos").unwrap_err();   // any refused construct
         assert_eq!(err.pos, Pos { line: 3, col: 6 });
     }
 

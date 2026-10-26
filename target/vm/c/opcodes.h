@@ -157,6 +157,9 @@
 #define PRIM_READFILE             0x5A /* 1 */
 #define PRIM_READFILETYPE         0x5B /* 1 */
 #define PRIM_STOREPATH            0x5C /* 1 */
+#define PRIM_FINDFILE             0x5D /* 2 */
+#define PRIM_IMPORT               0x5E /* 1 */
+#define PRIM_SCOPEDIMPORT         0x5F /* 2 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */

@@ -360,6 +360,9 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$5A` | `readFile` | 1 | needs GS/OS: as `fetchGit` |
 | `$5B` | `readFileType` | 1 | needs GS/OS: as `fetchGit` |
 | `$5C` | `storePath` | 1 | needs GS/OS: as `fetchGit` |
+| `$5D` | `findFile` | 2 | `path name`, and `<name>`, which nbc lowers as Nix's parser does to `__findFile __nixPath "name"` (`nixPath` is `[ ]`: D26): the list forced, then each element -- a set, its `prefix` if present a string without context, its `path` (`E_NOATTR` if missing) coerced as `"${}"` does but a path is its text -- then `name`, a string without context; an element whose prefix fits (Nix's separator rule) is a directory to search, `E_GSOS`, as is a path with context; `nix/...` (corepkgs) `E_UNSUP`; otherwise `E_THROW` "file 'name' was not found in the Nix search path (add it using $NIX_PATH or -I)", which `tryEval` catches |
+| `$5E` | `import` | 1 | the primop, for an import the generator cannot resolve (not a path literal, or `import` as a value; "Imports"): its argument forced, then `E_GSOS` -- reading the file is GS/OS's (D26) |
+| `$5F` | `scopedImport` | 2 | `scope p`: the scope forced, a set (`E_TYPE`), then `p`, then `E_GSOS` (D26) |
 | `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`
@@ -437,10 +440,13 @@ instead, which makes that mistake impossible: a free variable in an imported
 file reaches `ENV_GET` with no environment to walk and stops with `E_BADNBC`.
 Loud, and at the exact instruction that was wrong.
 
-Two things the generator must refuse rather than guess:
+**`import` applied to anything but a path literal**, or `import` passed
+around (`map import xs`), cannot be resolved at compile time. It is the
+`import` primop (`$5E`), which forces its argument and, since reading a file
+there is GS/OS's, stops with `E_GSOS` (D26) -- never a guess at the file.
 
-- **`import` applied to anything but a path literal.** `import (f x)` cannot be
-  resolved at compile time. Refused as `unsupported: computed import`.
+One thing the generator must refuse rather than guess:
+
 - **`import` where the name is bound anywhere in the file.** The lowering has
   no scope tracking, so it cannot tell `let import = f; in import 3` from the
   builtin. A file that binds the name at all is refused as

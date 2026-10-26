@@ -317,6 +317,11 @@ impl Compiler {
             return match v {
                 BuiltinValue::Str(s) => self.emit_const(chunk, Const::Str(s.to_string())),
                 BuiltinValue::Int(i) => self.emit_const(chunk, Const::Int(i)),
+                BuiltinValue::EmptyList => {
+                    self.emit(chunk, OP_LIST);
+                    self.emit_u16(chunk, 0);
+                    Ok(())
+                }
             };
         }
         if name == "builtins" {
