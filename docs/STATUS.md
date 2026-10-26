@@ -191,7 +191,14 @@ host; a float's text is nlohmann's Grisu2, ported (FLOAT.md) -- not the
 shortest digits, which would differ where Grisu2 does -- and held to
 nlohmann itself by `checks.float-vectors`; 7 corpus tests, 7 fixtures, 6
 mutations, bank 0 +1. A third ORCA/C optimizer bug on the way, a link error
-this time (TOOLCHAIN.md); `fromJSON`, `toXML`, `fromTOML`; ~~`compareVersions`, `splitVersion`,
+this time (TOOLCHAIN.md); ~~`fromJSON`~~ **done** (`json.c`): nlohmann's
+lexer and parser rule by rule into Nix's `JSONSax`, numbers through a
+correctly rounded `strtod` (`f_strtod`, FLOAT.md) held to the host's on exact
+midpoints; 5 corpus tests, 20 fixtures, 9 mutations. On the way the
+scoreboard's own parsing was wrong: it split a2min's output with
+`splitlines()`, which also breaks at a form feed, so a value holding a raw
+`\f` was cut short and failed -- it splits at newlines now; `toXML`,
+`fromTOML`; ~~`compareVersions`, `splitVersion`,
 `parseDrvName`, `replaceStrings`~~ **done** (`names.cc` and `primops.cc` rule
 by rule: a run of digits is a version number only while it fits a C++
 `int`; a `to` is forced on first use; 10 corpus tests -- one, tvix's
@@ -317,8 +324,9 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **487 / 542** (2026-10-26, after `toJSON`; 0 fail, 6
-error, 31 unsupported, 18 notyetpassing). It was 473 / 535 after
+The scoreboard reads **512 / 562** (2026-10-26, after `fromJSON`; 0 fail, 6
+error, 26 unsupported, 18 notyetpassing). It was 487 / 542 after `toJSON`
+(31 unsupported). It was 473 / 535 after
 `functionArgs` (38 unsupported). It was 467 / 532 after
 the version and name primops (41 unsupported). It was 446 /
 521 after `sort` (6 error, 50 unsupported). It was 436 / 514 after the

@@ -3,7 +3,8 @@
  * this): every vector's operation recomputed here and compared bit for bit,
  * every %f string and toJSON text byte for byte. At $0300 the number of wrong
  * answers (u16), at $0302 the first wrong one's index ($8000 + i for a
- * format, $4000 + i for toJSON; $FFFF for none), status $01 at $0320 -- what
+ * format, $4000 + i for toJSON, $2000 + i for strtod; $FFFF for none), status
+ * $01 at $0320 -- what
  * a2min --run-bin prints.
  *
  * The entry is the first function of the first object, as smoke.c's is. */
@@ -12,12 +13,14 @@
 
 #include "vm.h"
 
-extern const uint16_t n_arith, n_fmt, n_json;
+extern const uint16_t n_arith, n_fmt, n_json, n_parse;
 extern const uint8_t arith[][25];
 extern const uint8_t fmt_bits[][8];
 extern const char *const fmt_want[];
 extern const uint8_t json_bits[][8];
 extern const char *const json_want[];
+extern const char *const parse_text[];
+extern const uint8_t parse_bits[][8];
 
 static uint64_t get(const uint8_t *p);
 
@@ -65,6 +68,12 @@ void entry(void)
         if (len != strlen(json_want[i]) || memcmp(buf, json_want[i], len) != 0) {
             ++bad;
             if (first == 0xFFFF) first = 0x4000 | i;
+        }
+    }
+    for (i = 0; i < n_parse; ++i) {
+        if (f_strtod(parse_text[i], (uint16_t)strlen(parse_text[i])) != get(parse_bits[i])) {
+            ++bad;
+            if (first == 0xFFFF) first = 0x2000 | i;
         }
     }
     *(volatile uint16_t *)0x0300 = bad;

@@ -716,3 +716,174 @@ uint16_t f_json(uint64_t a, char *buf)
     }
     return len;
 }
+
+/* --- fromJSON's numbers: strtod, correctly rounded ----------------------------------------- */
+/* nlohmann/json reads a JSON float with the C library's strtod, which glibc
+ * rounds correctly: the double nearest the decimal's exact value, ties to
+ * even, subnormals and all. So f_strtod computes it exactly: the significant
+ * digits as a bignum D, value = D * 10^e, and from that 63 bits and a sticky
+ * one for norm_round_pack -- the top bits of D * 10^e when e >= 0, else a
+ * long division of D * 2^s by 10^-e. Digits past 800, which cannot change a
+ * double, are kept as one sticky digit. Every multiply by a power of ten is
+ * shifts: a 32-bit multiply would link ~UMUL4 into bank 0. */
+#define DL 256                                  /* limbs: 4,096 bits */
+
+static uint16_t bn_mul10000_add(uint16_t *x, uint16_t n, uint16_t a)   /* x * 10000 + a */
+{
+    uint16_t i;
+    uint32_t c = a, v;
+    for (i = 0; i < n; ++i) {
+        v = x[i];
+        c += (v << 13) + (v << 10) + (v << 9) + (v << 8) + (v << 4);
+        x[i] = (uint16_t)c;
+        c >>= 16;
+    }
+    if (c) x[n++] = (uint16_t)c;
+    return n;
+}
+
+static uint16_t bn_mul10_add(uint16_t *x, uint16_t n, uint16_t a)      /* x * 10 + a */
+{
+    uint16_t i;
+    uint32_t c = a, v;
+    for (i = 0; i < n; ++i) {
+        v = x[i];
+        c += (v << 3) + (v << 1);
+        x[i] = (uint16_t)c;
+        c >>= 16;
+    }
+    if (c) x[n++] = (uint16_t)c;
+    return n;
+}
+
+static uint16_t bn_pow10(uint16_t *x, uint16_t n, uint16_t k)          /* x * 10^k */
+{
+    for (; k >= 4; k -= 4) n = bn_mul10000_add(x, n, 0);
+    for (; k; --k) n = bn_mul10_add(x, n, 0);
+    return n;
+}
+
+static uint16_t bn_bits(const uint16_t *x, uint16_t n)
+{
+    uint16_t b = 0, t;
+    if (!n) return 0;
+    for (t = x[n - 1]; t; t >>= 1) ++b;
+    return (uint16_t)(16 * (n - 1) + b);
+}
+
+static int bn_ge(const uint16_t *x, uint16_t nx, const uint16_t *y, uint16_t ny)   /* x >= y */
+{
+    uint16_t i;
+    if (nx != ny) return nx > ny;
+    for (i = nx; i-- > 0; ) if (x[i] != y[i]) return x[i] > y[i];
+    return 1;
+}
+
+static uint16_t bn_sub(uint16_t *x, uint16_t nx, const uint16_t *y, uint16_t ny)   /* x - y, x >= y */
+{
+    uint16_t i, borrow = 0;
+    uint32_t d;
+    for (i = 0; i < nx; ++i) {
+        d = (uint32_t)x[i] - (i < ny ? y[i] : 0) - borrow;
+        x[i] = (uint16_t)d;
+        borrow = (uint16_t)(d >> 31);
+    }
+    while (nx && !x[nx - 1]) --nx;
+    return nx;
+}
+
+static uint16_t bn_shr1(uint16_t *x, uint16_t n)
+{
+    uint16_t i;
+    for (i = 0; i < n; ++i) x[i] = (uint16_t)((x[i] >> 1) | (i + 1 < n ? (uint16_t)(x[i + 1] << 15) : 0));
+    while (n && !x[n - 1]) --n;
+    return n;
+}
+
+/* The low 64 bits of x. */
+static uint64_t bn_low64(const uint16_t *x, uint16_t n)
+{
+    uint64_t r = 0;
+    uint16_t i;
+    for (i = 4; i-- > 0; ) r = (r << 16) | (i < n ? x[i] : 0);
+    return r;
+}
+
+/* x >> s, the bits shifted out dropped. */
+static uint16_t bn_shr_trunc(uint16_t *x, uint16_t n, uint16_t s)
+{
+    uint16_t w = s >> 4, b = s & 15, i, m;
+    if (w >= n) return 0;
+    m = n - w;
+    for (i = 0; i < m; ++i)
+        x[i] = (uint16_t)(((uint32_t)(i + w + 1 < n ? x[i + w + 1] : 0) << 16 | x[i + w]) >> b);
+    while (m && !x[m - 1]) --m;
+    return m;
+}
+
+/* a + b, held to +-30000: far past where a double is 0 or infinite, and well
+ * inside 16 bits (a signed 32-bit compare would link a routine into bank 0). */
+static int16_t sat_add(int16_t a, int16_t b)
+{
+    if (b > 0 && a > 30000 - b) return 30000;
+    if (b < 0 && a < -30000 - b) return -30000;
+    return a + b;
+}
+
+/* A JSON number token (the lexer has checked its grammar: -?int[.frac][e[+-]exp])
+ * as strtod reads it. An infinity if it overflows (fromJSON's error). */
+uint64_t f_strtod(const char *s, uint16_t n)
+{
+    uint16_t d[DL], t[DL], nd = 0, nt, i = 0, kept = 0, sign = 0, tail = 0, started = 0, bd, bt;
+    int16_t e10 = 0, ex = 0, eneg = 0, sh, mag;
+    uint64_t q;
+    if (i < n && s[i] == '-') { sign = 1; ++i; }
+    for (; i < n && s[i] >= '0' && s[i] <= '9'; ++i) {             /* the integer part */
+        if (!started && s[i] == '0') continue;
+        started = 1;
+        if (kept < 800) { nd = bn_mul10_add(d, nd, (uint16_t)(s[i] - '0')); ++kept; }
+        else { e10 = sat_add(e10, 1); if (s[i] != '0') tail = 1; }
+    }
+    if (i < n && s[i] == '.')
+        for (++i; i < n && s[i] >= '0' && s[i] <= '9'; ++i) {     /* the fraction */
+            if (!started && s[i] == '0') { e10 = sat_add(e10, -1); continue; }
+            started = 1;
+            if (kept < 800) { nd = bn_mul10_add(d, nd, (uint16_t)(s[i] - '0')); ++kept; e10 = sat_add(e10, -1); }
+            else if (s[i] != '0') tail = 1;
+        }
+    if (i < n && (s[i] == 'e' || s[i] == 'E')) {
+        ++i;
+        if (i < n && (s[i] == '+' || s[i] == '-')) { eneg = s[i] == '-'; ++i; }
+        for (; i < n && s[i] >= '0' && s[i] <= '9'; ++i)
+            ex = ex <= 1999 ? ex * 10 + (s[i] - '0') : 20000;      /* saturated */
+        e10 = sat_add(e10, eneg ? -ex : ex);
+    }
+    if (nd == 0) return PACK(sign, 0, 0);       /* a zero, of its sign */
+    if (tail) { nd = bn_mul10_add(d, nd, 1); ++kept; e10 = sat_add(e10, -1); }
+    mag = (int16_t)kept + e10;                  /* the value is below 10^mag, at least 10^(mag-1) */
+    if (mag > 310) return PACK(sign, 0x7FF, 0);
+    if (mag < -330) return PACK(sign, 0, 0);
+    if (e10 >= 0) {                             /* an integer: its top 63 bits, and a sticky one */
+        nd = bn_pow10(d, nd, (uint16_t)e10);
+        bd = bn_bits(d, nd);
+        if (bd <= 63) return norm_round_pack(sign, 1084, bn_low64(d, nd));
+        sh = (int16_t)(bd - 63);
+        q = (uint64_t)bn_any_below(d, nd, (uint16_t)sh);
+        nd = bn_shr_trunc(d, nd, (uint16_t)sh);
+        return norm_round_pack(sign, 1084 + sh, bn_low64(d, nd) | q);
+    }
+    t[0] = 1;                                   /* t = 10^-e10 */
+    nt = bn_pow10(t, 1, (uint16_t)-e10);
+    bd = bn_bits(d, nd);
+    bt = bn_bits(t, nt);
+    sh = (int16_t)bt - (int16_t)bd + 62;        /* D * 2^sh / t has 62 or 63 bits */
+    if (sh >= 0) nd = bn_shl(d, nd, (uint16_t)sh);
+    else nt = bn_shl(t, nt, (uint16_t)-sh);
+    nt = bn_shl(t, nt, 62);
+    for (q = 0, i = 63; i-- > 0; ) {            /* long division, a bit at a time */
+        q <<= 1;
+        if (bn_ge(d, nd, t, nt)) { nd = bn_sub(d, nd, t, nt); q |= 1; }
+        nt = bn_shr1(t, nt);
+    }
+    return norm_round_pack(sign, 1084 - sh, q | (nd != 0));
+}

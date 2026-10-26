@@ -58,6 +58,8 @@ void prim_splitversion(void);
 void prim_parsedrvname(void);
 void prim_replacestrings(void);
 void prim_tojson(void);                             /* json.c */
+void prim_fromjson(void);
+void copy_entry(obj_t *dst, uint16_t n, uint16_t i, obj_t *src, uint16_t ns, uint16_t j);   /* prims.c */
 void prim_unsafediscardstringcontext(void);
 void prim_unsafediscardoutputdependency(void);
 void prim_adddrvoutputdependencies(void);

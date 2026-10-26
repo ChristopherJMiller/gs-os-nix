@@ -28,7 +28,7 @@ c++ -O2 -std=c++17 ${NLOHMANN_INCLUDE:+-I"$NLOHMANN_INCLUDE"} -o "$WORK/jf" scri
 # does not fit one below $C000).
 run() {
     local part r
-    for part in arith json; do
+    for part in arith json parse; do
         : > "$WORK/json.hex"
         "$WORK/fv" "$2" "$WORK/json.hex" "$part" > "$WORK/float_vectors.c"
         { echo "const char *const json_want[] = {"
@@ -47,8 +47,8 @@ fail=0
 for s in $SEEDS; do
     r=$(run target/vm/c/float.c "$s")
     case "$r" in
-        "result: 00 00 FF FF"*) echo "  seed $s: 1,520 vectors, all right" ;;
-        *) echo "  seed $s: WRONG -- $r (wrong count, then the first: \$8000+i a format, \$4000+i toJSON)"; fail=1 ;;
+        "result: 00 00 FF FF"*) echo "  seed $s: 1,820 vectors, all right" ;;
+        *) echo "  seed $s: WRONG -- $r (wrong count, then the first: \$8000+i a format, \$4000+i toJSON, \$2000+i strtod)"; fail=1 ;;
     esac
 done
 
@@ -68,6 +68,7 @@ plant() {
 }
 plant "ties away from even" 's/^    if (round_bits == 0x200) sig \&= ~(uint64_t)1;  \/\* a tie: to even \*\/$//'
 plant "toJSON without Grisu2's rounding" 's/^        buf\[len - 1\]--;$/        ;/'
+plant "strtod without its sticky bit" 's/^    return norm_round_pack(sign, 1084 - sh, q | (nd != 0));$/    return norm_round_pack(sign, 1084 - sh, q);/'
 echo
 [ "$fail" -eq 0 ] || exit 1
-echo "FLOAT VECTORS OK: float.c is the host's arithmetic, printf and toJSON text, bit for bit"
+echo "FLOAT VECTORS OK: float.c is the host's arithmetic, printf, toJSON text and strtod, bit for bit"

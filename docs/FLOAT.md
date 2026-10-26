@@ -77,6 +77,23 @@ digit generation and its rounding, and `format_buffer`'s layout.
 answers 400 vectors per seed with `nlohmann::json(x).dump()`, and a planted
 bug (Grisu2 without its rounding step) must be caught, as it is, by 142.
 
+**fromJSON's floats are strtod's**, correctly rounded: nlohmann reads a JSON
+float with the C library's `strtod`, and glibc's is exact -- the double
+nearest the decimal's value, ties to even, subnormals included; an overflow
+is nlohmann's error, an underflow 0. `float.c` `f_strtod` computes it
+exactly: the significant digits as a bignum `D` and the value `D * 10^e`;
+for `e >= 0` the top 63 bits of the product and a sticky bit, else a long
+division of `D * 2^s` by `10^-e`, a bit at a time, with the remainder as the
+sticky bit; then `norm_round_pack`, the arithmetic's own rounding. Digits past
+800, which cannot change a double, are folded into one sticky digit, and the
+exponent saturates far past where a double is 0 or infinite.
+`checks.float-vectors` holds it to the host's `strtod` on 300 vectors a seed
+(a third test binary): hard cases, random decimals, and 60 exact midpoints
+between neighbouring doubles -- glibc prints a midpoint exactly from x86's
+`long double` -- once as a tie and once with a `1` after the last digit, so a
+planted bug that drops the remainder's sticky bit is caught (by 10; random
+decimals alone never caught it).
+
 `typeOf` is `"float"`; `builtins.isFloat`.
 
 ## Where

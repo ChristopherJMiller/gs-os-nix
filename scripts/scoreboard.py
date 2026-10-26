@@ -61,8 +61,10 @@ def find_tests(root):
 
 
 def vm_result(stdout):
-    """The harness prints exactly one of these lines."""
-    for line in stdout.splitlines():
+    """The harness prints exactly one of these lines. Split at newlines only:
+    splitlines() also breaks at a form feed, which a printed string may hold
+    raw, as Nix prints it (fromJSON's "\f")."""
+    for line in stdout.split("\n"):
         if line.startswith("result: "):
             return "value", line[len("result: "):].strip()
         if line.startswith("error: "):

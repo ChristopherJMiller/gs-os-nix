@@ -126,7 +126,7 @@ obj_t *list_from_stack(uint16_t n)
 }
 
 /* Entry i of an ATTRS of n entries copied from src (ns entries, index j). */
-static void copy_entry(obj_t *dst, uint16_t n, uint16_t i, obj_t *src, uint16_t ns, uint16_t j)
+void copy_entry(obj_t *dst, uint16_t n, uint16_t i, obj_t *src, uint16_t ns, uint16_t j)
 {
     HASHES(dst)[i] = HASHES(src)[j];
     ANAMES(dst, n)[i] = ANAMES(src, ns)[j];
@@ -1202,6 +1202,7 @@ void op_prim(void)
     case PRIM_REPLACESTRINGS:  prim_replacestrings(); break;
     case PRIM_FUNCTIONARGS:    prim_functionargs(); break;
     case PRIM_TOJSON:          prim_tojson(); break;
+    case PRIM_FROMJSON:        prim_fromjson(); break;
     default:                   err_exit(E_BADOP);
     }
 }
