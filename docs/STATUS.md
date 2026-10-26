@@ -10,7 +10,7 @@
 | **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, collector, CPU nursery | **done** — card side (memory engine, `DATA`/`TAG`, `ALLOC`/`RESERVE`, `FOLLOW`, `HASH_STREAM`, `LOOKUP`, `ALU64`, `MARK`/`COMPACT`) and the CPU-side nursery (`target/heap/nursery.s`: bump alloc, Cheney in RAM, one-burst promotion). D6 measured: `just bench-nursery` |
 | **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — slices 1-4 done, scoreboard live.** `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
-| **L6** | SHA-256 of strings, ATerm, `derivation` primop, string context; `NARHASH` with file I/O (D21) | **in progress** — `builtins.hashString "sha256"` on the card (`HASH_PUSH` for a young string, `HASH_STREAM` for a mature one, `sha256.c` without a card), matching Nix on FIPS padding edges. **`derivation`** ([DERIVATION.md](DERIVATION.md)): input-addressed, byte-identical to the host -- ATerm, `hashDerivationModulo`, output and `.drv` paths from the card's `HASH_FINAL` `P3`; `derivation.nix` embedded verbatim. **String context** carries inputs through `+`, `"${}"`, `concatStringsSep`, `toString`, `substring`, `baseNameOf`, `dirOf`, so a chain of derivations matches the host. Next: fixed-output derivations, `drvPath` (`=`) context, the context builtins ("Roadmap" below) |
+| **L6** | SHA-256 of strings, ATerm, `derivation` primop, string context; `NARHASH` with file I/O (D21) | **in progress** — `builtins.hashString "sha256"` on the card (`HASH_PUSH` for a young string, `HASH_STREAM` for a mature one, `sha256.c` without a card), matching Nix on FIPS padding edges. **`derivation`** ([DERIVATION.md](DERIVATION.md)): input-addressed, byte-identical to the host -- ATerm, `hashDerivationModulo`, output and `.drv` paths from the card's `HASH_FINAL` `P3`; `derivation.nix` embedded verbatim. **String context** carries inputs through `+`, `"${}"`, `concatStringsSep`, `toString`, `substring`, `baseNameOf`, `dirOf`, so a chain of derivations matches the host. **Fixed-output derivations** (`outputHash`, every `fetchurl`): the path from the declared hash (base16, nix32, Base64, SRI; md5, sha1, sha256, sha512; flat and NAR), and the modulo hash a dependent sees, as the host computes them. Next: `drvPath` (`=`) context, the context builtins ("Roadmap" below) |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | not started |
 
 ## Milestones
@@ -35,7 +35,10 @@
   program, 9.03M with SHA-256 on the CPU). **With inputs too** (2026-10-25):
   string context makes `a -> b -> c` (two outputs, an input with inputs of its
   own) give the host's three `.drv` paths, and `eval-okay-derivation-context`
-  checks 13 more. What M4 still needs is the `.drv` file itself, written to
+  checks 13 more. **Fixed outputs too** (2026-10-25): a `fetchurl`-shaped
+  derivation gets the host's output and `.drv` paths, and a derivation built
+  on it the host's paths, which depend on its hash and not its builder
+  (`eval-okay-derivation-fixed-output`). What M4 still needs is the `.drv` file itself, written to
   disk, which waits for GS/OS file I/O (L7); and the real machine rather than
   a2min.
 
@@ -51,12 +54,18 @@ the fixture (D7), a regression that provably fails (D14), the gates one at a tim
 
 **L6, what is left before the store:**
 
-1. **Fixed-output derivations** (`outputHash`, `outputHashAlgo`,
-   `outputHashMode`; now `E_UNSUP`). The output path is `makeFixedOutputPath`
-   and `hashDerivationModulo` of such a derivation is the SHA-256 of
-   `fixed:out:<method><algo>:<hex>:<path>`, so an input that is fixed-output is
-   replaced by that, not by its ATerm's hash. Needs hash parsing: base16,
-   nixbase32 and SRI (`sha256-<base64>`). Every `fetchurl` is one.
+1. ~~**Fixed-output derivations**~~ **done** (2026-10-25,
+   [DERIVATION.md](DERIVATION.md) "Fixed outputs"). The output path is
+   `makeFixedOutputPath` (`source:` for a sha256 NAR, `fixed:out:` otherwise),
+   the ATerm carries `"r:sha256","<hex>"`, and the modulo hash is SHA-256 of
+   `fixed:out:<method><algo>:<hex>:<path>`, so a dependent's paths depend on
+   the hash, not on how it is fetched. Nix's hash reading is reproduced rule
+   by rule from 2.34.9's source and measured on the host first: the prefix,
+   SRI, base16 in either case, nix32 with its overflow rule, Base64 that stops
+   at `=` and ignores leftover bits, and an unknown `outputHashAlgo` dropped
+   in silence. No md5/sha1/sha512 is computed: the hash is given. `text`, `git`
+   and `blake3` are experimental features: `E_UNSUP`. One fixture, 14
+   `eval-fail` and 3 `refuse` fixtures, and 26 mutations.
 2. **`=<drv>` context** (a `drvPath` in a string; now `E_UNSUP`): Nix adds the
    `.drv`'s whole closure -- its sources, and every input `.drv` with all its
    outputs. `drv_table` would have to keep each derivation's inputs, not just
@@ -117,8 +126,9 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-**Bank 0: 38,406 of 40,960 bytes** (2026-10-25, after string context; 39,345
-after `derivation`, 39,765 before it). String context moved `"${}"` and string
+**Bank 0: 38,406 of 40,960 bytes** (2026-10-25, after string context, and
+unchanged by fixed-output derivations, whose 3,263 bytes of code are all in
+bank 4; 39,345 after `derivation`, 39,765 before it). String context moved `"${}"` and string
 `+` out of run.c into `prims.c`, since every string they build carries a
 context, and that took 939 bytes out of bank 0. Code can move into load segments
 (`prims.c` and `sha256.c` are `segment "prims"`, bank 4), but **every static,
@@ -133,8 +143,10 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **299 / 428** (2026-10-25, after string context; 0 fail, 7
-error, 101 unsupported, 21 notyetpassing). New: its fixtures, and the corpus
+The scoreboard reads **316 / 445** (2026-10-25, after fixed-output derivations;
+0 fail, 7 error, 101 unsupported, 21 notyetpassing): all 17 new tests are
+fixtures, since no corpus test has an `outputHash`. It was 299 / 428 after
+string context. New then: its fixtures, and the corpus
 test `eval-okay-eq-derivations` -- one tvix itself does not pass -- which compares
 five derivations and so waited on the one-derivation guard. It was 295 / 425
 after `derivation` and 283 / 413 after paths, string coercion and `hashString`. Two

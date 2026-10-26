@@ -692,12 +692,12 @@ static void prim_tostring(void) { coerce_top(CO_STRING); }
  * HASH_STREAM reads it there: only its 4-byte header crosses the bus. A young
  * one goes through HASH_PUSH. With no card, or the verb masked
  * (checks.verb-economics), sha256.c does it on the CPU. */
-/* 32 bytes as 64 lowercase hex digits. Arithmetic rather than a table: a
+/* n bytes as 2n lowercase hex digits. Arithmetic rather than a table: a
  * static table is bank 0 (STATUS.md). */
-static void hex64(const uint8_t *dig, char *out)
+static void hex_of(const uint8_t *dig, uint16_t n, char *out)
 {
     uint16_t i, d;
-    for (i = 0; i < 64; ++i) {
+    for (i = 0; i < 2 * n; ++i) {
         d = i & 1 ? dig[i >> 1] & 15 : dig[i >> 1] >> 4;
         out[i] = (char)(d < 10 ? '0' + d : 'a' - 10 + d);
     }
@@ -735,7 +735,7 @@ static void prim_hashstring(void)
     }
     vsp -= 2;
     r = str_alloc(64);                          /* 72 bytes: inside the boundary's margin */
-    hex64(dig, STRBYTES(r));
+    hex_of(dig, 32, STRBYTES(r));
     push(r);
 }
 
@@ -815,12 +815,13 @@ void interpolate(uint16_t n)
 
 /* --- derivations (docs/DERIVATION.md) ----------------------------------------------- */
 #define DRV_OUT_MAX 8
-#define FP_MAX      512         /* the longest output fingerprint: 7 + 209 + 8 + 64 + 12 + 211 */
+#define FP_MAX      512         /* the longest output fingerprint: 7 + 209 + 8 + 64 + 12 + 211;
+                                   a fixed output's longest, 19 + 128 + 1 + 255, is shorter */
 #define NAME_MAX    211         /* StorePath::MaxPathLen */
 #define IS_LIT(s, lit) is_lit((s), (lit), sizeof(lit) - 1)
 
 enum { K_OTHER, K_NAME, K_IGNORE, K_STRUCT, K_CA, K_IMPURE, K_ARGS, K_BUILDER, K_SYSTEM,
-       K_OUTPUTS, K_FIXED };
+       K_OUTPUTS, K_HASH, K_HALGO, K_HMODE };
 
 /* The attribute names derivationStrict treats specially, matched against
  * literals, which ORCA/C keeps with the code: no bank 0. nm is a view. */
@@ -835,8 +836,9 @@ static uint8_t drv_key(obj_t *nm)
     if (IS_LIT(nm, "builder"))            return K_BUILDER;
     if (IS_LIT(nm, "system"))             return K_SYSTEM;
     if (IS_LIT(nm, "outputs"))            return K_OUTPUTS;
-    if (IS_LIT(nm, "outputHash") || IS_LIT(nm, "outputHashAlgo") || IS_LIT(nm, "outputHashMode"))
-        return K_FIXED;
+    if (IS_LIT(nm, "outputHash"))         return K_HASH;
+    if (IS_LIT(nm, "outputHashAlgo"))     return K_HALGO;
+    if (IS_LIT(nm, "outputHashMode"))     return K_HMODE;
     return K_OTHER;
 }
 
@@ -892,6 +894,9 @@ struct drv {
     uint16_t nin;               /* elements in the inputs list */
     uint8_t masked;             /* output paths as "" (hashDerivationModulo) */
     uint8_t replaced;           /* input .drv paths as their modulo hashes */
+    uint16_t fixed;             /* pair index of outputHash; 0xFFFF: not fixed-output */
+    uint8_t fmeth, falgo;       /* its method (FM_*) and algorithm (HA_*) */
+    uint8_t fh[64];             /* its hash, ha_size(falgo) bytes */
     obj_t *path[DRV_OUT_MAX];   /* phase 2: the output paths, young, and nothing collects */
 };
 #define PAIR_KEY(d, i) vstack[(d)->at + 2 * (i)]
@@ -934,6 +939,166 @@ static void put_str(struct sink *k, obj_t *o, uint8_t esc)
     }
     put(k, s + j, m - j);
     put(k, "\"", 1);
+}
+
+/* --- fixed outputs (DERIVATION.md "Fixed outputs") ---
+ * The hash is given, so nothing here computes md5, sha1 or sha512: every hash
+ * the rule makes is a SHA-256. The decoders shift by constants only, because a
+ * variable shift links ~SHIFTLEFT into bank 0. */
+#define HA_NONE   0
+#define HA_MD5    1
+#define HA_SHA1   2
+#define HA_SHA256 3
+#define HA_SHA512 4
+#define FM_FLAT   0
+#define FM_NAR    1
+#define IS_BYTES(p, n, lit) ((n) == sizeof(lit) - 1 && memcmp((p), (lit), (n)) == 0)
+
+/* Nix's parseHashAlgoOpt: HA_NONE for a name it does not know, which Nix
+ * drops in silence (measured); blake3 is an experimental feature. */
+static uint8_t hash_algo(const char *p, uint16_t n)
+{
+    if (IS_BYTES(p, n, "md5"))    return HA_MD5;
+    if (IS_BYTES(p, n, "sha1"))   return HA_SHA1;
+    if (IS_BYTES(p, n, "sha256")) return HA_SHA256;
+    if (IS_BYTES(p, n, "sha512")) return HA_SHA512;
+    if (IS_BYTES(p, n, "blake3")) err_exit(E_UNSUP);
+    return HA_NONE;
+}
+
+static uint16_t ha_size(uint8_t a)
+{
+    return a == HA_MD5 ? 16 : a == HA_SHA1 ? 20 : a == HA_SHA256 ? 32 : 64;
+}
+
+/* outputHashMode (a STRING view), as Nix's handleHashMode reads it: text and
+ * git are experimental features. */
+static uint8_t hash_mode(obj_t *s)
+{
+    if (IS_LIT(s, "flat")) return FM_FLAT;
+    if (IS_LIT(s, "nar") || IS_LIT(s, "recursive")) return FM_NAR;
+    if (IS_LIT(s, "text") || IS_LIT(s, "git")) err_exit(E_UNSUP);
+    type_err();
+    return 0;
+}
+
+static uint8_t hex_digit(char c)                /* either case; 16 if not one */
+{
+    if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
+    if (c >= 'a' && c <= 'f') return (uint8_t)(c - 'a' + 10);
+    if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
+    return 16;
+}
+
+static uint8_t b64_digit(char c)                /* 64 if not one */
+{
+    if (c >= 'A' && c <= 'Z') return (uint8_t)(c - 'A');
+    if (c >= 'a' && c <= 'z') return (uint8_t)(c - 'a' + 26);
+    if (c >= '0' && c <= '9') return (uint8_t)(c - '0' + 52);
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return 64;
+}
+
+/* Nix's newHashAllowEmpty: outputHash (the STRING view s) into d->fh. d->falgo
+ * holds outputHashAlgo's algorithm (HA_NONE for none) on entry and the hash's
+ * on return. E_TYPE wherever Nix rejects the hash. */
+static void parse_hash(struct drv *d, obj_t *s)
+{
+    const char *p = STRBYTES(s);
+    uint16_t n = AUX16(s), i, j, sz;
+    uint8_t a, sri = 0, v, m, t, c = 0, *h = d->fh;
+    memset(h, 0, 64);
+    if (n == 0) {                               /* all zeros (Nix warns) */
+        if (d->falgo == HA_NONE) type_err();
+        return;
+    }
+    for (i = 0; i < n && p[i] != ':'; ++i) ;
+    if (i == n) {
+        for (i = 0; i < n && p[i] != '-'; ++i) ;
+        sri = i < n;
+    }
+    if (i < n) {                                /* "<algo>:", or SRI's "<algo>-" */
+        if ((a = hash_algo(p, i)) == HA_NONE) type_err();
+        if (d->falgo != HA_NONE && d->falgo != a) type_err();
+        p += i + 1;
+        n -= i + 1;
+    } else if ((a = d->falgo) == HA_NONE) {
+        type_err();                             /* "does not include a type" */
+    }
+    d->falgo = a;
+    sz = ha_size(a);
+    if (!sri && n == 2 * sz) {                  /* base16 */
+        for (i = 0; i < n; ++i) {
+            if ((v = hex_digit(p[i])) == 16) type_err();
+            h[i >> 1] |= i & 1 ? v : (uint8_t)(v << 4);
+        }
+    } else if (!sri && n == (8 * sz - 1) / 5 + 1) {
+        /* nix32, from the end: the j-th digit from the end holds bits 5j..5j+4.
+         * Bit by bit, so that a set bit past the last byte is the error Nix
+         * makes it, and every shift is by one. */
+        for (j = 0, i = 0, m = 1; j < n; ++j) {
+            for (v = 0; v < 32 && "0123456789abcdfghijklmnpqrsvwxyz"[v] != p[n - 1 - j]; ++v) ;
+            if (v == 32) type_err();
+            for (t = 0; t < 5; ++t, v >>= 1) {
+                if (v & 1) {
+                    if (i == sz) type_err();
+                    h[i] |= m;
+                }
+                if (!(m <<= 1)) { m = 1; ++i; }
+            }
+        }
+    } else if (sri || n == (sz + 2) / 3 * 4) {
+        /* Base64: it stops at the first "=", skips newlines, ignores the bits
+         * left over, and must give exactly sz bytes. Four digits are three
+         * bytes; c holds the bits not yet in one. */
+        for (i = j = 0, t = 0; i < n && p[i] != '='; ++i) {
+            if (p[i] == '\n') continue;
+            if ((v = b64_digit(p[i])) == 64) type_err();
+            if (t == 0) c = v;
+            else {
+                if (j == sz) type_err();
+                if (t == 1)      { h[j++] = (uint8_t)(c << 2 | v >> 4); c = v & 15; }
+                else if (t == 2) { h[j++] = (uint8_t)(c << 4 | v >> 2); c = v & 3; }
+                else               h[j++] = (uint8_t)(c << 6 | v);
+            }
+            t = (t + 1) & 3;
+        }
+        if (j != sz) type_err();
+    } else {
+        type_err();                             /* "has wrong length" */
+    }
+}
+
+/* "<m><algo>": the ATerm's second output field, "r:sha256", "sha1", ... */
+static void put_method_algo(struct sink *k, struct drv *d)
+{
+    if (d->fmeth == FM_NAR) put(k, "r:", 2);
+    if (d->falgo == HA_MD5) put(k, "md5", 3);
+    else if (d->falgo == HA_SHA1) put(k, "sha1", 4);
+    else if (d->falgo == HA_SHA256) put(k, "sha256", 6);
+    else put(k, "sha512", 6);
+}
+
+static void put_hex(struct sink *k, const uint8_t *b, uint16_t n)
+{
+    char x[2];
+    uint16_t i;
+    for (i = 0; i < n; ++i) {
+        hex_of(b + i, 1, x);
+        put(k, x, 2);
+    }
+}
+
+/* "fixed:out:<m><algo>:<hex>:": what makeFixedOutputPath hashes and, followed
+ * by the output's path, what a fixed output's modulo hash is of. */
+static void put_fixed(struct sink *k, struct drv *d)
+{
+    put(k, "fixed:out:", 10);
+    put_method_algo(k, d);
+    put(k, ":", 1);
+    put_hex(k, d->fh, ha_size(d->falgo));
+    put(k, ":", 1);
 }
 
 /* --- the inputs: the elements of the context union ---
@@ -1075,7 +1240,15 @@ static void aterm(struct sink *k, struct drv *d)
         put_str(k, OUT_NAME(d, o), 0);
         put(k, ",", 1);
         if (d->masked) put(k, "\"\"", 2); else put_str(k, d->path[o], 0);
-        put(k, ",\"\",\"\")", 7);
+        if (d->fixed == 0xFFFF) {
+            put(k, ",\"\",\"\")", 7);
+        } else {                                /* ,"<m><algo>","<hex>", masked or not */
+            put(k, ",\"", 2);
+            put_method_algo(k, d);
+            put(k, "\",\"", 3);
+            put_hex(k, d->fh, ha_size(d->falgo));
+            put(k, "\")", 2);
+        }
     }
     put(k, "],[", 3);
     put_input_drvs(k, d);
@@ -1132,7 +1305,7 @@ static obj_t *store_path(struct sink *k, const uint8_t *dig, const char *pn, uin
     uint8_t h[32];
     obj_t *r;
     put(k, ":sha256:", 8);
-    hex64(dig, hx);
+    hex_of(dig, 32, hx);
     put(k, hx, 64);
     put(k, ":/nix/store:", 12);
     put(k, pn, pl);
@@ -1210,7 +1383,9 @@ static void prim_derivationstrict(void)
     }
     d.at = vsp;
     d.np = 0;
-    d.name = d.bld = d.sys = 0xFFFF;
+    d.name = d.bld = d.sys = d.fixed = 0xFFFF;
+    d.fmeth = FM_FLAT;
+    d.falgo = HA_NONE;
     for (i = 0; i < n; ++i) {
         windows_maybe();
         v = attr_at(rstack[b], i, &nm);
@@ -1239,13 +1414,17 @@ static void prim_derivationstrict(void)
             }
             rstack[b + 1] = list_from_stack(m);
             continue;
-        case K_FIXED:   err_exit(E_UNSUP);      /* fixed-output; never returns */
         case K_NAME:    d.name = d.np; break;
         case K_BUILDER: d.bld = d.np; break;
         case K_SYSTEM:  d.sys = d.np; break;
         case K_OUTPUTS: outs = d.np; break;
+        case K_HASH:    d.fixed = d.np; break;
         }
         coerce_top(CO_DRV);
+        if (key == K_HALGO)                     /* read as soon as coerced, as Nix does */
+            { s = deref(peek()); d.falgo = hash_algo(STRBYTES(s), AUX16(s)); }
+        else if (key == K_HMODE)
+            d.fmeth = hash_mode(deref(peek()));
         ++d.np;
     }
     if (d.bld == 0xFFFF || AUX16(deref(PAIR_VAL(&d, d.bld))) == 0) err_exit(E_NOATTR);
@@ -1326,11 +1505,17 @@ static void prim_derivationstrict(void)
     if (nl + 4 > NAME_MAX) type_err();          /* name.drv */
     if (nl >= 4 && memcmp(STRBYTES(s) + nl - 4, ".drv", 4) == 0) type_err();
     dl = 44 + nl + 4;                           /* the .drv's path */
+    if (d.fixed != 0xFFFF) {                    /* fixed-output: exactly "out", and the hash */
+        if (d.no != 1 || !IS_LIT(deref(OUT_NAME(&d, 0)), "out")) type_err();
+        parse_hash(&d, deref(PAIR_VAL(&d, d.fixed)));
+    }
     /* The reserve. The scratch buffer takes, in turn, the masked ATerm (inputs
      * replaced), each output's fingerprint, the final ATerm (real inputs), the
      * .drv's fingerprint and, with inputs, the final ATerm with them replaced
      * again: as long as the longest. Two measuring passes give the masked
-     * lengths both ways; the outputs add two copies of each path. */
+     * lengths both ways; the outputs add two copies of each path. A fixed
+     * output has no masked ATerm, but its fields are printed masked or not, so
+     * the same sum is its final ATerm's length; its fingerprints fit FP_MAX. */
     d.masked = 1;
     d.replaced = 1;
     k.p = 0; k.n = 0; k.cap = 0xFFFF;
@@ -1366,18 +1551,33 @@ static void prim_derivationstrict(void)
     r = str_alloc((uint16_t)cap);
     k.p = (uint8_t *)STRBYTES(r);
     k.cap = (uint16_t)cap;
-    d.masked = 1;
-    d.replaced = 1;
-    k.n = 0;
-    aterm(&k, &d);
-    sha256_any(k.p, k.n, dig);                  /* hashDerivationModulo */
-    for (i = 0; i < d.no; ++i) {
-        pl = path_name(pn, deref(PAIR_VAL(&d, d.name)), deref(OUT_NAME(&d, i)));
-        s = deref(OUT_NAME(&d, i));
+    if (d.fixed != 0xFFFF) {                    /* makeFixedOutputPath: from the hash, never the ATerm */
+        pl = path_name(pn, deref(PAIR_VAL(&d, d.name)), deref(OUT_NAME(&d, 0)));
         k.n = 0;
-        put(&k, "output:", 7);
-        put(&k, STRBYTES(s), AUX16(s));
-        d.path[i] = store_path(&k, dig, pn, pl);
+        if (d.falgo == HA_SHA256 && d.fmeth == FM_NAR) {
+            put(&k, "source", 6);               /* the hash is the fingerprint's own */
+            d.path[0] = store_path(&k, d.fh, pn, pl);
+        } else {
+            put_fixed(&k, &d);
+            sha256_any(k.p, k.n, dig);
+            k.n = 0;
+            put(&k, "output:out", 10);
+            d.path[0] = store_path(&k, dig, pn, pl);
+        }
+    } else {
+        d.masked = 1;
+        d.replaced = 1;
+        k.n = 0;
+        aterm(&k, &d);
+        sha256_any(k.p, k.n, dig);              /* hashDerivationModulo */
+        for (i = 0; i < d.no; ++i) {
+            pl = path_name(pn, deref(PAIR_VAL(&d, d.name)), deref(OUT_NAME(&d, i)));
+            s = deref(OUT_NAME(&d, i));
+            k.n = 0;
+            put(&k, "output:", 7);
+            put(&k, STRBYTES(s), AUX16(s));
+            d.path[i] = store_path(&k, dig, pn, pl);
+        }
     }
     d.masked = 0;
     d.replaced = 0;
@@ -1391,14 +1591,19 @@ static void prim_derivationstrict(void)
     put(&k, "text", 4);
     put_refs(&k, &d);                           /* "text:<every input .drv and source>" */
     v = store_path(&k, dig, pn, nl + 4);
-    if (hasdrv) {                               /* the modulo hash for dependents: */
+    if (d.fixed != 0xFFFF) {                    /* a fixed output's modulo hash: the hash and */
+        k.n = 0;                                /* the path, whatever the inputs */
+        put_fixed(&k, &d);
+        put(&k, STRBYTES(d.path[0]), AUX16(d.path[0]));
+        sha256_any(k.p, k.n, dig);
+    } else if (hasdrv) {                        /* the modulo hash for dependents: */
         d.replaced = 1;                         /* final, but with the inputs replaced */
         k.n = 0;
         aterm(&k, &d);
         sha256_any(k.p, k.n, dig);
     }                                           /* (with none, the final ATerm's) */
     nm = str_alloc(64);
-    hex64(dig, STRBYTES(nm));
+    hex_of(dig, 32, STRBYTES(nm));
     e = list_alloc(3);
     ELEMS(e)[0] = v;
     ELEMS(e)[1] = nm;

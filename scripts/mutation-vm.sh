@@ -42,7 +42,7 @@ NBC="$2"
 # The derivation fixtures first: they are cheap, and run_suite stops at the
 # first wrong answer, so a mutation they catch costs seconds. The refusal is a
 # fixture too -- its .exp is the error line (scripts/scoreboard.py).
-FIXTURES="eval-okay-derivation eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists refuse-derivation-drvpath eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
+FIXTURES="eval-okay-derivation eval-okay-derivation-fixed-output eval-fail-derivation-fixed-bin eval-fail-derivation-fixed-outputs eval-fail-derivation-hash-base16-digit eval-fail-derivation-hash-base64-digit eval-fail-derivation-hash-empty eval-fail-derivation-hash-length eval-fail-derivation-hash-mode eval-fail-derivation-hash-nix32-digit eval-fail-derivation-hash-nix32 eval-fail-derivation-hash-prefix eval-fail-derivation-hash-sri-long eval-fail-derivation-hash-sri-short eval-fail-derivation-hash-type eval-fail-derivation-hash-untyped refuse-derivation-hash-blake3 refuse-derivation-hash-git refuse-derivation-hash-text eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists refuse-derivation-drvpath eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
 MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1 mask:4"
 SRCS="main.c run.c data.c prims.c gc.c card.c sha256.c"   # link order: main.c first
 WORK=$(mktemp -d)
@@ -256,7 +256,7 @@ mutate "inputs are hashed by path, not modulo hash" prims.c \
        's/d->replaced ? KEY_HEX : KEY_DRV/d->replaced ? KEY_DRV : KEY_DRV/'
 
 mutate "an input's modulo hash ignores its own inputs" prims.c \
-       's/^    if (hasdrv) {                               \/\* the modulo hash for dependents: \*\/$/    if (0) {/'
+       's/^    } else if (hasdrv) {                        \/\* the modulo hash for dependents: \*\/$/    } else if (0) {/'
 
 mutate "the .drv's path names no references" prims.c \
        's/^    put_refs(\&k, \&d);                           \/\* "text:<every input .drv and source>" \*\/$//'
@@ -266,6 +266,88 @@ mutate "a drvPath in a string is taken as a source" prims.c \
 
 mutate "path + a string with context is allowed" run.c \
        's/^            if (b->tag == T_STRING \&\& STRCTX(b, AUX16(b))) type_err();.*$//'
+
+# Fixed outputs (DERIVATION.md "Fixed outputs"): the path, the ATerm's fields
+# and the modulo hash, each from the declared hash; then Nix's reading of the
+# hash, rule by rule. Most of these give a well-formed path; the eval-fail
+# fixtures catch the ones that would accept what Nix rejects.
+mutate "a fixed output's path is input-addressed" prims.c \
+       's/^    if (d.fixed != 0xFFFF) {                    \/\* makeFixedOutputPath: from the hash, never the ATerm \*\/$/    if (0) {/'
+
+mutate "a sha256 NAR output is not a source path" prims.c \
+       's/^        if (d.falgo == HA_SHA256 \&\& d.fmeth == FM_NAR) {$/        if (0) {/'
+
+mutate "recursive is flat" prims.c \
+       's/^    if (IS_LIT(s, "nar") || IS_LIT(s, "recursive")) return FM_NAR;$/    if (IS_LIT(s, "nar") || IS_LIT(s, "recursive")) return FM_FLAT;/'
+
+mutate "the r: of a NAR hash is dropped" prims.c \
+       's/^    if (d->fmeth == FM_NAR) put(k, "r:", 2);$//'
+
+mutate "the fixed hash is printed as 32 bytes" prims.c \
+       's/^    put_hex(k, d->fh, ha_size(d->falgo));$/    put_hex(k, d->fh, 32);/'
+
+mutate "the ATerm has no fixed-output fields" prims.c \
+       's/^        if (d->fixed == 0xFFFF) {$/        if (1) {/'
+
+mutate "a fixed output's modulo hash is its ATerm's" prims.c \
+       's/^    if (d.fixed != 0xFFFF) {                    \/\* a fixed output.s modulo hash: the hash and \*\/$/    if (0) {/'
+
+mutate "a fixed output's modulo hash leaves out its path" prims.c \
+       's/^        put(\&k, STRBYTES(d.path\[0\]), AUX16(d.path\[0\]));$//'
+
+mutate "a fixed output may have another output" prims.c \
+       's/^        if (d.no != 1 || !IS_LIT(deref(OUT_NAME(\&d, 0)), "out")) type_err();$/        if (!IS_LIT(deref(OUT_NAME(\&d, 0)), "out")) type_err();/'
+
+mutate "a fixed output's one output may have any name" prims.c \
+       's/^        if (d.no != 1 || !IS_LIT(deref(OUT_NAME(\&d, 0)), "out")) type_err();$/        if (d.no != 1) type_err();/'
+
+mutate "outputHashAlgo is ignored" prims.c \
+       's/^            { s = deref(peek()); d.falgo = hash_algo(STRBYTES(s), AUX16(s)); }$/            { s = deref(peek()); }/'
+
+mutate "an unknown outputHashAlgo is an error" prims.c \
+       's/^            { s = deref(peek()); d.falgo = hash_algo(STRBYTES(s), AUX16(s)); }$/            { s = deref(peek()); if (!(d.falgo = hash_algo(STRBYTES(s), AUX16(s)))) type_err(); }/'
+
+mutate "blake3 is an unknown algorithm" prims.c \
+       's/^    if (IS_BYTES(p, n, "blake3")) err_exit(E_UNSUP);$//'
+
+mutate "text and git are flat" prims.c \
+       's/^    if (IS_LIT(s, "text") || IS_LIT(s, "git")) err_exit(E_UNSUP);$/    if (IS_LIT(s, "text") || IS_LIT(s, "git")) return FM_FLAT;/'
+
+mutate "an empty hash needs no algorithm" prims.c \
+       's/^        if (d->falgo == HA_NONE) type_err();$//'
+
+mutate "the hash and outputHashAlgo need not agree" prims.c \
+       's/^        if (d->falgo != HA_NONE \&\& d->falgo != a) type_err();$//'
+
+mutate "an unknown prefix falls back to outputHashAlgo" prims.c \
+       's/^        if ((a = hash_algo(p, i)) == HA_NONE) type_err();$/        if ((a = hash_algo(p, i)) == HA_NONE) a = d->falgo;/'
+
+mutate "an SRI hash is read by its length" prims.c \
+       's/^    } else if (sri || n == (sz + 2) \/ 3 \* 4) {$/    } else if (n == (sz + 2) \/ 3 * 4) {/'
+
+mutate "base16 is lower case only" prims.c \
+       's/^    if (c >= .A. \&\& c <= .F.) return (uint8_t)(c - .A. + 10);$//'
+
+mutate "base16 takes any character" prims.c \
+       's/^            if ((v = hex_digit(p\[i\])) == 16) type_err();$/            v = hex_digit(p[i]);/'
+
+mutate "nix32 is read from the front" prims.c \
+       's/!= p\[n - 1 - j\]; ++v) ;$/!= p[j]; ++v) ;/'
+
+mutate "nix32 takes any character" prims.c \
+       's/^            if (v == 32) type_err();$//'
+
+mutate "nix32 ignores bits past the hash" prims.c \
+       's/^                    if (i == sz) type_err();$//'
+
+mutate "Base64 does not stop at =" prims.c \
+       's/^        for (i = j = 0, t = 0; i < n \&\& p\[i\] != .=.; ++i) {$/        for (i = j = 0, t = 0; i < n; ++i) {/'
+
+mutate "Base64 takes any character" prims.c \
+       's/^            if ((v = b64_digit(p\[i\])) == 64) type_err();$/            v = b64_digit(p[i]);/'
+
+mutate "Base64 may be short" prims.c \
+       's/^        if (j != sz) type_err();$//'
 
 echo
 echo "$pass mutations caught, $fail not caught"

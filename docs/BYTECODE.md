@@ -458,7 +458,7 @@ $07` (`MUL`/`DIV` with no card in any slot), `E_ASSERT $08`, `E_THROW $09`,
 `E_ABORT $0A`, `E_NOATTR $0B` (selecting a missing attribute), `E_INDEX $0C`
 (`head []`, `elemAt` out of range, negative `substring` start), `E_NOVAR $0D`
 (an identifier no `with` set supplies), `E_UNSUP $0E` (valid Nix the VM does not implement
-yet: a second derivation before string context, fixed-output derivations, a path
+yet: a `drvPath` in a derivation, an experimental hash mode or `blake3`, a path
 copied into the store, `md5`; [DERIVATION.md](DERIVATION.md)). The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.

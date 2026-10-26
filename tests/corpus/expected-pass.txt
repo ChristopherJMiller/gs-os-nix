@@ -1,6 +1,20 @@
 # Tests the 65816 VM passes. scripts/scoreboard.py --update maintains it;
 # checks.scoreboard fails if any of these stops passing.
 fixtures/eval-fail-derivation-duplicate-output
+fixtures/eval-fail-derivation-fixed-bin
+fixtures/eval-fail-derivation-fixed-outputs
+fixtures/eval-fail-derivation-hash-base16-digit
+fixtures/eval-fail-derivation-hash-base64-digit
+fixtures/eval-fail-derivation-hash-empty
+fixtures/eval-fail-derivation-hash-length
+fixtures/eval-fail-derivation-hash-mode
+fixtures/eval-fail-derivation-hash-nix32
+fixtures/eval-fail-derivation-hash-nix32-digit
+fixtures/eval-fail-derivation-hash-prefix
+fixtures/eval-fail-derivation-hash-sri-long
+fixtures/eval-fail-derivation-hash-sri-short
+fixtures/eval-fail-derivation-hash-type
+fixtures/eval-fail-derivation-hash-untyped
 fixtures/eval-fail-derivation-name
 fixtures/eval-fail-derivation-no-builder
 fixtures/eval-fail-path-plus-context
@@ -20,6 +34,7 @@ fixtures/eval-okay-derivation-context
 fixtures/eval-okay-derivation-dependent
 fixtures/eval-okay-derivation-equality
 fixtures/eval-okay-derivation-escapes
+fixtures/eval-okay-derivation-fixed-output
 fixtures/eval-okay-derivation-nulls
 fixtures/eval-okay-div-truncates
 fixtures/eval-okay-formals
@@ -59,7 +74,9 @@ fixtures/eval-okay-tryeval-restore
 fixtures/eval-okay-with
 fixtures/eval-okay-with-captured
 fixtures/refuse-derivation-drvpath
-fixtures/refuse-derivation-fixed-output
+fixtures/refuse-derivation-hash-blake3
+fixtures/refuse-derivation-hash-git
+fixtures/refuse-derivation-hash-text
 fixtures/refuse-derivation-path
 fixtures/refuse-hashstring-md5
 tvix/nix_tests/eval-okay-any-all

@@ -7,9 +7,9 @@ what the VM reproduces, taken from Nix 2.34.8 (`src/libexpr/primops.cc`,
 source left room for doubt. `scripts/` has no model of it; the fixtures are
 the host's own answers (D7).
 
-Scope today: **input-addressed derivations, with inputs, through string
-context.** Section "Refused" lists the rest, each a loud `E_UNSUP` rather than
-a plausible wrong path.
+Scope today: **input-addressed and fixed-output derivations, with inputs,
+through string context.** Section "Refused" lists the rest, each a loud
+`E_UNSUP` rather than a plausible wrong path.
 
 ## Two halves, as in Nix
 
@@ -38,6 +38,7 @@ store paths as strings.
 | any, when `__ignoreNulls` and the value is `null` | skipped |
 | `__contentAddressed`, `__impure` | consumed **even when false** (a true one is refused) |
 | `args` | a list; each element coerced (below) into the builder's arguments |
+| `outputHashAlgo`, `outputHashMode` | coerced into the environment, **and read at once**: an invalid mode is an error even with no `outputHash` (section "Fixed outputs") |
 | everything else | coerced into the environment under its own name |
 
 `builder`, `system` and `outputs` also go into the environment, and are read from
@@ -99,6 +100,70 @@ against `nix-instantiate` before any C was written.
 `makeStorePath(type, h, name)` is `/nix/store/` + nixbase32(fold(SHA-256(
 "<type>:sha256:<hex h>:/nix/store:<name>"))) + `-` + name, where fold XORs the
 digest down to 20 bytes (`f[i % 20] ^= h[i]`) and nixbase32 emits from the end.
+
+## Fixed outputs
+
+A derivation with an `outputHash` declares its output's content in advance
+(every `fetchurl` is one), so its output path is made from that hash, not from
+the derivation, and a derivation that depends on it sees only the hash. From
+Nix 2.34.9 (`primops.cc derivationStrict`, `hash.cc`, `content-address.cc`,
+`store-dir-config.cc makeFixedOutputPath`, `derivations.cc`), and **every rule
+below measured on the host**: a throwaway model of them gave the host's output
+path, `.drv` path and dependent's paths for sha256 flat and NAR, sha1 flat and
+NAR, md5 and sha512 before any C was written.
+
+**The three attributes** are coerced into the environment like any other, and
+two of them are read as soon as they are: `outputHashMode` must be `flat`,
+`nar` or `recursive` (= `nar`); `text` and `git` are experimental features,
+refused. `outputHashAlgo` is `md5`, `sha1`, `sha256` or `sha512`; `blake3` is
+experimental, refused; **anything else is dropped in silence** (Nix's
+`parseHashAlgoOpt`), so `outputHashAlgo = "foo"` with an SRI hash is valid.
+The derivation is fixed-output only if `outputHash` is present; then its
+outputs must be exactly `out` (`E_TYPE` otherwise, even for one output called
+something else).
+
+**The hash** (`newHashAllowEmpty`). Empty: all zeros, of `outputHashAlgo`'s
+size, which must be given. Otherwise a prefix up to the first `:`, or failing
+that the first `-` (which makes it SRI), names the algorithm, and must be a
+known one even when `outputHashAlgo` is set; the two must agree when both are
+given, and one must be. An SRI hash is always Base64. Otherwise the length
+decides, in this order: base16 (`2n`, either case), nix32 (`(8n-1)/5+1`, read
+from the end; a set bit past the last byte is an error), Base64
+(`4*ceil(n/3)`). Base64 stops at the first `=`, skips newlines and ignores the
+bits left over, so `...FU=` and `...FV=` are one hash and so is `...FU=!!`; it
+must decode to exactly `n` bytes. Any other length, or a digit outside its
+alphabet, is an error (`E_TYPE`).
+
+| algorithm | bytes | base16 | nix32 | Base64 |
+|---|---|---|---|---|
+| md5 | 16 | 32 | 26 | 24 |
+| sha1 | 20 | 40 | 32 | 28 |
+| sha256 | 32 | 64 | 52 | 44 |
+| sha512 | 64 | 128 | 103 | 88 |
+
+**The output path** (`makeFixedOutputPath`), with `m` the method's prefix (`r:`
+for NAR, nothing for flat) and `<hex>` the hash in base16:
+
+- sha256 and NAR: `makeStorePath("source", hash, name)` -- the user's hash is
+  the fingerprint's, as for a source added to the store;
+- otherwise: `makeStorePath("output:out", SHA-256("fixed:out:<m><algo>:<hex>:"), name)`.
+
+**The ATerm** has the real path in the output and in `out` in the environment
+-- there is no masked ATerm -- and the output's other two fields are
+`"<m><algo>"` and `"<hex>"`: `("out","/nix/store/...-f","r:sha256","e3b0...")`.
+The `.drv` path is the final ATerm's, as for any derivation, so it does depend
+on the builder and the inputs.
+
+**The modulo hash** is SHA-256 of `fixed:out:<m><algo>:<hex>:<output path>`,
+whatever the inputs. That is the point of the rule: a dependent's masked ATerm
+holds this in place of the `.drv`, so two fixed-output derivations with one
+hash and different builders give their dependents one output path (and two
+`.drv` paths). `eval-okay-derivation-fixed-output` checks exactly that.
+
+The VM never computes md5, sha1 or sha512 for this: the hash is given, and
+every hash the rule computes is a SHA-256. The parsed hash is at most 64 bytes,
+held in `struct drv` on the C stack; its decoders use constant shifts only
+(a variable shift links `~SHIFTLEFT` into bank 0).
 
 ## How the VM does it
 
@@ -196,15 +261,17 @@ too.
 `E_UNSUP` ($0E) means *valid Nix that the VM does not implement yet*. It is
 distinct from a type error so the scoreboard's error list says what is missing,
 and a `refuse-*` fixture passes only on that error (`tests/fixtures`,
-`scripts/scoreboard.py`): a `drvPath` in a string, fixed-output, a path, and
-`md5` each have one.
+`scripts/scoreboard.py`): a `drvPath` in a string, the `text` and `git` hash
+modes, `blake3`, a path, and `md5` each have one.
 
 - **A `drvPath` in a derivation's attributes** (`=<drv>` context): Nix adds the
   whole closure of that `.drv`, which the VM does not record.
 - **A context the program did not make**: an input derivation missing from the
   table.
 - `__structuredAttrs = true`, `__contentAddressed = true`, `__impure = true`.
-- `outputHash`, `outputHashAlgo`, `outputHashMode`: fixed-output derivations.
+- `outputHashMode = "text"` or `"git"`, `outputHashAlgo = "blake3"` or a
+  `blake3` hash: each is Nix behind an experimental feature (the host rejects
+  them without it), and each has a path rule of its own.
 - A path in an attribute (copied into the store: L7). Also `"${./p}"`, which was a
   type error until now.
 

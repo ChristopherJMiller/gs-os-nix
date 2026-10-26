@@ -78,4 +78,4 @@ crate is `rnix` 0.14.0 (MIT), pinned in `tools/nbc/Cargo.lock`.
 |---|---|
 | The scoreboard corpus | tvix, `eval/src/tests/`, commit `9fbca101331eecbf5c1cd44861f3d24aff101b82`: <https://github.com/tvlfyi/tvix> (mirror of `code.tvl.fyi/depot`), GPL-3.0, vendored with its licence in `tests/corpus/tvix/` |
 | `derivation.nix` | Nix 2.34.8, `src/libexpr/primops/derivation.nix`, LGPL-2.1, embedded in `tools/nbc/src/derivation.nix`: <https://github.com/NixOS/nix> |
-| Ground truth | Every `.exp` is the output of the host's `nix-instantiate --eval --strict` (Nix 2.34.8), and every store-path vector came from the real `nix` binary (D7) |
+| Ground truth | Every `.exp` is the output of the host's `nix-instantiate --eval --strict` (Nix 2.34.8; the fixed-output fixtures, 2.34.9, whose source -- `github:NixOS/nix/2.34.9`, `sha256-ZJwg/qG4M1Impy774HKMZ3Hsq7vlBJy7sXl1fI9QDXI=` -- the rules in DERIVATION.md "Fixed outputs" were read from), and every store-path vector came from the real `nix` binary (D7) |
