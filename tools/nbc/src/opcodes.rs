@@ -121,6 +121,7 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("addDrvOutputDependencies", 0x35, 1),
     ("getContext", 0x36, 1),
     ("appendContext", 0x37, 2),
+    ("toFile", 0x38, 2),
 ];
 
 /// The builtins Nix also exposes unqualified.

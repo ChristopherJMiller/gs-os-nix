@@ -41,6 +41,11 @@ fixtures/eval-fail-int-overflow-square
 fixtures/eval-fail-int-overflow-sub
 fixtures/eval-fail-int-overflow-uncaught
 fixtures/eval-fail-path-plus-context
+fixtures/eval-fail-tofile-contents
+fixtures/eval-fail-tofile-name
+fixtures/eval-fail-tofile-name-context
+fixtures/eval-fail-tofile-output
+fixtures/eval-fail-tofile-whole
 fixtures/eval-okay-assert
 fixtures/eval-okay-attr-builtins
 fixtures/eval-okay-attrs
@@ -90,6 +95,7 @@ fixtures/eval-okay-signed-compare
 fixtures/eval-okay-strings
 fixtures/eval-okay-tail-call
 fixtures/eval-okay-thunk-chain
+fixtures/eval-okay-tofile
 fixtures/eval-okay-tostring-int64
 fixtures/eval-okay-tostring-lists
 fixtures/eval-okay-tostring-widths

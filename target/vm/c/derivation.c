@@ -321,7 +321,8 @@ static int bytes_cmp(const char *a, uint16_t na, const char *b, uint16_t nb)
  * The inputs are the context union the derivation was made from, after its
  * own "=<drv>" elements were expanded (0 for none): exactly its .drv file's
  * references, which is what a later closure needs. The outputs are a LIST of
- * its output names. */
+ * its output names. builtins.toFile adds an entry too, for the file it makes:
+ * its path, no hash, its references as inputs, no outputs. */
 #define DT_PATH 0
 #define DT_HEX  1
 #define DT_INS  2
@@ -343,10 +344,14 @@ static obj_t *drv_entry(const char *p, uint16_t n)
     return 0;
 }
 
-/* Its modulo hash: a view of a 64-character STRING. */
+/* Its modulo hash: a view of a 64-character STRING. A file from toFile has
+ * none -- one named like a .drv and used as a derivation, which Nix would
+ * read as one: refused. */
 static obj_t *drv_hex(const char *p, uint16_t n)
 {
-    return deref(ELEMS(deref(drv_entry(p, n)))[DT_HEX]);
+    obj_t *h = ELEMS(deref(drv_entry(p, n)))[DT_HEX];
+    if (!h) err_exit(E_UNSUP);
+    return deref(h);
 }
 
 /* --- a .drv in a string: "=<drv>" (DERIVATION.md "A .drv in a string") ---
@@ -387,9 +392,8 @@ static obj_t *ctx_deep(obj_t *x)
             e = deref(vstack[i]);
             p = STRBYTES(e);
             m = AUX16(e);
-            /* A source's own references are not recorded (none can arise
-             * before builtins.toFile and L7's paths): refused, not ignored. */
-            if (m < 4 || memcmp(p + m - 4, ".drv", 4) != 0) err_exit(E_UNSUP);
+            /* A .drv's inputs, or a toFile file's references; any other
+             * source's are not known (E_UNSUP from drv_entry). */
             l = ELEMS(deref(drv_entry(p, m)))[DT_INS];
             if (!l) continue;
             rpush(l);
@@ -422,6 +426,10 @@ static obj_t *ctx_deep(obj_t *x)
         ctx_insert(base, vstack[cb + i]);
         e = deref(vstack[cb + i]);
         t = drv_entry(STRBYTES(e), AUX16(e));
+        if (!ELEMS(deref(t))[DT_OUTS]) {        /* a file: a source, no outputs */
+            if (AUX16(e) >= 4 && memcmp(STRBYTES(e) + AUX16(e) - 4, ".drv", 4) == 0) err_exit(E_UNSUP);
+            continue;
+        }
         rpush(ELEMS(deref(t))[DT_OUTS]);
         rpush(ELEMS(deref(t))[DT_PATH]);
         m = AUX16(deref(rstack[rsp - 2]));
@@ -980,4 +988,69 @@ int attrs_equal(obj_t *a, obj_t *b)
     }
     rsp = base;
     return r;
+}
+
+/* --- builtins.toFile (DERIVATION.md "builtins.toFile") ---
+ * toFile name contents -> "/nix/store/<hash>-<name>": the text store path Nix
+ * makes for the contents' SHA-256 and their references, which are the plain
+ * paths of their context (an output or a whole derivation there is an error,
+ * as in Nix). Its fingerprint is a .drv's: "text:<ref>...", made and hashed
+ * by store_path. The result's context is itself, a plain source; drv_table
+ * keeps its references for any closure that later reaches it. */
+void prim_tofile(void)
+{
+    uint8_t dig[32];
+    uint16_t nl, i, n, b;
+    uint32_t cap, need;
+    struct sink k;
+    obj_t *nm, *c, *x, *e, *r, *v;
+    char pn[NAME_MAX + 1];
+    force_slot(2);                              /* the name first, as Nix forces it */
+    nm = deref(vstack[vsp - 2]);
+    need(nm, T_STRING);
+    if (CTX(nm)) type_err();                    /* forceStringNoCtx */
+    nl = AUX16(nm);
+    check_name(STRBYTES(nm), nl);
+    force_top();
+    b = vsp;                                    /* b - 2: the name, b - 1: the contents */
+    c = deref(vstack[b - 1]);
+    need(c, T_STRING);                          /* forceString: not a coercion */
+    x = CTX(c);
+    n = x ? AUX16(deref(x)) : 0;
+    cap = 4 + 8 + 64 + 12 + nl;                 /* "text" ":sha256:" <hex> ":/nix/store:" <name> */
+    for (i = 0; i < n; ++i) {
+        e = deref(list_elem(x, i, n));
+        if (STRBYTES(e)[0] != '/') type_err();  /* "may not reference derivations" */
+        cap += 1 + AUX16(e);
+    }
+    str_sha256(vstack[b - 1], dig);
+    need = (round4((uint16_t)cap) + 8)          /* the fingerprint */
+         + 2 * (round4(44 + nl) + 8) + 8        /* the path, its one element, its context */
+         + 24;                                  /* its drv_table entry */
+    if (cap > NURSERY_END - 16 || need > NURSERY_END) nomem();
+    nursery_reserve((uint16_t)need);
+    r = str_alloc((uint16_t)cap);
+    k.p = (uint8_t *)STRBYTES(r);
+    k.n = 0;
+    k.cap = (uint16_t)cap;
+    put(&k, "text", 4);
+    x = CTX(deref(vstack[b - 1]));
+    for (i = 0; i < n; ++i) {                   /* sorted already: a context is */
+        windows_maybe();
+        e = deref(list_elem(x, i, n));
+        put(&k, ":", 1);
+        put(&k, STRBYTES(e), AUX16(e));
+    }
+    memcpy(pn, STRBYTES(deref(vstack[b - 2])), nl);
+    v = store_path(&k, dig, pn, nl);
+    STRCTX(v, AUX16(v)) = ctx_one("", 0, STRBYTES(v), AUX16(v));
+    e = list_alloc(5);
+    ELEMS(e)[DT_PATH] = v;
+    ELEMS(e)[DT_HEX] = 0;
+    ELEMS(e)[DT_INS] = CTX(deref(vstack[b - 1]));
+    ELEMS(e)[DT_OUTS] = 0;
+    ELEMS(e)[DT_NEXT] = drv_table;
+    drv_table = e;
+    vsp = b - 2;
+    push(v);
 }

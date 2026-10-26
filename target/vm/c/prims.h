@@ -37,6 +37,7 @@ int    is_lit(obj_t *s, const char *lit, uint16_t n);  /* the STRING view s is l
 #define IS_LIT(s, lit) is_lit((s), (lit), sizeof(lit) - 1)
 void   hex_of(const uint8_t *dig, uint16_t n, char *out);  /* n bytes as 2n lowercase hex digits */
 obj_t *ctx_join(uint16_t at, uint16_t n);           /* the union of vstack[at..at+n)'s contexts; may collect */
+void   str_sha256(obj_t *so, uint8_t *dig);         /* of a forced STRING original, on the card if it can */
 
 /* Building contexts: an element STRING of [pre] ["!<o>!"] s[off..off+n)
  * (n = CTX_REST: to the end), and the sorted set of them on the stack. */
@@ -61,5 +62,6 @@ void prim_appendcontext(void);
 /* --- derivation.c ---------------------------------------------------------------------- */
 void prim_derivationstrict(void);
 void check_name(const char *p, uint16_t n);         /* a store-path name, else E_TYPE */
+void prim_tofile(void);
 
 #endif

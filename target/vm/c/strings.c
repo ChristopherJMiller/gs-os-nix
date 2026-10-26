@@ -159,15 +159,6 @@ void coerce_top(uint8_t how)
 
 void prim_tostring(void) { coerce_top(CO_STRING); }
 
-/* hashString type s -> lowercase hex (BYTECODE.md). Only "sha256" -- it is
- * what the card hashes, and what store paths need; md5, sha1 and sha512 are
- * E_UNSUP until something needs them, anything else E_TYPE. Nix forces the
- * type first, then the string, which must BE a string (forceString, not a coercion).
- *
- * The string is hashed where it lives. A mature one stays on the card and
- * HASH_STREAM reads it there: only its 4-byte header crosses the bus. A young
- * one goes through HASH_PUSH. With no card, or the verb masked
- * (checks.verb-economics), sha256.c does it on the CPU. */
 /* n bytes as 2n lowercase hex digits. Arithmetic rather than a table: a
  * static table is bank 0 (STATUS.md). */
 void hex_of(const uint8_t *dig, uint16_t n, char *out)
@@ -184,21 +175,14 @@ int is_lit(obj_t *s, const char *lit, uint16_t n)          /* a STRING view */
     return AUX16(s) == n && memcmp(STRBYTES(s), lit, n) == 0;
 }
 
-void prim_hashstring(void)
+/* The SHA-256 of the forced STRING original so, where it lives: a mature one
+ * stays on the card and HASH_STREAM reads it there (only its 4-byte header
+ * crosses the bus), a young one goes through HASH_PUSH, and with no card or
+ * the verb masked sha256.c does it on the CPU. Allocates nothing. */
+void str_sha256(obj_t *so, uint8_t *dig)
 {
-    uint8_t dig[32];
     uint16_t n;
-    obj_t *t, *so, *s, *r, hdr;
-    force_slot(2);                              /* the type, first, as Nix forces it */
-    t = deref(vstack[vsp - 2]);
-    need(t, T_STRING);
-    if (CTX(t)) type_err();                     /* forceStringNoCtx */
-    if (!is_lit(t, "sha256", 6)) {
-        if (is_lit(t, "md5", 3) || is_lit(t, "sha1", 4) || is_lit(t, "sha512", 6)) err_exit(E_UNSUP);
-        type_err();
-    }
-    force_top();
-    so = peek();
+    obj_t *s, hdr;
     if (IS_MATURE(so)) {
         card_read_at(PBITS(so), &hdr, 4);
         need(&hdr, T_STRING);
@@ -210,6 +194,27 @@ void prim_hashstring(void)
         n = AUX16(s);
         if (!card_sha256((uint8_t *)STRBYTES(s), n, dig)) sha256_cpu((uint8_t *)STRBYTES(s), n, dig);
     }
+}
+
+/* hashString type s -> lowercase hex (BYTECODE.md). Only "sha256" -- it is
+ * what the card hashes, and what store paths need; md5, sha1 and sha512 are
+ * E_UNSUP until something needs them, anything else E_TYPE. Nix forces the
+ * type first, then the string, which must BE a string (forceString, not a
+ * coercion). */
+void prim_hashstring(void)
+{
+    uint8_t dig[32];
+    obj_t *t, *r;
+    force_slot(2);                              /* the type, first, as Nix forces it */
+    t = deref(vstack[vsp - 2]);
+    need(t, T_STRING);
+    if (CTX(t)) type_err();                     /* forceStringNoCtx */
+    if (!is_lit(t, "sha256", 6)) {
+        if (is_lit(t, "md5", 3) || is_lit(t, "sha1", 4) || is_lit(t, "sha512", 6)) err_exit(E_UNSUP);
+        type_err();
+    }
+    force_top();
+    str_sha256(peek(), dig);
     vsp -= 2;
     r = str_alloc(64);                          /* 72 bytes: inside the boundary's margin */
     hex_of(dig, 32, STRBYTES(r));

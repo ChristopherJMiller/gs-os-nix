@@ -276,8 +276,25 @@ in the element syntax the rest of `derivationStrict` already reads. The
 closure is kept apart from the original elements on purpose: an opaque `.drv`
 path already in a context (`unsafeDiscardOutputDependency` makes one) is a
 source only, while the same path reached through a closure is expanded, as in
-Nix. A plain source met in a closure is refused: its own references are not
-recorded, and none can arise before `builtins.toFile` and L7's paths.
+Nix. A file from `builtins.toFile` met in a closure is followed through its
+references, which `drv_table` keeps too; any other plain source met there is
+refused, since its references are not known.
+
+### builtins.toFile
+
+`toFile name contents` (`primops.cc prim_toFile`) is the one way a plain source
+arises before L7: a text store path, `makeTextPath`, so its fingerprint is a
+`.drv`'s -- `text:<ref>...:sha256:<hex of SHA-256(contents)>:/nix/store:<name>`
+-- with the references the plain paths of the contents' context. An output or
+a whole derivation there is an error ("files created by builtins.toFile may not
+reference derivations"); the name may not carry a context and must be a
+store-path name; the contents must be a string (not a coercion). The result's
+context is itself, a plain source. `drv_table` gets an entry for it -- its
+path, no modulo hash, its references, no outputs -- so a closure that reaches
+it follows its references: `viah` in `eval-okay-tofile` depends on a
+derivation whose source references `a.drv` opaquely, and so gets `a.drv` with
+all its outputs, as the host does. A `toFile` path named like a `.drv` and then
+used as a derivation is refused: Nix would read the file as one.
 
 ### Reading and rewriting a context
 
@@ -312,7 +329,8 @@ and a `refuse-*` fixture passes only on that error (`tests/fixtures`,
 and `md5` each have one.
 
 - **A context the program did not make**: an input derivation missing from the
-  table, or a plain source met in a closure (its references are not recorded).
+  table, or a plain source met in a closure that `toFile` did not make (its
+  references are not known).
 - `__structuredAttrs = true`, `__contentAddressed = true`, `__impure = true`.
 - `outputHashMode = "text"` or `"git"`, `outputHashAlgo = "blake3"` or a
   `blake3` hash: each is Nix behind an experimental feature (the host rejects

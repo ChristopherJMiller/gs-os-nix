@@ -743,6 +743,7 @@ void op_prim(void)
     case PRIM_ADDDRVOUTPUTDEPENDENCIES: prim_adddrvoutputdependencies(); break;
     case PRIM_GETCONTEXT:      prim_getcontext(); break;
     case PRIM_APPENDCONTEXT:   prim_appendcontext(); break;
+    case PRIM_TOFILE:          prim_tofile(); break;
     default:                   err_exit(E_BADOP);
     }
 }

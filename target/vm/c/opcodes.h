@@ -116,6 +116,7 @@
 #define PRIM_ADDDRVOUTPUTDEPENDENCIES 0x35 /* 1 */
 #define PRIM_GETCONTEXT         0x36 /* 1 */
 #define PRIM_APPENDCONTEXT      0x37 /* 2 */
+#define PRIM_TOFILE             0x38 /* 2 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */

@@ -280,6 +280,7 @@ primop would move the most tests.
 | `$35` | `addDrvOutputDependencies` | 1 | `s` coerced; its one context element, a plain `.drv` path, becomes `=<drv>` |
 | `$36` | `getContext` | 1 | `{ "<path>" = { allOutputs; outputs; path; }; ... }`, each only when true or non-empty |
 | `$37` | `appendContext` | 2 | `s ctx`: `s` with the elements `ctx` describes added; keys must be store paths |
+| `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`
 diffs the primop table too).

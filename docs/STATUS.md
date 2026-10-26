@@ -123,7 +123,8 @@ context~~ **done** (DERIVATION.md "A .drv in a string": the closure from
 `drv_table`'s recorded inputs, matching the host on 10 paths); ~~the context
 builtins~~ **done** (DERIVATION.md "Reading and rewriting a context": six
 builtins, primops `$32`-`$37`, and no context in a name where Nix forbids
-one); `builtins.toFile`; `currentSystem`. **Bank 4 is at 42.9 KB of 64:** the
+one); ~~`builtins.toFile`~~ **done** (DERIVATION.md "builtins.toFile": the
+text store path, and closures that follow its references); `currentSystem`. **Bank 4 is at 42.9 KB of 64:** the
 "prims" segment will need a second segment name before long (omf2bin places
 it in bank 6, skipping the window ring).
 
@@ -168,9 +169,11 @@ the fixture (D7), a regression that provably fails (D14), the gates one at a tim
    is now an error in `getAttr`, `hasAttr`, `listToAttrs`, `removeAttrs` and
    `hashString`'s type, as in Nix. One fixture, 14 eval-fail fixtures, 18
    mutations.
-4. **`builtins.toFile`** is computable without file I/O: a text store path of
-   the contents, with the contexts as references -- and it is the one way a
-   plain source (`/nix/store/...` context) arises before L7.
+4. ~~**`builtins.toFile`**~~ **done** (2026-10-26): the text store path of
+   the contents and their plain-path references, its context itself, and an
+   entry in `drv_table` so a closure that reaches it follows those references.
+   One fixture (11 host answers, read-write), five eval-fail fixtures, five
+   mutations.
 5. **`builtins.currentSystem`: a decision for Chris.** What does an IIgs
    report? It goes into every `.drv` that uses it, so it decides whether those
    match a host's. Two corpus tests (`delayed-with*`) wait on it.
