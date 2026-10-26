@@ -440,6 +440,24 @@
             grep -q "MUTATION PASS" "$out"
           '';
 
+        # Where the VM's code lands (scripts/bank-gate.py): bank 0's size is
+        # exactly the committed target/vm/bank0.txt, only allowlisted runtime
+        # routines are linked into it, and no symbol is in a bank the VM uses
+        # for data. Then the same rules, each broken on purpose (D14).
+        bank-gate = pkgs.runCommand "check-bank-gate"
+          { nativeBuildInputs = [ pkgs.python3 ours.orca-toolchain ]; }
+          ''
+            cp -r ${self}/target ${self}/scripts .
+            chmod -R +w .
+            python3 scripts/bank-gate.py ${ours.cvm}/cvm.bin ${ours.cvm}/cvm.map \
+              target/vm/bank0.txt > gate.txt || { cat gate.txt; exit 1; }
+            python3 scripts/bank-gate.py --self-test ${ours.cvm}/cvm.bin ${ours.cvm}/cvm.map \
+              target/vm/bank0.txt >> gate.txt || { cat gate.txt; exit 1; }
+            cat gate.txt
+            grep -q "^BANK GATE SELF-TEST OK" gate.txt
+            cp gate.txt "$out"
+          '';
+
         # ORCA/C's lint (vm.h `#pragma lint -1`) and the memory map's
         # _Static_asserts stop the build -- proven by planting a violation of
         # each in a copy (scripts/orca-lint-selftest.sh, D14).

@@ -31,8 +31,9 @@ bank 0
 bank 1  NURSERY   $010000-$01FFFF   64 KB, bump-allocated
 bank 2  STAGE     $020000-$02FFFF   the collector's to-space
 bank 3  the .nbc image               $030000, up to 64 KB (a2min --run-nbc puts it there)
-bank 4+ further code segments        ORCA/C `segment "prims";` etc., placed by omf2bin;
-                                     the interpreter core stays in bank 0
+bank 4+ further code segments        ORCA/C `segment "prims";` etc., placed by omf2bin,
+                                     which skips bank 5 when bank 4 fills (bank 6 is
+                                     next); the interpreter core stays in bank 0
 bank 5  WINDOWS   $050000-$05EFFF   the 60 KB copy ring: views of mature objects
         RSET      $05F000-$05F9FF   the remembered set: 256 × (object, offset, scratch)
 ```

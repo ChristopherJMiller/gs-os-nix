@@ -1797,7 +1797,14 @@ int omf2bin(const std::string &in, const std::string &out, uint32_t org,
             return at;
         }
         if (size > 0x10000) fatal("omf2bin: segment '%s' is larger than a bank", s.segname.c_str());
-        if (bank_cursor + size > 0x10000) { ++code_bank; bank_cursor = 0; }
+        if (bank_cursor + size > 0x10000) {
+            ++code_bank;
+            bank_cursor = 0;
+            // Bank 5 is the VM's window ring and remembered set (VM.md): code
+            // there would be overwritten by the first copy of a mature object.
+            // scripts/bank-gate.py checks the map for any symbol in it.
+            if (code_bank == 5) code_bank = 6;
+        }
         const uint32_t at = (code_bank << 16) | bank_cursor;
         bank_cursor = (bank_cursor + size + 0xFF) & ~0xFFu;
         extra.emplace_back(at, size);

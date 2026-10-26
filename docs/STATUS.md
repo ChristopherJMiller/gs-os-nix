@@ -81,9 +81,13 @@ the session scratchpad and are adopted only after being read):
    error exits are `_Noreturn`, and the memory map's invariants are asserts.
    The binary is byte-identical. `checks.orca-lint` plants five violations in
    a copy and requires each to stop the build.
-3. A bank-layout gate: bank-0 bytes as a ratchet, the linked ORCA/C runtime
-   routines against an allowlist, no code in banks 1-3 or 5 -- and `omf2bin`
-   refusing those banks itself.
+3. ~~A bank-layout gate~~ **done**: `just bank-gate` / `checks.bank-gate`
+   hold bank 0 to the exact size in `target/vm/bank0.txt` (37,795) and to an
+   allowlist of 16 runtime routines (1,200 bytes), and refuse any symbol in a
+   data bank; four plants prove it, one of them a real struct copy. `omf2bin`
+   now skips bank 5 when bank 4 fills: tested with two 39 KB segments, the
+   second landing at `$060000`, where before it would have been the window
+   ring.
 4. `checks.c-lint`: host clang `-Wall -Wextra -Werror` through a shim, and a
    GC-safety checker for `obj_t *` locals across collecting calls; both
    self-tested by planting a violation.

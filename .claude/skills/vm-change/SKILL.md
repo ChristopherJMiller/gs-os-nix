@@ -40,8 +40,11 @@ The fixtures are the host's own output, never a model's.
 - **Bank 0 is nearly full.** Every static, and every ORCA/C library routine the
   code links, lands in bank 0 whatever its segment; string literals stay with
   their code. Put new code in `prims.c`/`sha256.c` (`segment "prims"`, bank
-  4). Watch the build line `omf2bin: ... N bytes in bank 0` and diff
-  `target/build/cvm.map` against the old one when it grows. A struct copy links
+  4). `just bank-gate` holds bank 0 to the exact size in
+  `target/vm/bank0.txt` and to an allowlist of runtime routines: when it
+  changes, find out why in `target/build/cvm.map`, say so in the commit, and
+  `just bank-gate --update`. ORCA/C's lint is on (`vm.h`): an unused variable
+  or an unprototyped call is a build error. A struct copy links
   `~MOVE`, a variable left shift `~SHIFTLEFT`, 64-bit `/` `%` are `~UDIV8`
   (~4,000 cycles); 32-bit shifts are ~300-cycle calls -- use `BYTE_OF`/`HI16`.
 - **Anything that runs bytecode may collect and move young objects.** No
@@ -78,7 +81,7 @@ The fixtures are the host's own output, never a model's.
 ## 4. Gates, in order, one at a time
 
 1. `just scoreboard`, then `just scoreboard-update` to claim new passes (the
-   ratchet is `tests/corpus/expected-pass.txt`).
+   ratchet is `tests/corpus/expected-pass.txt`), and `just bank-gate`.
 2. `just verb-economics` if hashing or a card verb changed (needs `just
    fixtures` first so the workload is compiled); add the fixture to
    `VERB_WORKLOAD` in both the justfile and flake.nix if it exercises a verb.

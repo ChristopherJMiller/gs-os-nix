@@ -182,6 +182,12 @@ quiet-clock: build-a2min cvm nbc-build asm-headless
     ./scripts/quiet-clock.sh ./sim/build_a2min/a2min target/build/cvm.bin \
         target/build/nbc-fixtures target/build/storepath_demo_headless.bin {{VECTORS}}
 
+# Where the VM's code lands: bank 0's size must equal target/vm/bank0.txt
+# exactly (after accounting for a change, `just bank-gate --update`), only the
+# allowlisted runtime routines may be in it, and no symbol in a data bank.
+bank-gate *flags: cvm
+    python3 scripts/bank-gate.py target/build/cvm.bin target/build/cvm.map target/vm/bank0.txt {{flags}}
+
 # ORCA/C's lint and the memory map's static asserts can fail: a planted
 # violation of each, in a copy, must stop the build (D14).
 orca-lint:
