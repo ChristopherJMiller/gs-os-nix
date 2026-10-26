@@ -459,7 +459,9 @@ $07` (`MUL`/`DIV` with no card in any slot), `E_ASSERT $08`, `E_THROW $09`,
 (`head []`, `elemAt` out of range, negative `substring` start), `E_NOVAR $0D`
 (an identifier no `with` set supplies), `E_UNSUP $0E` (valid Nix the VM does not implement
 yet: a `drvPath` in a derivation, an experimental hash mode or `blake3`, a path
-copied into the store, `md5`; [DERIVATION.md](DERIVATION.md)). The harness (`a2min --run-nbc`) prints the value in
+copied into the store, `md5`; [DERIVATION.md](DERIVATION.md)), `E_OVERFLOW $0F`
+(`+`, `-`, unary `-`, `*` or `/` left the 64-bit range -- in Nix 2.34 an
+evaluation error, which `tryEval` does not catch, never a wraparound). The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.
 

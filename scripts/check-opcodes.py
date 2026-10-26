@@ -5,6 +5,11 @@
   tools/nbc/src/opcodes.rs  the generator             pub const OP_CONST: u8 = 0x01;
   target/vm/c/opcodes.h     the VM (C, D18)           #define OP_CONST        0x01
 
+The error codes too: BYTECODE.md's "Error codes:" paragraph, opcodes.h's
+E_* and a2min's names[], which is POSITIONAL -- the code is the index -- and
+is what turns a code into the `error: E_...` line every eval-fail fixture
+expects.
+
 A generator and a VM that disagree on one opcode would produce fixtures that run
 and return plausible wrong answers -- the failure mode this project guards against
 hardest -- so the three are diffed mechanically rather than trusted.
@@ -15,6 +20,35 @@ import sys
 DOC = "docs/BYTECODE.md"
 RS = "tools/nbc/src/opcodes.rs"
 H = "target/vm/c/opcodes.h"
+A2MIN = "sim/a2min.cpp"
+
+
+def errors_from_doc(path):
+    """`E_NAME $XX` pairs in the paragraph that starts "Error codes:"."""
+    text = open(path).read()
+    i = text.index("Error codes:")
+    j = text.index("The harness", i)
+    return {m.group(1): int(m.group(2), 16)
+            for m in re.finditer(r"`(E_[A-Z]+)\s+\$([0-9A-Fa-f]{2})`", text[i:j])}
+
+
+def errors_from_h(path):
+    decl = re.compile(r"^#define (E_[A-Z]+)\s+0x([0-9A-Fa-f]{2})\b")
+    errs = {}
+    with open(path) as f:
+        for line in f:
+            m = decl.match(line)
+            if m:
+                errs[m.group(1)] = int(m.group(2), 16)
+    return errs
+
+
+def errors_from_a2min(path):
+    """a2min's names[]: the code is the index (0 is not an error)."""
+    m = re.search(r"static const char \*names\[\] = \{([^}]*)\};", open(path).read())
+    if not m:
+        return {}
+    return {n: i for i, n in enumerate(re.findall(r'"([^"]+)"', m.group(1))) if i > 0}
 
 
 def from_doc(path):
@@ -87,10 +121,11 @@ def selftest():
     mutations = [
         (H, "#define OP_FORCE        0x41", "#define OP_FORCE        0x43"),
         (H, "#define PRIM_HEAD               0x01 /* 1 */", "#define PRIM_HEAD               0x01 /* 2 */"),
+        (A2MIN, '"E_NOVAR", "E_UNSUP"', '"E_UNSUP", "E_NOVAR"'),   # two names swapped
     ]
     for target, before, after in mutations:
         with tempfile.TemporaryDirectory() as tmp:
-            for p in (DOC, RS, H):
+            for p in (DOC, RS, H, A2MIN):
                 os.makedirs(os.path.join(tmp, os.path.dirname(p)), exist_ok=True)
                 shutil.copyfile(p, os.path.join(tmp, p))
             path = os.path.join(tmp, target)
@@ -107,7 +142,7 @@ def selftest():
             if rc == 0:
                 print(f"selftest: SURVIVED -- a change in {target} was not caught", file=sys.stderr)
                 return 1
-    print("NBC OPCODES SELFTEST OK: a changed opcode or arity is caught")
+    print("NBC OPCODES SELFTEST OK: a changed opcode, arity or error name is caught")
     return 0
 
 
@@ -164,6 +199,13 @@ def main():
         return 1
     prim_bad = diff("primop", prim_doc, prim_tables)
 
+    err_doc = errors_from_doc(DOC)
+    err_tables = {H: errors_from_h(H), A2MIN: errors_from_a2min(A2MIN)}
+    if not err_doc or any(not t for t in err_tables.values()):
+        print("error codes: parsed nothing from one source -- a pattern is stale", file=sys.stderr)
+        return 1
+    prim_bad += diff("error", err_doc, err_tables)
+
     tables = {DOC: from_doc(DOC), RS: from_rs(RS), H: from_h(H)}
     for name, t in tables.items():
         if not t:
@@ -189,7 +231,8 @@ def main():
     if bad or prim_bad:
         print(f"NBC OPCODES FAIL: {bad + prim_bad} disagreement(s)", file=sys.stderr)
         return 1
-    print(f"NBC OPCODES OK: {len(ref)} opcodes and {len(prim_doc)} primops agree across {DOC}, {RS}, {H}")
+    print(f"NBC OPCODES OK: {len(ref)} opcodes, {len(prim_doc)} primops and {len(err_doc)} error codes "
+          f"agree across {DOC}, {RS}, {H}, {A2MIN}")
     return 0
 
 

@@ -17,6 +17,15 @@ fixtures/eval-fail-derivation-hash-type
 fixtures/eval-fail-derivation-hash-untyped
 fixtures/eval-fail-derivation-name
 fixtures/eval-fail-derivation-no-builder
+fixtures/eval-fail-int-overflow-add
+fixtures/eval-fail-int-overflow-builtin
+fixtures/eval-fail-int-overflow-div
+fixtures/eval-fail-int-overflow-mul
+fixtures/eval-fail-int-overflow-mul-min
+fixtures/eval-fail-int-overflow-neg
+fixtures/eval-fail-int-overflow-square
+fixtures/eval-fail-int-overflow-sub
+fixtures/eval-fail-int-overflow-uncaught
 fixtures/eval-fail-path-plus-context
 fixtures/eval-okay-assert
 fixtures/eval-okay-attr-builtins
@@ -44,8 +53,7 @@ fixtures/eval-okay-hash-collision
 fixtures/eval-okay-hashstring
 fixtures/eval-okay-import
 fixtures/eval-okay-inherit-and-escapes
-fixtures/eval-okay-int-min-wrap
-fixtures/eval-okay-int-min-wraps-down
+fixtures/eval-okay-int-limits
 fixtures/eval-okay-lambda-basic
 fixtures/eval-okay-lambda-value
 fixtures/eval-okay-lazy-argument

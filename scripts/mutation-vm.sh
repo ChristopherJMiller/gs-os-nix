@@ -42,7 +42,7 @@ NBC="$2"
 # The derivation fixtures first: they are cheap, and run_suite stops at the
 # first wrong answer, so a mutation they catch costs seconds. The refusal is a
 # fixture too -- its .exp is the error line (scripts/scoreboard.py).
-FIXTURES="eval-okay-derivation eval-okay-derivation-fixed-output eval-fail-derivation-fixed-bin eval-fail-derivation-fixed-outputs eval-fail-derivation-hash-base16-digit eval-fail-derivation-hash-base64-digit eval-fail-derivation-hash-empty eval-fail-derivation-hash-length eval-fail-derivation-hash-mode eval-fail-derivation-hash-nix32-digit eval-fail-derivation-hash-nix32 eval-fail-derivation-hash-prefix eval-fail-derivation-hash-sri-long eval-fail-derivation-hash-sri-short eval-fail-derivation-hash-type eval-fail-derivation-hash-untyped refuse-derivation-hash-blake3 refuse-derivation-hash-git refuse-derivation-hash-text eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists refuse-derivation-drvpath eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
+FIXTURES="eval-okay-int-limits eval-fail-int-overflow-add eval-fail-int-overflow-sub eval-fail-int-overflow-neg eval-fail-int-overflow-mul eval-fail-int-overflow-mul-min eval-fail-int-overflow-square eval-fail-int-overflow-div eval-fail-int-overflow-uncaught eval-okay-derivation eval-okay-derivation-fixed-output eval-fail-derivation-fixed-bin eval-fail-derivation-fixed-outputs eval-fail-derivation-hash-base16-digit eval-fail-derivation-hash-base64-digit eval-fail-derivation-hash-empty eval-fail-derivation-hash-length eval-fail-derivation-hash-mode eval-fail-derivation-hash-nix32-digit eval-fail-derivation-hash-nix32 eval-fail-derivation-hash-prefix eval-fail-derivation-hash-sri-long eval-fail-derivation-hash-sri-short eval-fail-derivation-hash-type eval-fail-derivation-hash-untyped refuse-derivation-hash-blake3 refuse-derivation-hash-git refuse-derivation-hash-text eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists refuse-derivation-drvpath eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
 MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1 mask:4"
 SRCS=$(grep -v '^#' target/vm/c/SOURCES)           # link order: main.c first
 WORK=$(mktemp -d)
@@ -349,6 +349,42 @@ mutate "Base64 takes any character" derivation.c \
 
 mutate "Base64 may be short" derivation.c \
        's/^        if (j != sz) type_err();$//'
+
+# Integer overflow (Nix 2.34: an error, never a wrap): each check, broken. The
+# limits fixture catches a check that fires too early; the eval-fail fixtures
+# one that does not fire.
+mutate "a sum's overflow is not checked" prims.c \
+       's/^    if (SIGN(x) == SIGN(y) \&\& SIGN(r) != SIGN(x)) err_exit(E_OVERFLOW);$//'
+
+mutate "a difference's overflow is not checked" prims.c \
+       's/^    if (SIGN(x) != SIGN(y) \&\& SIGN(r) != SIGN(x)) err_exit(E_OVERFLOW);$//'
+
+mutate "a difference is checked like a sum" prims.c \
+       's/^    if (SIGN(x) != SIGN(y) \&\& SIGN(r) != SIGN(x)) err_exit(E_OVERFLOW);$/    if (SIGN(x) == SIGN(y) \&\& SIGN(r) != SIGN(x)) err_exit(E_OVERFLOW);/'
+
+mutate "a negative product may not reach the minimum" prims.c \
+       's/^    lim = (a\[7\] ^ b\[7\]) \& 0x80 ? (uint64_t)1 << 63 : ((uint64_t)1 << 63) - 1;$/    lim = ((uint64_t)1 << 63) - 1;/'
+
+mutate "a positive product may reach 2^63" prims.c \
+       's/^    lim = (a\[7\] ^ b\[7\]) \& 0x80 ? (uint64_t)1 << 63 : ((uint64_t)1 << 63) - 1;$/    lim = (uint64_t)1 << 63;/'
+
+mutate "a wide product is not checked" prims.c \
+       's/^    if (ub > lim \/ ua) err_exit(E_OVERFLOW);$//'
+
+mutate "the fast path takes a 32-bit unsigned operand" prims.c \
+       's/^    return x\[3\] \& 0x80 ? (x\[4\] \& x\[5\] \& x\[6\] \& x\[7\]) == 0xFF : (x\[4\] | x\[5\] | x\[6\] | x\[7\]) == 0;$/    return (x[4] | x[5] | x[6] | x[7]) == 0;/'
+
+mutate "the minimum / -1 is not checked" prims.c \
+       '/^    if (op != A_MUL) {/,/^    }$/ s/^            err_exit(E_OVERFLOW);$/            ;/'
+
+mutate "unary minus is not checked" run.c \
+       's/^        push(new_int(sub_checked(0, INTVAL(a))));   \/\* -x is 0 - x, as in Nix \*\/$/        push(new_int(-INTVAL(a)));/'
+
+mutate "an overflow is a throw tryEval catches" prims.c \
+       's/^    if (SIGN(x) == SIGN(y) \&\& SIGN(r) != SIGN(x)) err_exit(E_OVERFLOW);$/    if (SIGN(x) == SIGN(y) \&\& SIGN(r) != SIGN(x)) err_exit(E_THROW);/'
+
+mutate "MUL and DIV are not checked at all" run.c \
+       's/^    alu_overflow(op, PAYLOAD(a), PAYLOAD(b));$//'
 
 echo
 echo "$pass mutations caught, $fail not caught"

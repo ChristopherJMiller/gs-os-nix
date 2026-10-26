@@ -360,6 +360,10 @@ void nix32_fold(const uint8_t *dig, char *out);   /* sha256.c: what P3 holds, on
 #define A_DIV 0x03
 
 void op_arith(uint16_t op);         /* ADD SUB MUL DIV LT, for the primops that share them */
+/* prims.c: Nix 2.34's checked integer arithmetic -- E_OVERFLOW, never a wrap. */
+int64_t add_checked(int64_t x, int64_t y);
+int64_t sub_checked(int64_t x, int64_t y);
+void alu_overflow(uint8_t op, const uint8_t *a, const uint8_t *b);   /* after a MUL or DIV */
 
 /* --- prims.c ------------------------------------------------------------------------- */
 void prims_init(void);

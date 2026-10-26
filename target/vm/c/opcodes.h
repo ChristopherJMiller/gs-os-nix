@@ -132,5 +132,6 @@
 #define E_INDEX         0x0C
 #define E_NOVAR         0x0D
 #define E_UNSUP         0x0E    /* valid Nix the VM does not implement yet (DERIVATION.md) */
+#define E_OVERFLOW      0x0F    /* + - * / overflowed: an error in Nix 2.34, not a wrap */
 
 #endif

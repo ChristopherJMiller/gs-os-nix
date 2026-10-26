@@ -338,7 +338,8 @@ static void alu_cpu(uint8_t op, const void *pa, const void *pb, uint8_t *out)
 }
 
 /* MUL and DIV go to the card's ALU64 (CARD-ISA.md, the D5 measurement) when
- * there is one and the verb is not masked off. */
+ * there is one and the verb is not masked off; either way the low 64 bits come
+ * back, and alu_overflow (prims.c) decides whether they are the answer. */
 static void alu(uint8_t op)
 {
     obj_t *a, *b, *r;
@@ -348,6 +349,7 @@ static void alu(uint8_t op)
         alu_cpu(op, PAYLOAD(a), PAYLOAD(b), out);
     else if (card_alu64(op, PAYLOAD(a), PAYLOAD(b), out))
         err_exit(E_DIVZERO);
+    alu_overflow(op, PAYLOAD(a), PAYLOAD(b));
     r = alloc(12);
     SET_HDR(r, T_INT, 0);
     memcpy(PAYLOAD(r), out, 8);
@@ -410,7 +412,7 @@ void op_arith(uint16_t op)
         } else if (a->tag == T_INT) {
             vsp -= 2;
             need(b, T_INT);
-            push(new_int(INTVAL(a) + INTVAL(b)));
+            push(new_int(add_checked(INTVAL(a), INTVAL(b))));
         } else {
             /* String concatenation: the first operand decides what `+` is (a
              * path, an int, else a string), and a string `+` is "${a}${b}" --
@@ -418,12 +420,12 @@ void op_arith(uint16_t op)
             interpolate(2);
         }
         break;
-    case OP_SUB: binary_ints(&a, &b); push(new_int(INTVAL(a) - INTVAL(b))); break;
+    case OP_SUB: binary_ints(&a, &b); push(new_int(sub_checked(INTVAL(a), INTVAL(b)))); break;
     case OP_MUL: alu(A_MUL); break;
     case OP_DIV: alu(A_DIV); break;
     case OP_NEG:
         force_top(); a = deref_pop(); need(a, T_INT);
-        push(new_int(-INTVAL(a)));
+        push(new_int(sub_checked(0, INTVAL(a))));   /* -x is 0 - x, as in Nix */
         break;
     case OP_LT: push_bool(cmp_values() == 0); break;
     default: err_exit(E_BADOP);

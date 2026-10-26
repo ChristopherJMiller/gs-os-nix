@@ -127,10 +127,12 @@
         nbc-opcodes = pkgs.runCommand "check-nbc-opcodes"
           { nativeBuildInputs = [ pkgs.python3 ]; }
           ''
-            cp -r ${self}/docs ${self}/tools ${self}/target ${self}/scripts .
+            cp -r ${self}/docs ${self}/tools ${self}/target ${self}/scripts ${self}/sim .
             chmod -R +w .
             python3 scripts/check-opcodes.py --selftest | tee "$out"
             python3 scripts/check-opcodes.py | tee -a "$out"
+            grep -q "^NBC OPCODES SELFTEST OK" "$out"
+            grep -q "^NBC OPCODES OK" "$out"
           '';
 
         # D7 made mechanical: the generator contains no hashing or store-path code,
@@ -256,7 +258,7 @@
             # VERB_WORKLOAD is the same list).
             mkdir -p build/nbc
             for f in attrs attr-builtins with with-captured hash-collision \
-                     functor tryeval carry-chain div-truncates int-min-wrap hashstring derivation; do
+                     functor tryeval carry-chain div-truncates int-limits hashstring derivation; do
               nbc "tests/fixtures/eval-okay-$f.nix" -o "build/nbc/$f.nbc"
             done
             python3 scripts/verb-economics.py \

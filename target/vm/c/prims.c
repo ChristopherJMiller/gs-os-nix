@@ -608,6 +608,62 @@ static void prim_tryeval(void)
     push(o);
 }
 
+/* --- arithmetic --------------------------------------------------------------------------- */
+/* Nix 2.34 checks + - * / for overflow and makes it an error, never a wrap
+ * (primops.cc, eval.cc: "integer overflow in adding ..."). run.c does the
+ * arithmetic and calls these, which are here because bank 0 is full. For +
+ * and - the sign bits decide: a sum overflows when both operands have one
+ * sign and the result the other, a difference when the operands' signs differ
+ * and the result's is not the first's. */
+#define SIGN(x) (BYTE_OF(x, 7) & 0x80)
+int64_t add_checked(int64_t x, int64_t y)
+{
+    int64_t r = (int64_t)((uint64_t)x + (uint64_t)y);
+    if (SIGN(x) == SIGN(y) && SIGN(r) != SIGN(x)) err_exit(E_OVERFLOW);
+    return r;
+}
+
+int64_t sub_checked(int64_t x, int64_t y)
+{
+    int64_t r = (int64_t)((uint64_t)x - (uint64_t)y);
+    if (SIGN(x) != SIGN(y) && SIGN(r) != SIGN(x)) err_exit(E_OVERFLOW);
+    return r;
+}
+
+/* Did a * b or a / b leave the 64-bit range? (Nix 2.34: "integer overflow in
+ * multiplying", "... dividing".) a and b are 8-byte little-endian INT
+ * payloads; run.c has the low 64 bits of the answer already, from the card's
+ * ALU64 or alu_cpu, and calls this after every MUL and DIV. */
+static int fits32(const uint8_t *x)             /* -2^31 .. 2^31 - 1 */
+{
+    return x[3] & 0x80 ? (x[4] & x[5] & x[6] & x[7]) == 0xFF : (x[4] | x[5] | x[6] | x[7]) == 0;
+}
+
+static uint64_t magnitude(const uint8_t *x)     /* |x|; the minimum's is 2^63 */
+{
+    int64_t v;
+    memcpy(&v, x, 8);
+    return x[7] & 0x80 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
+}
+
+void alu_overflow(uint8_t op, const uint8_t *a, const uint8_t *b)
+{
+    uint64_t ua, ub, lim;
+    if (op != A_MUL) {                          /* only the minimum / -1 does not fit */
+        if ((b[0] & b[1] & b[2] & b[3] & b[4] & b[5] & b[6] & b[7]) == 0xFF &&
+            a[7] == 0x80 && (a[0] | a[1] | a[2] | a[3] | a[4] | a[5] | a[6]) == 0)
+            err_exit(E_OVERFLOW);
+        return;
+    }
+    if (fits32(a) && fits32(b)) return;         /* |ab| <= 2^62: nearly every multiply */
+    ua = magnitude(a);
+    ub = magnitude(b);
+    if (ua == 0 || ub == 0) return;
+    /* |ab| may reach 2^63 when the product is negative, 2^63 - 1 otherwise. */
+    lim = (a[7] ^ b[7]) & 0x80 ? (uint64_t)1 << 63 : ((uint64_t)1 << 63) - 1;
+    if (ub > lim / ua) err_exit(E_OVERFLOW);
+}
+
 /* --- bit operations ---------------------------------------------------------------------- */
 static void bitop(uint8_t which)
 {

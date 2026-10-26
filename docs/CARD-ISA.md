@@ -410,7 +410,11 @@ search would have found.
 
 `ALU64` exists because the 65816 has **no multiply or divide at all** and Nix integers
 are 64-bit. Operands `P0`/`P1` and the result `P3` are 8-byte little-endian integers in
-byte-array slots (byte 0 is the LSB); `P2` byte 0 selects the operation:
+byte-array slots (byte 0 is the LSB); `P2` byte 0 selects the operation. `MUL`
+returns the low 64 bits, and the `DIV` of the minimum by -1 the minimum: the card
+does not report overflow, and does not need to, because the VM decides it from
+the operands (Nix 2.34 makes an overflow an error, `E_OVERFLOW`; `prims.c
+alu_overflow`, which returns at once for two 32-bit operands):
 
 | Op | Name | Cycles | Notes |
 |---|---|---:|---|

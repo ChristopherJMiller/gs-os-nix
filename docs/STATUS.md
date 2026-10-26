@@ -107,9 +107,16 @@ the session scratchpad and are adopted only after being read):
    **`orcalink` passed unresolved references**: the ORCA linker's error
    level is 8 for one and 0 for a clean link, and the wrapper allowed 8. It
    allows 0 now, and `checks.orca-lint` plants an unresolved reference.
-6. Integer overflow as Nix 2.34 has it: `+`, `-`, `*` (and `/` of the
-   minimum by -1) throw instead of wrapping. Three fixtures from L4 slice 1
-   assert wraparound, which the host no longer does (D7).
+6. ~~Integer overflow as Nix 2.34 has it~~ **done**: `+`, `-`, unary `-`,
+   `*` and `/` are `E_OVERFLOW` ($0F), an evaluation error `tryEval` does not
+   catch, where they used to wrap. Three fixtures from L4 slice 1 asserted the
+   wraparound, which the host never did (D7): they are eval-fail fixtures now,
+   with six more, and `eval-okay-int-limits` holds 31 answers at the edges
+   that must not overflow -- a negative product may reach the minimum, a
+   positive one may not. `+`/`-` decide from sign bytes; `*` is exact past
+   32 bits (one 64-bit divide, only then). Checks in bank 4: bank 0 +24
+   bytes, for the calls. 11 mutations; `checks.nbc-opcodes` now also holds
+   the 15 error codes to BYTECODE.md and a2min's positional name table.
 
 **B. L6, what is left before the store** (as listed below): `=<drv>`
 context; the context builtins; `builtins.toFile`; `currentSystem`.
@@ -221,10 +228,10 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **316 / 445** (2026-10-25, after fixed-output derivations;
-0 fail, 7 error, 101 unsupported, 21 notyetpassing): all 17 new tests are
-fixtures, since no corpus test has an `outputHash`. It was 299 / 428 after
-string context. New then: its fixtures, and the corpus
+The scoreboard reads **324 / 453** (2026-10-26, after integer overflow; 0
+fail, 7 error, 101 unsupported, 21 notyetpassing). It was 316 / 445 after
+fixed-output derivations -- all 17 new tests then were fixtures, since no
+corpus test has an `outputHash` -- and 299 / 428 after string context. New then: its fixtures, and the corpus
 test `eval-okay-eq-derivations` -- one tvix itself does not pass -- which compares
 five derivations and so waited on the one-derivation guard. It was 295 / 425
 after `derivation` and 283 / 413 after paths, string coercion and `hashString`. Two

@@ -742,7 +742,7 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         static const char *names[] = { "E_NONE?", "E_BADOP", "E_TYPE", "E_DIVZERO",
                                        "E_INFREC", "E_NOMEM", "E_BADNBC", "E_NOCARD",
                                        "E_ASSERT", "E_THROW", "E_ABORT", "E_NOATTR",
-                                       "E_INDEX", "E_NOVAR", "E_UNSUP" };
+                                       "E_INDEX", "E_NOVAR", "E_UNSUP", "E_OVERFLOW" };
         const uint8_t code = ram[RESULT_STAT + 1];
         const char *name = code < sizeof(names) / sizeof(names[0]) ? names[code] : "E_?";
         cpu.print_trace(stdout);
