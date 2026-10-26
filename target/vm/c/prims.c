@@ -1155,6 +1155,10 @@ void op_prim(void)
     case PRIM_ISPATH:          is_tag(T_PATH); break;
     case PRIM_GENERICCLOSURE:  prim_genericclosure(); break;
     case PRIM_SORT:            prim_sort(); break;
+    case PRIM_COMPAREVERSIONS: prim_compareversions(); break;
+    case PRIM_SPLITVERSION:    prim_splitversion(); break;
+    case PRIM_PARSEDRVNAME:    prim_parsedrvname(); break;
+    case PRIM_REPLACESTRINGS:  prim_replacestrings(); break;
     default:                   err_exit(E_BADOP);
     }
 }

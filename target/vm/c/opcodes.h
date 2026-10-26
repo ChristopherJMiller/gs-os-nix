@@ -129,6 +129,10 @@
 #define PRIM_ISPATH             0x40 /* 1 */
 #define PRIM_GENERICCLOSURE     0x41 /* 1 */
 #define PRIM_SORT               0x42 /* 2 */
+#define PRIM_COMPAREVERSIONS    0x43 /* 2 */
+#define PRIM_SPLITVERSION       0x44 /* 1 */
+#define PRIM_PARSEDRVNAME       0x45 /* 1 */
+#define PRIM_REPLACESTRINGS     0x46 /* 3 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */

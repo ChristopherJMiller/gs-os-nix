@@ -53,6 +53,10 @@ void prim_concatstringssep(void);
 void prim_basenameof(void);
 void prim_dirof(void);
 void prim_hascontext(void);
+void prim_compareversions(void);                    /* strings.c: names.cc's rules */
+void prim_splitversion(void);
+void prim_parsedrvname(void);
+void prim_replacestrings(void);
 void prim_unsafediscardstringcontext(void);
 void prim_unsafediscardoutputdependency(void);
 void prim_adddrvoutputdependencies(void);

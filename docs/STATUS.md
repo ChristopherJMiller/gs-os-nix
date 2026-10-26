@@ -177,8 +177,15 @@ first fixture's "pseudo-random" lists had every element alike mod 5, so its
 "no order" comparator was a constant and a cutoff of 8 for 16 survived. 3
 corpus tests, 7 fixtures, 6 mutations; `functionArgs` (the generator must keep
 the formals it desugars); `toJSON`/`fromJSON` (a float's shortest
-round-trip text), `toXML`, `fromTOML`; `compareVersions`, `splitVersion`,
-`parseDrvName`, `replaceStrings`; regex `match`/`split`; `trace`, `warn`,
+round-trip text), `toXML`, `fromTOML`; ~~`compareVersions`, `splitVersion`,
+`parseDrvName`, `replaceStrings`~~ **done** (`names.cc` and `primops.cc` rule
+by rule: a run of digits is a version number only while it fits a C++
+`int`; a `to` is forced on first use; 10 corpus tests -- one, tvix's
+`replaceStrings`, its own notyetpassing -- 11 fixtures, 7 mutations).
+**Where tvix's `.exp` is not Nix 2.34's answer** the scoreboard now scores
+the host's, from `tests/corpus/host-exp/` (README there; the corpus stays as
+vendored, and an override that agrees with tvix is refused): the first is
+`replace-strings-propagate-catchable`, where tvix forces every `to`; regex `match`/`split`; `trace`, `warn`,
 `break`, `addErrorContext`, `langVersion`, `nixVersion`, `storeDir`,
 `placeholder`, `toPath`, `builtins.builtins`, `convertHash`,
 `flakeRefToString`/`parseFlakeRef`; positions (`unsafeGetAttrPos`, `__curPos`); search paths, URI
@@ -294,8 +301,9 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **446 / 521** (2026-10-26, after `sort`; 0 fail, 6
-error, 50 unsupported, 19 notyetpassing). It was 436 / 514 after the
+The scoreboard reads **467 / 532** (2026-10-26, after the version and name
+primops; 0 fail, 6 error, 41 unsupported, 18 notyetpassing). It was 446 /
+521 after `sort` (6 error, 50 unsupported). It was 436 / 514 after the
 attribute-set primops (7 error, 52 unsupported). It was 406 / 501
 after dynamic attribute names (0 fail, 8 error, 67 unsupported, 20
 notyetpassing). It was 381 / 486

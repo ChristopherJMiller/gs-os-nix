@@ -135,6 +135,10 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("isPath", 0x40, 1),
     ("genericClosure", 0x41, 1),
     ("sort", 0x42, 2),
+    ("compareVersions", 0x43, 2),
+    ("splitVersion", 0x44, 1),
+    ("parseDrvName", 0x45, 1),
+    ("replaceStrings", 0x46, 3),
 ];
 
 /// The builtins Nix also exposes unqualified.

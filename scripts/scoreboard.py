@@ -15,6 +15,12 @@ the VM declines with E_UNSUP rather than answer wrongly (docs/DERIVATION.md
 Buckets: pass, fail (ran, wrong value), error (VM aborted), unsupported,
 notyetpassing (tvix itself does not pass these; scored separately).
 
+Where tvix's .exp disagrees with C++ Nix 2.34 -- the host, whose answers are
+the truth here (D7) -- the host's answer is in --host-exp (tests/corpus/
+host-exp/<corpus>/<test>.exp) and is scored instead; the vendored corpus is
+never edited. Each one is listed in the output, and one that agrees with
+tvix's .exp after all is an error, so the directory cannot rot.
+
 --expected FILE is the ratchet: every test listed must still pass or the run
 fails; newly passing tests are reported and, with --update, written back. This is
 what makes the headline number only able to go up.
@@ -73,6 +79,8 @@ def main():
     ap.add_argument("--build", required=True, help="where compiled fixtures go")
     ap.add_argument("--expected", required=True, help="the ratchet file")
     ap.add_argument("--update", action="store_true", help="write new passes into --expected")
+    ap.add_argument("--host-exp", default="tests/corpus/host-exp",
+                    help="the host's answers where tvix's .exp disagrees (D7)")
     ap.add_argument("--verbose", "-v", action="store_true")
     ap.add_argument("--gc-stress", action="store_true",
                     help="collect the nursery at every bytecode boundary (slow; a collector test)")
@@ -120,12 +128,23 @@ def main():
         return name, bucket, want, got, time.monotonic() - t0
 
     tests = []
+    overridden = []
     for root in args.corpus:
         if not os.path.isdir(root):
             continue
         tag = os.path.basename(root.rstrip("/"))
         for rel, nix, exp, nyp in find_tests(root):
+            host = os.path.join(args.host_exp, tag, rel + ".exp")
+            if os.path.exists(host):
+                with open(exp) as a, open(host) as b:
+                    if a.read().strip() == b.read().strip():
+                        print(f"HOST-EXP STALE: {host} agrees with {exp}; delete it")
+                        return 1
+                overridden.append(f"{tag}/{rel}")
+                exp = host
             tests.append((f"{tag}/{rel}", nix, exp, nyp))
+    for n in overridden:
+        print(f"  scored against the host's answer, where tvix's .exp disagrees: {n}")
 
     # Every test is its own a2min process (~6 MB) with its own files, so they
     # run side by side; map() keeps the report in corpus order regardless.

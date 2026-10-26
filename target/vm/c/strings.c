@@ -373,6 +373,240 @@ static obj_t *lit_str(const char *t, uint16_t n)
     return r;
 }
 
+/* --- versions and names: Nix's libstore/names.cc, rule by rule ------------------------- */
+#define IS_DIGIT(c) ((c) >= '0' && (c) <= '9')
+#define IS_ALPHA(c) (((c) | 0x20) >= 'a' && ((c) | 0x20) <= 'z')   /* isalpha, C locale */
+
+/* The forced STRING without context at stack slot k (1 = the top): its view.
+ * Nix's forceStringNoCtx. */
+static obj_t *nocx_slot(uint16_t k)
+{
+    obj_t *s;
+    force_slot(k);
+    s = deref(vstack[vsp - k]);
+    if (s->tag != T_STRING || CTX(s)) type_err();
+    return s;
+}
+
+/* nextComponent: skip '.' and '-', then a run of digits, or a run of
+ * anything else but digits, '.' and '-'. Its length (0 at the end); *start
+ * is where it begins and *p moves past it. */
+static uint16_t next_component(const char *s, uint16_t n, uint16_t *p, uint16_t *start)
+{
+    while (*p < n && (s[*p] == '.' || s[*p] == '-')) ++*p;
+    *start = *p;
+    if (*p == n) return 0;
+    if (IS_DIGIT(s[*p])) while (*p < n && IS_DIGIT(s[*p])) ++*p;
+    else while (*p < n && !IS_DIGIT(s[*p]) && s[*p] != '.' && s[*p] != '-') ++*p;
+    return *p - *start;
+}
+
+/* string2Int<int>: 1 and *v for a component of digits whose value fits a
+ * C++ int, else 0 -- so a longer run of digits compares as text, as in Nix.
+ * Unsigned throughout: a signed 32-bit compare links ~GEQL and ~GRTL into
+ * bank 0, and v * 10 is shifts for ~UMUL4's sake. */
+static int comp_int(const char *c, uint16_t n, uint32_t *v)
+{
+    uint16_t i;
+    *v = 0;
+    if (n == 0 || !IS_DIGIT(c[0])) return 0;
+    for (i = 0; i < n; ++i) {
+        if (*v > 214748364UL || (*v == 214748364UL && c[i] > '7')) return 0;
+        *v = (*v << 3) + (*v << 1) + (uint32_t)(c[i] - '0');
+    }
+    return 1;
+}
+
+static int is_pre(const char *c, uint16_t n) { return n == 3 && c[0] == 'p' && c[1] == 'r' && c[2] == 'e'; }
+
+/* componentsLT */
+static int comp_lt(const char *a, uint16_t na, const char *b, uint16_t nb)
+{
+    uint32_t v1, v2;
+    int n1 = comp_int(a, na, &v1), n2 = comp_int(b, nb, &v2);
+    uint16_t i;
+    if (n1 && n2) return v1 < v2;
+    if (na == 0 && n2) return 1;
+    if (is_pre(a, na) && !is_pre(b, nb)) return 1;
+    if (is_pre(b, nb)) return 0;
+    if (n2) return 1;                           /* 2.3a < 2.3.1 */
+    if (n1) return 0;
+    for (i = 0; i < na && i < nb; ++i)          /* string_view's <: bytes, unsigned */
+        if (a[i] != b[i]) return (uint8_t)a[i] < (uint8_t)b[i];
+    return na < nb;
+}
+
+void prim_compareversions(void)          /* v1 v2 -> -1, 0 or 1 */
+{
+    obj_t *s1, *s2;
+    const char *a, *b;
+    uint16_t n1, n2, p1 = 0, p2 = 0, c1, c2, l1, l2;
+    int r = 0;
+    (void)nocx_slot(2);                         /* the first, then the second, as Nix */
+    (void)nocx_slot(1);
+    s1 = deref(vstack[vsp - 2]);
+    s2 = deref(vstack[vsp - 1]);
+    a = STRBYTES(s1); n1 = AUX16(s1);
+    b = STRBYTES(s2); n2 = AUX16(s2);
+    while (p1 < n1 || p2 < n2) {
+        l1 = next_component(a, n1, &p1, &c1);
+        l2 = next_component(b, n2, &p2, &c2);
+        if (comp_lt(a + c1, l1, b + c2, l2)) { r = -1; break; }
+        if (comp_lt(b + c2, l2, a + c1, l1)) { r = 1; break; }
+    }
+    vsp -= 2;
+    push(new_int(r));
+}
+
+/* A fresh STRING of the n bytes at offset off of the STRING original so; no
+ * context. May collect. */
+static obj_t *str_piece(obj_t *so, uint16_t off, uint16_t n)
+{
+    obj_t *r;
+    push(so);
+    nursery_reserve(round4(n) + 8);
+    so = pop();
+    r = str_alloc(n);
+    memcpy(STRBYTES(r), STRBYTES(deref(so)) + off, n);
+    return r;
+}
+
+void prim_splitversion(void)             /* v -> [ components ] */
+{
+    uint16_t b = rsp, p = 0, start, len, cnt = 0;
+    obj_t *s = nocx_slot(1);
+    rpush(pop());
+    for (;;) {
+        s = deref(rstack[b]);
+        len = next_component(STRBYTES(s), AUX16(s), &p, &start);
+        if (len == 0) break;
+        push(str_piece(rstack[b], start, len));
+        ++cnt;
+    }
+    rsp = b;
+    push(list_from_stack(cnt));
+}
+
+/* parseDrvName s -> { name; version; }: the name is everything before the
+ * first '-' that is followed by a non-letter, the version everything after
+ * it; with no such '-', all of s is the name. */
+void prim_parsedrvname(void)
+{
+    uint16_t b = rsp, i, n, cnt = 0;
+    obj_t *s = nocx_slot(1), *set;
+    rpush(pop());
+    n = AUX16(s);
+    for (i = 0; i < n; ++i)
+        if (STRBYTES(s)[i] == '-' && i + 1 < n && !IS_ALPHA(STRBYTES(s)[i + 1])) break;
+    push(str_piece(rstack[b], 0, i));
+    if (i < n) push(str_piece(rstack[b], i + 1, n - i - 1));
+    else push(str_piece(rstack[b], n, 0));
+    push(lit_str("version", 7));
+    nursery_reserve_n(2, 12, 4);
+    set = attrs_alloc(2);
+    insert_entry(set, 2, &cnt, str_name, vstack[vsp - 3]);
+    insert_entry(set, 2, &cnt, vstack[vsp - 1], vstack[vsp - 2]);
+    vsp -= 3;
+    rsp = b;
+    push(set);
+}
+
+/* replaceStrings from to s. Nix forces both lists, checks they are as long,
+ * forces each `from` (a string; its context is dropped) and then s. At each
+ * position the first `from` that matches is replaced by its `to`, forced the
+ * first time it is used -- in place on the stack, Nix's cache -- and an empty
+ * `from` matches everywhere, before each byte and at the end. The result's
+ * context is s's and every used `to`'s. Stack: from[n] to[n] used[n] s. */
+static int replace_at(uint16_t at, uint16_t n, uint16_t p)   /* the first from that matches at p, or n */
+{
+    obj_t *s = deref(vstack[at + 3 * n]), *f;
+    uint16_t i, len = AUX16(s);
+    for (i = 0; i < n; ++i) {
+        f = deref(vstack[at + i]);
+        if (len - p >= AUX16(f) && memcmp(STRBYTES(deref(vstack[at + 3 * n])) + p, STRBYTES(f), AUX16(f)) == 0)
+            return i;
+    }
+    return n;
+}
+
+void prim_replacestrings(void)
+{
+    uint16_t b = rsp, n, i, p, at, len, total = 0, used = 0, w;
+    obj_t *l, *r, *x, *t;
+    force_slot(3);
+    if (deref(vstack[vsp - 3])->tag != T_LIST) type_err();
+    force_slot(2);
+    if (deref(vstack[vsp - 2])->tag != T_LIST) type_err();
+    n = AUX16(deref(vstack[vsp - 3]));
+    if (AUX16(deref(vstack[vsp - 2])) != n) type_err();
+    rpush(vstack[vsp - 3]);                     /* b: from */
+    rpush(vstack[vsp - 2]);                     /* b+1: to */
+    rpush(vstack[vsp - 1]);                     /* b+2: s */
+    vsp -= 3;
+    if ((uint16_t)(VSTACK_N - vsp) < 3 * n + 8) nomem();
+    at = vsp;
+    for (i = 0; i < n; ++i) {
+        push(RELEM(b, i, n));
+        force_top();
+        if (deref(peek())->tag != T_STRING) type_err();
+    }
+    for (i = 0; i < n; ++i) push(RELEM(b + 1, i, n));
+    for (i = 0; i < n; ++i) push(0);
+    push(rstack[b + 2]);
+    force_top();
+    if (deref(peek())->tag != T_STRING) type_err();
+    rsp = b;
+    /* pass 1, running bytecode: force each `to` at its first use */
+    len = AUX16(deref(vstack[at + 3 * n]));
+    for (p = 0; p <= len; ) {
+        i = replace_at(at, n, p);
+        if (i == n) { ++p; continue; }
+        if (!vstack[at + 2 * n + i]) {
+            force_slot(vsp - (at + n + i));
+            if (deref(vstack[at + n + i])->tag != T_STRING) type_err();
+            vstack[at + 2 * n + i] = obj_true;
+            ++used;
+        }
+        w = AUX16(deref(vstack[at + i]));
+        p += w ? w : 1;
+    }
+    /* the context: s's and the used `to`s' */
+    push(vstack[at + 3 * n]);
+    for (i = 0; i < n; ++i) if (vstack[at + 2 * n + i]) push(vstack[at + n + i]);
+    x = ctx_join(vsp - used - 1, used + 1);
+    vsp -= used + 1;
+    push(x);
+    /* pass 2, no bytecode: the length; then the bytes */
+    for (p = 0; p <= len; ) {
+        i = replace_at(at, n, p);
+        if (i == n) { total += p < len; ++p; continue; }
+        total += AUX16(deref(vstack[at + n + i]));
+        w = AUX16(deref(vstack[at + i]));
+        if (w) p += w;
+        else { total += p < len; ++p; }
+    }
+    nursery_reserve(round4(total) + 8);
+    r = str_alloc(total);
+    for (p = 0, total = 0; p <= len; ) {
+        i = replace_at(at, n, p);
+        if (i == n) {
+            if (p < len) STRBYTES(r)[total++] = STRBYTES(deref(vstack[at + 3 * n]))[p];
+            ++p;
+            continue;
+        }
+        t = deref(vstack[at + n + i]);
+        memcpy(STRBYTES(r) + total, STRBYTES(t), AUX16(t));
+        total += AUX16(t);
+        w = AUX16(deref(vstack[at + i]));
+        if (w) p += w;
+        else { if (p < len) STRBYTES(r)[total++] = STRBYTES(deref(vstack[at + 3 * n]))[p]; ++p; }
+    }
+    l = pop();                                  /* the context */
+    STRCTX(r, total) = l;
+    vsp = at;
+    push(r);
+}
+
 /* --- the context builtins (DERIVATION.md "String context") -------------------------------- */
 
 /* Where the store path an element (a view) names begins: after the second "!"
