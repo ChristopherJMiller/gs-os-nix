@@ -219,7 +219,16 @@ by rule: a run of digits is a version number only while it fits a C++
 **Where tvix's `.exp` is not Nix 2.34's answer** the scoreboard now scores
 the host's, from `tests/corpus/host-exp/` (README there; the corpus stays as
 vendored, and an override that agrees with tvix is refused): the first is
-`replace-strings-propagate-catchable`, where tvix forces every `to`; regex `match`/`split`; `trace`, `warn`,
+`replace-strings-propagate-catchable`, where tvix forces every `to`;
+~~regex `match`/`split`~~ **done** (`regex.c`, REGEX.md, D25): libstdc++'s
+`std::regex` ported structure for structure -- its scanner, compiler, NFA
+and depth-first executor, the recursion an explicit stack of undo records,
+in bank 7 of its own -- because its answers are not POSIX's (a loop that
+matched never tries its earlier exits; captures outlive their iteration;
+escapes strict, ranges over a signed char). Checked natively against
+libstdc++ itself on 320,000 random and 12,356 exhaustive cases, every
+group's position, then on the VM against the host; 6 corpus tests, 10
+fixtures, 19 mutations; `trace`, `warn`,
 `break`, `addErrorContext`, `langVersion`, `nixVersion`, `storeDir`,
 `placeholder`, `toPath`, `builtins.builtins`, `convertHash`,
 `flakeRefToString`/`parseFlakeRef`; positions (`unsafeGetAttrPos`, `__curPos`); search paths, URI
@@ -281,7 +290,7 @@ a2min.
   other, were decided -- soft-float in C -- and are done: [FLOAT.md](FLOAT.md).)
 - **Card-side `MARK`** only when the promoted-bytes counter shows the 512 KB
   ceiling binding on a real program; nothing has yet.
-- **Bank 0** (38,211 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
+- **Bank 0** (38,213 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
   far pointers would buy the md5/sha1/sha512 tables. Watch for ORCA/C library
   routines: a struct copy links `~MOVE`, a variable left shift `~SHIFTLEFT`.
 - **The `eval-fail` corpus**, and **L5** (self-hosting, D7's exit).
@@ -314,8 +323,9 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-**Bank 0: 38,211 of 40,960 bytes** (2026-10-26, after `toJSON`, +1, an
-object file's `~GLOBALS` byte; 38,210 after `functionArgs`, +7 for
+**Bank 0: 38,213 of 40,960 bytes** (2026-10-26, after `match` and `split`,
++2, the `~GLOBALS` bytes of `regex.c` and `match.c`; 38,211 after `toJSON`,
++1, an object file's `~GLOBALS` byte; 38,210 after `functionArgs`, +7 for
 `LAMBDA_ARGS`; 38,203 after dynamic attribute names, +14 for two opcode
 cases; 38,189 after floats: +419, a tag
 test in each operation that can see a float -- the work is in bank 4 -- and
@@ -337,9 +347,10 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **530 / 569** (2026-10-26, after the small corners; 0
-fail, 6 error, 16 unsupported, 17 notyetpassing -- one of the seven corpus
-tests they bring is tvix's own notyetpassing builtins-set-pointer-equality).
+The scoreboard reads **546 / 579** (2026-10-26, after `match` and `split`;
+0 fail, 3 error, 13 unsupported, 17 notyetpassing). It was 530 / 569 after
+the small corners (6 error, 16 unsupported -- one of the seven corpus tests
+they brought is tvix's own notyetpassing builtins-set-pointer-equality).
 It was 520 / 566 after `toXML` (22 unsupported). It was 512 / 562 after `fromJSON`
 (26 unsupported). It was 487 / 542 after `toJSON`
 (31 unsupported). It was 473 / 535 after

@@ -634,3 +634,26 @@ one is not, and tvix answers `"2.3-compat"` for the same reason (its
 `langVersion` 6 is 2.34's. If the VM ever claims a different Nix's semantics,
 both move with it; the generator emits them as constants (`opcodes.rs`
 `BUILTIN_VALUES`).
+
+## D25 — Regular expressions are a port of libstdc++'s, on a bank of their own
+
+**Decided 2026-10-26, from the measurements in REGEX.md.** `builtins.match`
+and `split` answer what libstdc++'s `std::regex` answers, and that is not
+what a POSIX matcher answers. Its depth-first search keeps the first whole
+match it meets, never tries a loop's earlier exits once the loop has
+matched, enters a loop twice at one place, keeps captures across
+iterations, and refuses or accepts syntax by its own rules (strict escapes,
+signed ranges). Any engine written to a specification, POSIX's or RE2's,
+gives other answers to ordinary patterns, `(a*)(ab)?` among them. So
+`regex.c` ports libstdc++ structure for structure, and is checked against
+it, natively, case by case, and on the VM against the host. The licence
+allows it: GPL-3.0-or-later with the GCC exception, inside a GPL-3.0-or-later
+project. It inherits libstdc++'s exponential cases, and those hang Nix too.
+
+Its working memory is **bank 7**, which nothing else uses and no collection
+touches. The NFA and the matches survive the reserve that builds the result,
+so the result needs no second search. omf2bin skips the bank for code, as it
+skips bank 5, and bank-gate.py checks it. The alternative, the collector's
+stage (bank 2) between collections, would have had to search twice, once to
+size the result and once to build it after the reserve. Like the other fixed
+banks, this one becomes a Memory Manager handle when GS/OS loads the VM (L7).

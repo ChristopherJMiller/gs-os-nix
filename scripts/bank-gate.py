@@ -13,9 +13,9 @@ GSIM image and the symbol map, `orcalink +S` / `omf2bin --syms`):
      left shift ~SHIFTLEFT, a 64-bit divide ~UDIV8: each fails here, named
      with its size and the usual cause.
   3. No symbol in a bank the VM uses for data -- 1 the nursery, 2 the
-     collector's stage, 3 the .nbc image, 5 the window ring and remembered set
-     (VM.md). omf2bin skips those banks when bank 4 fills; this is the check
-     that it did.
+     collector's stage, 3 the .nbc image, 5 the window ring and remembered set,
+     7 the regex engine's (VM.md). omf2bin skips 5 and 7 as code fills the
+     banks after 4; this is the check that it did.
 
 usage: bank-gate.py CVM.bin CVM.map BANK0.txt [--update]
        bank-gate.py --self-test CVM.bin CVM.map BANK0.txt
@@ -28,7 +28,7 @@ import sys
 import tempfile
 
 DATA_BANKS = {1: "the nursery", 2: "the collector's stage", 3: "the .nbc image",
-              5: "the window ring and remembered set"}
+              5: "the window ring and remembered set", 7: "the regex engine's NFA and stack"}
 HINT = {"~MOVE": "a struct assignment or a struct passed by value",
         "~SHIFTLEFT": "a variable left shift (shift by constants, or BYTE_OF)",
         "~SHIFTRIGHT": "an unsigned variable right shift",
@@ -122,6 +122,9 @@ def self_test(binp, mapp, budp):
         with open(m, "w") as f:                 # not shutil.copy: a store file is read-only
             f.write(open(mapp).read() + "050000 planted\n")
         expect("a symbol in bank 5", binp, m, budp, "in bank 5")
+        with open(m, "w") as f:
+            f.write(open(mapp).read() + "070000 planted\n")
+        expect("a symbol in bank 7", binp, m, budp, "in bank 7")
         # The real plant: a struct assignment in data.c links ~MOVE.
         src = os.path.join(t, "src")
         shutil.copytree("target/vm/c", src)

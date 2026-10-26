@@ -139,6 +139,8 @@
 #define PRIM_FROMJSON           0x49 /* 1 */
 #define PRIM_TOXML              0x4A /* 1 */
 #define PRIM_TOPATH             0x4B /* 1 */
+#define PRIM_MATCH              0x4C /* 2 */
+#define PRIM_SPLIT              0x4D /* 2 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */
@@ -164,5 +166,6 @@
 #define E_UNSUP         0x0E    /* valid Nix the VM does not implement yet (DERIVATION.md) */
 #define E_OVERFLOW      0x0F    /* + - * / overflowed: an error in Nix 2.34, not a wrap */
 #define E_DUPATTR       0x10    /* a computed attribute name already in its set */
+#define E_REGEX         0x11    /* not a regular expression (match, split): Nix's "invalid regular expression" */
 
 #endif

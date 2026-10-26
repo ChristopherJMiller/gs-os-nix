@@ -99,6 +99,15 @@ fixtures/eval-fail-int-overflow-uncaught
 fixtures/eval-fail-mapattrs-set
 fixtures/eval-fail-parsedrvname-context
 fixtures/eval-fail-path-plus-context
+fixtures/eval-fail-regex-class
+fixtures/eval-fail-regex-context
+fixtures/eval-fail-regex-dash
+fixtures/eval-fail-regex-escape
+fixtures/eval-fail-regex-first
+fixtures/eval-fail-regex-invalid
+fixtures/eval-fail-regex-path
+fixtures/eval-fail-regex-signed
+fixtures/eval-fail-regex-space
 fixtures/eval-fail-replacestrings-first-use
 fixtures/eval-fail-replacestrings-from
 fixtures/eval-fail-replacestrings-from-first
@@ -177,6 +186,7 @@ fixtures/eval-okay-paths
 fixtures/eval-okay-primop-display
 fixtures/eval-okay-rec-paths-legacy
 fixtures/eval-okay-recursion
+fixtures/eval-okay-regex-rules
 fixtures/eval-okay-remembered-set
 fixtures/eval-okay-shadow-global
 fixtures/eval-okay-shadow-param
@@ -254,6 +264,8 @@ tvix/nix_tests/eval-okay-new-let
 tvix/nix_tests/eval-okay-null-dynamic-attrs
 tvix/nix_tests/eval-okay-partition
 tvix/nix_tests/eval-okay-patterns
+tvix/nix_tests/eval-okay-regex-match
+tvix/nix_tests/eval-okay-regex-split
 tvix/nix_tests/eval-okay-regression-20220122
 tvix/nix_tests/eval-okay-regression-20220125
 tvix/nix_tests/eval-okay-remove
@@ -347,6 +359,7 @@ tvix/tvix_tests/eval-okay-builtins-map
 tvix/tvix_tests/eval-okay-builtins-map-function-strictness
 tvix/tvix_tests/eval-okay-builtins-map-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-mapAttrs-function-strictness
+tvix/tvix_tests/eval-okay-builtins-match-propagate-catchables
 tvix/tvix_tests/eval-okay-builtins-mul
 tvix/tvix_tests/eval-okay-builtins-parse-drv-name-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-partition
@@ -355,6 +368,8 @@ tvix/tvix_tests/eval-okay-builtins-remove-attrs-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-replace-strings-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-replaceStrings
 tvix/tvix_tests/eval-okay-builtins-sort-propagate-catchable
+tvix/tvix_tests/eval-okay-builtins-split
+tvix/tvix_tests/eval-okay-builtins-split-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-splitVersion
 tvix/tvix_tests/eval-okay-builtins-splitversion-catchable
 tvix/tvix_tests/eval-okay-builtins-string-length
@@ -500,6 +515,7 @@ tvix/tvix_tests/eval-okay-poisoned-scopes
 tvix/tvix_tests/eval-okay-rec-dynamic-keys
 tvix/tvix_tests/eval-okay-rec-nested-access
 tvix/tvix_tests/eval-okay-recursive-attrs-all-features
+tvix/tvix_tests/eval-okay-regex-match
 tvix/tvix_tests/eval-okay-remove
 tvix/tvix_tests/eval-okay-repeated-list-to-attrs
 tvix/tvix_tests/eval-okay-seq

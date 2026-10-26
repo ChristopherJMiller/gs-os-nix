@@ -14,3 +14,5 @@ sha256.c
 float.c
 numbers.c
 json.c
+regex.c
+match.c

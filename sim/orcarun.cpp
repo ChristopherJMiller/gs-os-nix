@@ -1800,10 +1800,11 @@ int omf2bin(const std::string &in, const std::string &out, uint32_t org,
         if (bank_cursor + size > 0x10000) {
             ++code_bank;
             bank_cursor = 0;
-            // Bank 5 is the VM's window ring and remembered set (VM.md): code
-            // there would be overwritten by the first copy of a mature object.
-            // scripts/bank-gate.py checks the map for any symbol in it.
-            if (code_bank == 5) code_bank = 6;
+            // Bank 5 is the VM's window ring and remembered set, bank 7 the
+            // regex engine's NFA and stack (VM.md): code there would be
+            // overwritten by the first copy of a mature object, or the first
+            // match. scripts/bank-gate.py checks the map for any symbol in them.
+            if (code_bank == 5 || code_bank == 7) ++code_bank;
         }
         const uint32_t at = (code_bank << 16) | bank_cursor;
         bank_cursor = (bank_cursor + size + 0xFF) & ~0xFFu;

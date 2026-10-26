@@ -32,10 +32,13 @@ bank 1  NURSERY   $010000-$01FFFF   64 KB, bump-allocated
 bank 2  STAGE     $020000-$02FFFF   the collector's to-space
 bank 3  the .nbc image               $030000, up to 64 KB (a2min --run-nbc puts it there)
 bank 4+ further code segments        ORCA/C `segment "prims";` etc., placed by omf2bin,
-                                     which skips bank 5 when bank 4 fills (bank 6 is
-                                     next); the interpreter core stays in bank 0
+                                     which skips banks 5 and 7 as the banks fill (bank 6
+                                     is next after 4, then 8); the interpreter core stays
+                                     in bank 0
 bank 5  WINDOWS   $050000-$05EFFF   the 60 KB copy ring: views of mature objects
         RSET      $05F000-$05F9FF   the remembered set: 256 × (object, offset, scratch)
+bank 7  REGEX     $070000-$07FFFF   the regex engine's NFA, captures, matches and stack
+                                     (REGEX.md): a primop's until it returns
 ```
 
 `$0332` is a third harness flag: `A2MIN_RSET_LIMIT` shrinks the remembered set
@@ -174,10 +177,14 @@ target/vm/c/
   json.c      builtins.toJSON (Nix's tree, then nlohmann's text),
               builtins.fromJSON (nlohmann's lexer and parser) and
               builtins.toXML (Nix's XMLWriter) -- segment "json"
+  regex.c     libstdc++'s std::regex, ported: its scanner, compiler, NFA and
+              depth-first executor, on bank 7; no VM in it (REGEX.md) --
+              segment "regex"
+  match.c     builtins.match and builtins.split on it -- segment "regex"
 ```
 
-`float` and `json` are in bank 6: `prims` fills bank 4 (omf2bin skips bank 5,
-the window ring).
+`float`, `json` and `regex` are in bank 6: `prims` fills bank 4 (omf2bin skips
+bank 5, the window ring, and bank 7, the regex engine's).
 
 `target/vm/c/SOURCES` is the one list of sources, in link order: the flake's
 `mkOrcaBinary`, `just cvm` and every script that builds the VM read it. Each

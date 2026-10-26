@@ -145,6 +145,8 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("fromJSON", 0x49, 1),
     ("toXML", 0x4A, 1),
     ("toPath", 0x4B, 1),
+    ("match", 0x4C, 2),
+    ("split", 0x4D, 2),
 ];
 
 /// The builtins Nix also exposes unqualified.

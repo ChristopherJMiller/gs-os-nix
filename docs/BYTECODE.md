@@ -343,6 +343,8 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$49` | `fromJSON` | 1 | a string without context, as Nix's `json-to-value.cc` reads it through nlohmann's `sax_parse` (`json.c`): a BOM at the start skipped, the four JSON whitespace characters, JSON's number grammar -- an integer token through `strtoull`/`strtoll`, too wide a float, an unsigned one above `INT64_MAX` an error -- a float through a correctly rounded `strtod` (`f_strtod`, [FLOAT.md](FLOAT.md)), its overflow an error; strings with their escapes, surrogate pairs joined, raw bytes held to UTF-8, a NUL an error; a repeated key's last value. Every error is `E_TYPE` |
 | `$4A` | `toXML` | 1 | Nix's `value-to-xml.cc` through its `XMLWriter` (`json.c`), no positions: the tree first (every value forced in Nix's order; a set's `type` forced to see a derivation, whose `drvPath` and `outPath` are forced and whose attributes are shown the first time its string `drvPath` is seen, else `<repeated />`; a lambda with formals has its `functionArgs` set built), then the text, indented two spaces a level, attribute values with `"` `<` `>` `&` and newline escaped. A lambda is `<function>` with the image's `<varpat>` or `<attrspat>` (BYTECODE.md "Chunk kinds"), a primop `<unevaluated />`, a float `printf("%g")` (`f_g`, [FLOAT.md](FLOAT.md)). The result carries the context of every string shown |
 | `$4B` | `toPath` | 1 | Nix's `coerceToPath`: coerced as `"${}"` does but with a path as its text (no store copy), which must start with `/` (`E_TYPE` otherwise), made canonical (`path_join`); a `STRING`, with the argument's context |
+| `$4C` | `match` | 2 | `re s`: libstdc++'s `std::regex_match`, extended syntax ([REGEX.md](REGEX.md)). `re` forced, a string without context (`E_TYPE`), and compiled (`E_REGEX` if invalid, before `s` is forced); then `s`, a string (`E_TYPE`); `null` unless all of it matches, else a list of groups 1.., each a string without context or `null` if it took no part |
+| `$4D` | `split` | 2 | `re s`, as `match`, then a `std::cregex_iterator` over `s`: `[ before groups between groups … after ]`, the pieces without context, or `[ s ]` itself when nothing matches ([REGEX.md](REGEX.md)) |
 | `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`
@@ -536,7 +538,9 @@ copied into the store, `md5`; [DERIVATION.md](DERIVATION.md)), `E_OVERFLOW $0F`
 (`+`, `-`, unary `-`, `*` or `/` left the 64-bit range -- in Nix 2.34 an
 evaluation error, which `tryEval` does not catch, never a wraparound),
 `E_DUPATTR $10` (a computed attribute name already in its set: Nix's "dynamic
-attribute already defined", which `tryEval` does not catch either). The harness (`a2min --run-nbc`) prints the value in
+attribute already defined", which `tryEval` does not catch either), `E_REGEX $11`
+(a pattern `match` or `split` cannot compile: Nix's "invalid regular
+expression", uncatchable too). The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.
 
