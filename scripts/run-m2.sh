@@ -5,15 +5,17 @@
 # Runs MAME headlessly under debugger control (mame/debug/m2.txt), reads the 32
 # characters the demo left at $0300, and compares them against the golden vector.
 #
-# Requires an `apple2gs` ROM, which is NOT redistributable. Point MAME at yours
-# with ROMPATH, e.g.
-#     ROMPATH=~/mame/roms just m2
-# Without it this exits 77 (skipped) rather than failing, so CI stays honest
-# about the difference between "broken" and "cannot be tested here".
+# Requires an `apple2gs` ROM set, which is copyrighted and NOT redistributable:
+# this repository neither ships nor points to one. Supply your own, explicitly:
+#     ROMPATH=/path/to/your/roms just m2-mame
+# There is no default location. Without ROMPATH, or without a complete set in
+# it, this exits 77 (skipped) rather than failing, so CI stays honest about the
+# difference between "broken" and "cannot be tested here". docs/RUNNING.md
+# "ROMs" lists the four files and their CRCs, to check a set you dumped.
 set -uo pipefail
 
 MAME=${MAME:-./result/bin/mame}
-ROMPATH=${ROMPATH:-$HOME/mame/roms}
+ROMPATH=${ROMPATH:-}
 SLOT=${SLOT:-4}
 BIN=target/build/storepath_demo_headless.bin
 SCRIPT=mame/debug/m2.txt
@@ -24,6 +26,8 @@ SKIP=77
 die()  { echo "M2 FAIL: $*" >&2; exit 1; }
 skip() { echo "M2 SKIP: $*" >&2; exit $SKIP; }
 
+[ -n "$ROMPATH" ] || skip "ROMPATH is not set: supply your own apple2gs ROM set (docs/RUNNING.md \"ROMs\")"
+[ -d "$ROMPATH" ] || skip "ROMPATH=$ROMPATH is not a directory"
 [ -x "$MAME" ] || skip "no MAME at $MAME (build it with: just mame-build)"
 [ -f "$BIN" ]  || die  "missing $BIN (build it with: just asm-headless)"
 

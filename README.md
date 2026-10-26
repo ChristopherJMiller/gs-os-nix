@@ -17,7 +17,8 @@ hashes **byte-identically to upstream Nix**, evaluating real Nix natively.
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Why it's built this way, and what was rejected |
 | [docs/REFERENCES.md](docs/REFERENCES.md) | Verified facts with citations — don't re-derive these |
 | [docs/RUNNING.md](docs/RUNNING.md) | Getting code onto the emulated IIgs |
-| [docs/STATUS.md](docs/STATUS.md) | Layer progress and how to resume |
+| [docs/STATUS.md](docs/STATUS.md) | Layer progress, the roadmap, and how to resume |
+| [docs/SOURCES.md](docs/SOURCES.md) | Every external tool and file: where from, its hash, how to find it again |
 
 ## The one-paragraph version
 
@@ -39,5 +40,18 @@ nix develop          # verilator, cocotb, yosys, nextpnr, trellis, cc65, mame
 nix flake check      # cocotb suites, lint, synth smoke, conformance scoreboard
 ```
 
-`apple2gs` ROMs are not redistributable and must be supplied by you; MAME-dependent
-checks skip gracefully without them.
+`apple2gs` ROMs are not redistributable and must be supplied by you, explicitly, as
+`ROMPATH` (docs/RUNNING.md "ROMs"); MAME-dependent checks skip without them. Nothing
+the gates need is ROM-dependent.
+
+## Licence
+
+gs-os-nix is free software: you can redistribute it and/or modify it under the
+terms of the **GNU General Public License, version 3 or (at your option) any later
+version** ([LICENSE](LICENSE)). SPDX: `GPL-3.0-or-later`.
+
+Included under their own terms: the tvix corpus in `tests/corpus/tvix/` (GPL-3.0)
+and Nix's `derivation.nix` in `tools/nbc/src/` (LGPL-2.1). Not included at all:
+ORCA/C, which every build fetches from Byte Works under its own
+non-redistributable licence, and the Apple IIgs ROMs, which you supply
+([docs/SOURCES.md](docs/SOURCES.md)).

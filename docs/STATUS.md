@@ -365,6 +365,9 @@ number rises by widening the lowering and the VM together, one slice at a time
 5. The working method for a VM change -- what to build, which gates to run in
    which order, how to get the host's answer -- is the project skill
    `.claude/skills/vm-change/SKILL.md`.
+6. Every external tool and file -- ORCA/C, the disk-image tools, nixpkgs, the
+   corpus, and the ROMs you must supply -- is in [SOURCES.md](SOURCES.md), with
+   its hash and the terms to find it again.
 
 ## Standing gates
 

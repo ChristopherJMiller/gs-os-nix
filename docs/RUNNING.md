@@ -75,7 +75,7 @@ compute/memory device.
 ## Route 1 — MAME debugger load (higher fidelity)
 
 ```sh
-ROMPATH=~/mame/roms just m2-mame
+ROMPATH=/path/to/your/roms just m2-mame
 ```
 
 MAME loads the raw binary straight into memory at `$2000` under debugger control, runs
@@ -129,10 +129,13 @@ ProDOS/GS-OS yourself, or attach it alongside a system disk you already have.
 
 ## ROMs
 
-The `apple2gs` ROM is copyrighted and not redistributable, so it is **user-supplied**.
-Point MAME at yours with `ROMPATH`. `scripts/run-m2.sh` exits **77 (skipped)** rather
-than failing when the ROMs are missing, so CI stays honest about the difference
-between "broken" and "cannot be tested here".
+The `apple2gs` ROM is copyrighted and not redistributable, so it is **user-supplied**:
+this repository neither ships one nor says where to find one. Dump your own, or use a
+set you already have, and give its directory **explicitly** as `ROMPATH` -- there is
+no default location. `scripts/run-m2.sh` exits **77 (skipped)** rather than failing
+when `ROMPATH` is unset or the set is incomplete, so CI stays honest about the
+difference between "broken" and "cannot be tested here". The table below is how to
+check a set: MAME verifies each file by CRC.
 
 MAME 0.289 wants four files in `<rompath>/apple2gs.zip`:
 
@@ -143,9 +146,9 @@ MAME 0.289 wants four files in `<rompath>/apple2gs.zip`:
 | `341s0632-2.bin` | 4096 | `e1c11fb0` | adbmicro |
 | `344s0047.bin` | 16384 | `2d541944` | **gfx1** (font) |
 
-⚠️ **Archived romsets currently stop at MAME 0.278**, which still carries the
-superseded `megaii.chr` (CRC `ef0bfc11`) in the `gfx1` slot rather than the later real
-dump `344s0047.bin`. So a complete 0.278 set does **not** satisfy 0.289 — verify with
+⚠️ **Sets made for MAME 0.278 and earlier** carry the superseded `megaii.chr`
+(CRC `ef0bfc11`) in the `gfx1` slot rather than the later real dump `344s0047.bin`.
+So a complete 0.278 set does **not** satisfy 0.289 — verify with
 `mame -rompath <dir> -verifyroms apple2gs`.
 
 Two ways round it if you want Route 1 without hunting for a newer dump: pin MAME to a

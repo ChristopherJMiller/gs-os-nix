@@ -342,7 +342,8 @@ opcodes:
     python3 scripts/check-opcodes.py
 
 # M2 again, but on real MAME for higher fidelity (real slot timing, real IIgs).
-# Needs a complete apple2gs romset: ROMPATH=~/mame/roms just m2-mame
+# Needs your own complete apple2gs romset, given explicitly (no default):
+#     ROMPATH=/path/to/your/roms just m2-mame
 m2-mame: asm-headless
     ./scripts/run-m2.sh
 
