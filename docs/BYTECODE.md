@@ -345,6 +345,21 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$4B` | `toPath` | 1 | Nix's `coerceToPath`: coerced as `"${}"` does but with a path as its text (no store copy), which must start with `/` (`E_TYPE` otherwise), made canonical (`path_join`); a `STRING`, with the argument's context |
 | `$4C` | `match` | 2 | `re s`: libstdc++'s `std::regex_match`, extended syntax ([REGEX.md](REGEX.md)). `re` forced, a string without context (`E_TYPE`), and compiled (`E_REGEX` if invalid, before `s` is forced); then `s`, a string (`E_TYPE`); `null` unless all of it matches, else a list of groups 1.., each a string without context or `null` if it took no part |
 | `$4D` | `split` | 2 | `re s`, as `match`, then a `std::cregex_iterator` over `s`: `[ before groups between groups … after ]`, the pieces without context, or `[ s ]` itself when nothing matches ([REGEX.md](REGEX.md)) |
+| `$4E` | `fetchGit` | 1 | needs GS/OS ([DECISIONS.md](DECISIONS.md) D26): its argument forced, first to last, as Nix forces it before touching anything, then `E_GSOS` with its name in `$0300` |
+| `$4F` | `fetchMercurial` | 1 | needs GS/OS: as `fetchGit` |
+| `$50` | `fetchTarball` | 1 | needs GS/OS: as `fetchGit` |
+| `$51` | `fetchTree` | 1 | needs GS/OS: as `fetchGit` |
+| `$52` | `fetchurl` | 1 | needs GS/OS: as `fetchGit` |
+| `$53` | `filterSource` | 2 | needs GS/OS: as `fetchGit` |
+| `$54` | `getEnv` | 1 | needs GS/OS: as `fetchGit` |
+| `$55` | `getFlake` | 1 | needs GS/OS: as `fetchGit` |
+| `$56` | `hashFile` | 2 | needs GS/OS: as `fetchGit` |
+| `$57` | `path` | 1 | needs GS/OS: as `fetchGit` |
+| `$58` | `pathExists` | 1 | needs GS/OS: as `fetchGit` |
+| `$59` | `readDir` | 1 | needs GS/OS: as `fetchGit` |
+| `$5A` | `readFile` | 1 | needs GS/OS: as `fetchGit` |
+| `$5B` | `readFileType` | 1 | needs GS/OS: as `fetchGit` |
+| `$5C` | `storePath` | 1 | needs GS/OS: as `fetchGit` |
 | `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`
@@ -524,7 +539,8 @@ $0320  status     $01 done; $FF error, with the error code at $0321
 ```
 
 The harness reads the object graph straight out of the nursery. On `E_THROW` and
-`E_ABORT`, `$0300` holds the message `STRING` instead.
+`E_ABORT`, `$0300` holds the message `STRING` instead, and for `E_GSOS` the
+builtin's name.
 
 Error codes: `E_BADOP $01`, `E_TYPE $02`, `E_DIVZERO $03`, `E_INFREC $04`,
 `E_NOMEM $05` (nursery, value stack or call/force depth exhausted), `E_BADNBC $06`
@@ -540,7 +556,8 @@ evaluation error, which `tryEval` does not catch, never a wraparound),
 `E_DUPATTR $10` (a computed attribute name already in its set: Nix's "dynamic
 attribute already defined", which `tryEval` does not catch either), `E_REGEX $11`
 (a pattern `match` or `split` cannot compile: Nix's "invalid regular
-expression", uncatchable too). The harness (`a2min --run-nbc`) prints the value in
+expression", uncatchable too), `E_GSOS $12` (a builtin that needs GS/OS,
+refused at run time by name; D26). The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.
 

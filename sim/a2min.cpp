@@ -782,7 +782,7 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
                                        "E_INFREC", "E_NOMEM", "E_BADNBC", "E_NOCARD",
                                        "E_ASSERT", "E_THROW", "E_ABORT", "E_NOATTR",
                                        "E_INDEX", "E_NOVAR", "E_UNSUP", "E_OVERFLOW",
-                                       "E_DUPATTR", "E_REGEX" };
+                                       "E_DUPATTR", "E_REGEX", "E_GSOS" };
         const uint8_t code = ram[RESULT_STAT + 1];
         const char *name = code < sizeof(names) / sizeof(names[0]) ? names[code] : "E_?";
         cpu.print_trace(stdout);
@@ -797,7 +797,7 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
                 std::printf("  stack[%u] = %08X %s\n", dv - i, ram32(vbase + 4 * (i - 1)),
                             fmt_value(ram32(vbase + 4 * (i - 1)), 0).c_str());
         }
-        if (code == 0x09 || code == 0x0A)   // the message string travels in RESULT
+        if (code == 0x09 || code == 0x0A || code == 0x12)   // a message, or E_GSOS's builtin, in RESULT
             std::printf("error: %s %s\n", name, fmt_value(ram32(RESULT), 0).c_str());
         else
             std::printf("error: %s\n", name);

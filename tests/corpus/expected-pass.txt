@@ -167,6 +167,7 @@ fixtures/eval-okay-fromjson-rules
 fixtures/eval-okay-function-args
 fixtures/eval-okay-function-equality
 fixtures/eval-okay-functor
+fixtures/eval-okay-gsos-builtins
 fixtures/eval-okay-hash-collision
 fixtures/eval-okay-hashstring
 fixtures/eval-okay-import
@@ -211,6 +212,9 @@ fixtures/refuse-derivation-hash-blake3
 fixtures/refuse-derivation-hash-git
 fixtures/refuse-derivation-hash-text
 fixtures/refuse-derivation-path
+fixtures/refuse-gsos-fetchtarball
+fixtures/refuse-gsos-hashfile
+fixtures/refuse-gsos-readfile
 fixtures/refuse-hashstring-md5
 fixtures/refuse-tojson-path
 tvix/nix_tests/eval-okay-any-all

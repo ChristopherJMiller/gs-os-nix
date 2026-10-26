@@ -12,7 +12,9 @@ the VM declines with E_UNSUP rather than answer wrongly (docs/DERIVATION.md
 "Refused"). Their .exp is the error line the VM must print, e.g.
 `error: E_UNSUP`; a value, or a different error, does not pass.
 
-Buckets: pass, fail (ran, wrong value), error (VM aborted), unsupported,
+Buckets: pass, fail (ran, wrong value), error (VM aborted), gsos (refused at
+run time by a builtin that needs GS/OS -- files, the environment, the network;
+DECISIONS.md D26 -- which no slice of the generator can move), unsupported,
 notyetpassing (tvix itself does not pass these; scored separately).
 
 Where tvix's .exp disagrees with C++ Nix 2.34 -- the host, whose answers are
@@ -98,7 +100,7 @@ def main():
         with open(args.expected) as f:
             expected = {l.strip() for l in f if l.strip() and not l.startswith("#")}
 
-    buckets = {k: [] for k in ("pass", "fail", "error", "unsupported", "notyetpassing")}
+    buckets = {k: [] for k in ("pass", "fail", "error", "gsos", "unsupported", "notyetpassing")}
     details = {}
     seconds = {}
 
@@ -120,7 +122,12 @@ def main():
             kind, got = vm_result(out)
             if kind == "error":
                 got = "error: " + got
-                bucket = "pass" if got == want else "error"
+                if got == want:
+                    bucket = "pass"
+                elif got.startswith("error: E_GSOS"):
+                    bucket = "gsos"
+                else:
+                    bucket = "error"
             elif got == want:
                 bucket = "pass"
             else:
@@ -178,6 +185,16 @@ def main():
         for what, n in sorted(reasons.items(), key=lambda kv: -kv[1])[:12]:
             print(f"  {n:5}  {what}")
 
+    # The GS/OS refusals, by builtin: what L7 will move.
+    gsos = {}
+    for name in buckets["gsos"]:
+        what = details[name][2].split("E_GSOS", 1)[1].strip()
+        gsos[what] = gsos.get(what, 0) + 1
+    if gsos:
+        print("\n  need GS/OS, by builtin:")
+        for what, n in sorted(gsos.items(), key=lambda kv: -kv[1]):
+            print(f"  {n:5}  {what}")
+
     # Always name the errors: a count alone says nothing about what to fix.
     if buckets["error"]:
         print("\n  errors:")
@@ -190,10 +207,11 @@ def main():
             print(f"  {s:7.1f} s  {n}  [{details[n][0]}]")
 
     print()
-    for k in ("pass", "fail", "error", "unsupported", "notyetpassing"):
+    for k in ("pass", "fail", "error", "gsos", "unsupported", "notyetpassing"):
         print(f"  {k:<13} {len(buckets[k]):4}")
     print(f"SCOREBOARD: {len(passing)} / {total} pass "
           f"({len(buckets['fail'])} fail, {len(buckets['error'])} error, "
+          f"{len(buckets['gsos'])} need GS/OS, "
           f"{len(buckets['unsupported'])} unsupported, {len(buckets['notyetpassing'])} notyetpassing)")
 
     ok = True

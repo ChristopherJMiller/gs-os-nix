@@ -657,3 +657,20 @@ skips bank 5, and bank-gate.py checks it. The alternative, the collector's
 stage (bank 2) between collections, would have had to search twice, once to
 size the result and once to build it after the reserve. Like the other fixed
 banks, this one becomes a Memory Manager handle when GS/OS loads the VM (L7).
+
+## D26 — What needs GS/OS is refused at run time, by name
+
+**Decided with Chris (2026-10-26) as the bytecode compiler's finish line:**
+"nbc refuses nothing; things needing GS/OS are refused at runtime by name
+and not counted." Files, the environment, the network and the store are
+GS/OS's (L7), and the VM does not run under it yet. So the fifteen builtins
+that need them -- `fetchGit`, `fetchMercurial`, `fetchTarball`,
+`fetchTree`, `fetchurl`, `filterSource`, `getEnv`, `getFlake`, `hashFile`,
+`path`, `pathExists`, `readDir`, `readFile`, `readFileType`, `storePath` --
+compile like any primop (they print as `<PRIMOP>`, are reachable as
+`builtins.NAME`, as `__NAME`, and the fetchers unqualified, as in Nix) and,
+applied, force their arguments in order and stop with `E_GSOS` and their
+name. Forcing first keeps Nix's order: a throw in an argument is still
+caught, as it is by the host before any file is touched. The scoreboard
+counts these in a bucket of their own, `need GS/OS`, which no change to the
+generator can move and L7 will.

@@ -147,13 +147,42 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("toPath", 0x4B, 1),
     ("match", 0x4C, 2),
     ("split", 0x4D, 2),
+    // Need GS/OS: E_GSOS at run time, by name (DECISIONS.md D26)
+    ("fetchGit", 0x4E, 1),
+    ("fetchMercurial", 0x4F, 1),
+    ("fetchTarball", 0x50, 1),
+    ("fetchTree", 0x51, 1),
+    ("fetchurl", 0x52, 1),
+    ("filterSource", 0x53, 2),
+    ("getEnv", 0x54, 1),
+    ("getFlake", 0x55, 1),
+    ("hashFile", 0x56, 2),
+    ("path", 0x57, 1),
+    ("pathExists", 0x58, 1),
+    ("readDir", 0x59, 1),
+    ("readFile", 0x5A, 1),
+    ("readFileType", 0x5B, 1),
+    ("storePath", 0x5C, 1),
 ];
 
 /// The builtins Nix also exposes unqualified.
 pub const GLOBALS: &[&str] = &[
     "map", "toString", "throw", "abort", "isNull", "removeAttrs", "baseNameOf", "dirOf",
-    "derivation", "derivationStrict",
+    "derivation", "derivationStrict", "break", "fetchGit", "fetchMercurial", "fetchTarball",
+    "fetchTree", "fromTOML", "placeholder", "scopedImport",
 ];
+
+/// Every other builtin is a global too, as `__NAME` (`__findFile`, `__nixPath`,
+/// `__readFile`): Nix registers it with the prefix, and drops it inside
+/// `builtins`. Not these, which are unqualified globals or constants only
+/// (`import` is the generator's own, compiler.rs).
+pub fn prefixed_global(name: &str) -> Option<&'static str> {
+    let b = name.strip_prefix("__")?;
+    if GLOBALS.contains(&b) || ["import", "true", "false", "null", "builtins"].contains(&b) {
+        return None;
+    }
+    NIX_BUILTINS.iter().find(|n| **n == b).copied()
+}
 
 /// Builtins that are values rather than functions: a string constant each,
 /// emitted where `builtins.NAME` is and included in `builtins` as a set.

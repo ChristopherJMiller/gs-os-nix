@@ -1207,6 +1207,11 @@ void op_prim(void)
     case PRIM_TOPATH:          prim_topath(); break;
     case PRIM_MATCH:           prim_match(); break;
     case PRIM_SPLIT:           prim_split(); break;
+    case PRIM_FETCHGIT: case PRIM_FETCHMERCURIAL: case PRIM_FETCHTARBALL: case PRIM_FETCHTREE:
+    case PRIM_FETCHURL: case PRIM_GETENV: case PRIM_GETFLAKE: case PRIM_PATH: case PRIM_PATHEXISTS:
+    case PRIM_READDIR: case PRIM_READFILE: case PRIM_READFILETYPE: case PRIM_STOREPATH:
+                               prim_gsos(id, 1);
+    case PRIM_FILTERSOURCE: case PRIM_HASHFILE: prim_gsos(id, 2);
     default:                   err_exit(E_BADOP);
     }
 }

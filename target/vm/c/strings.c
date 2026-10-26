@@ -373,6 +373,29 @@ static obj_t *lit_str(const char *t, uint16_t n)
     return r;
 }
 
+/* --- the builtins that need GS/OS (DECISIONS.md D26) ------------------------------------ */
+
+/* Files, the environment, the network and the store are GS/OS's, and the VM
+ * does not run under it yet. Such a builtin forces its arguments, first to
+ * last, as Nix does before it touches any of them -- so a throw in one is
+ * still caught -- and is E_GSOS, its name in RESULT for the harness to print.
+ * The names are PRIM_FETCHGIT's onward, in order. */
+#define GSOS_NAMES \
+    "fetchGit fetchMercurial fetchTarball fetchTree fetchurl filterSource getEnv getFlake hashFile path pathExists readDir readFile readFileType storePath "
+_Noreturn void prim_gsos(uint16_t id, uint16_t arity)
+{
+    const char *t = GSOS_NAMES;
+    uint16_t k, n;
+    for (k = arity; k; --k) force_slot(k);
+    for (k = id - PRIM_FETCHGIT; k; --k) {
+        while (*t != ' ') ++t;
+        ++t;
+    }
+    for (n = 0; t[n] != ' '; ++n) ;
+    *(obj_t **)RESULT_ADDR = lit_str(t, n);
+    err_exit(E_GSOS);
+}
+
 /* --- versions and names: Nix's libstore/names.cc, rule by rule ------------------------- */
 #define IS_DIGIT(c) ((c) >= '0' && (c) <= '9')
 #define IS_ALPHA(c) (((c) | 0x20) >= 'a' && ((c) | 0x20) <= 'z')   /* isalpha, C locale */

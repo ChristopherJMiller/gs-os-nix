@@ -141,6 +141,22 @@
 #define PRIM_TOPATH             0x4B /* 1 */
 #define PRIM_MATCH              0x4C /* 2 */
 #define PRIM_SPLIT              0x4D /* 2 */
+/* $4E-$5C: the builtins that need GS/OS (D26): each is E_GSOS, by name */
+#define PRIM_FETCHGIT             0x4E /* 1 */
+#define PRIM_FETCHMERCURIAL       0x4F /* 1 */
+#define PRIM_FETCHTARBALL         0x50 /* 1 */
+#define PRIM_FETCHTREE            0x51 /* 1 */
+#define PRIM_FETCHURL             0x52 /* 1 */
+#define PRIM_FILTERSOURCE         0x53 /* 2 */
+#define PRIM_GETENV               0x54 /* 1 */
+#define PRIM_GETFLAKE             0x55 /* 1 */
+#define PRIM_HASHFILE             0x56 /* 2 */
+#define PRIM_PATH                 0x57 /* 1 */
+#define PRIM_PATHEXISTS           0x58 /* 1 */
+#define PRIM_READDIR              0x59 /* 1 */
+#define PRIM_READFILE             0x5A /* 1 */
+#define PRIM_READFILETYPE         0x5B /* 1 */
+#define PRIM_STOREPATH            0x5C /* 1 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */
@@ -167,5 +183,6 @@
 #define E_OVERFLOW      0x0F    /* + - * / overflowed: an error in Nix 2.34, not a wrap */
 #define E_DUPATTR       0x10    /* a computed attribute name already in its set */
 #define E_REGEX         0x11    /* not a regular expression (match, split): Nix's "invalid regular expression" */
+#define E_GSOS          0x12    /* a builtin that needs GS/OS -- files, the environment, the network (D26) */
 
 #endif

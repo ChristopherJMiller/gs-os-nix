@@ -209,7 +209,7 @@ impl Compiler {
             "null" => return Ok(Binding::Literal(OP_NULL)),
             _ => {}
         }
-        let global = GLOBALS.iter().find(|g| **g == name).copied();
+        let global = GLOBALS.iter().find(|g| **g == name).copied().or_else(|| prefixed_global(name));
         if self.scopes.iter().rev().skip(skip).any(|s| s.with) {
             return Ok(Binding::With(global));
         }
@@ -944,6 +944,20 @@ mod tests {
     }
 
     #[test]
+    fn prefixed_builtins_are_globals() {
+        // Nix binds a builtin as __NAME unless it is an unqualified global
+        // (map, import, the fetchers but fetchurl) or a constant.
+        assert!(compile(&parse("__readFile").unwrap()).is_ok());
+        assert!(compile(&parse("__fetchurl").unwrap()).is_ok());
+        assert!(compile(&parse("fetchTarball").unwrap()).is_ok());
+        assert!(compile(&parse("__map").unwrap()).is_err());
+        assert!(compile(&parse("__fetchTarball").unwrap()).is_err());
+        assert!(compile(&parse("__true").unwrap()).is_err());
+        assert!(compile(&parse("__nosuchbuiltin").unwrap()).is_err());
+        assert!(compile(&parse("let __readFile = 1; in __readFile").unwrap()).is_ok());
+    }
+
+    #[test]
     fn lambdas_and_lazy_arguments() {
         // (x: x + a) 41 inside a let: the body chunk reads x at depth 0 and a at
         // depth 1; the literal argument is passed directly, no thunk.
@@ -1031,7 +1045,7 @@ mod tests {
         assert!(c("let builtins = { length = 1; }; in builtins.length").iter().all(|k| !k.code.contains(&OP_PRIM)));
         // a Nix builtin the VM lacks is refused by name; a name that is no
         // builtin at all is Nix's missing attribute, at run time
-        assert_eq!(compile(&parse("builtins.readDir").unwrap()).unwrap_err().what, "builtins.readDir");
+        assert_eq!(compile(&parse("builtins.unsafeGetAttrPos").unwrap()).unwrap_err().what, "builtins.unsafeGetAttrPos");
         assert!(compile(&parse("builtins.nope").unwrap()).is_ok());
         // A value builtin is a constant, not a primop lambda (D23).
         assert!(c("builtins.currentSystem").iter().all(|k| !k.code.contains(&OP_LAMBDA)));
