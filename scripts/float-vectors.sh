@@ -36,7 +36,9 @@ run() {
           echo "};"; } >> "$WORK/float_vectors.c"
         orcabuild -o "$WORK/ft.bin" -O -I target/vm/c target/tests/float_test.c \
             "$WORK/float_vectors.c" "$1" > "$WORK/build.log" 2>&1 || { echo "DID NOT BUILD ($part)"; return; }
-        r=$("$A2MIN" --run-bin "$WORK/ft.bin" 2>&1 | grep -a '^result:\|^a2min:' | head -1)
+        # 4G cycles: f_g's exact %g of an extreme double is a long bignum
+        # division on the 65816 (~2.5M cycles), and the vectors span every exponent.
+        r=$(A2MIN_BUDGET=4000000000 "$A2MIN" --run-bin "$WORK/ft.bin" 2>&1 | grep -a '^result:\|^a2min:\|^error:' | head -1)
         case "$r" in "result: 00 00 FF FF"*) ;; *) echo "$r ($part)"; return ;; esac
     done
     echo "result: 00 00 FF FF"
@@ -47,8 +49,8 @@ fail=0
 for s in $SEEDS; do
     r=$(run target/vm/c/float.c "$s")
     case "$r" in
-        "result: 00 00 FF FF"*) echo "  seed $s: 1,820 vectors, all right" ;;
-        *) echo "  seed $s: WRONG -- $r (wrong count, then the first: \$8000+i a format, \$4000+i toJSON, \$2000+i strtod)"; fail=1 ;;
+        "result: 00 00 FF FF"*) echo "  seed $s: 2,020 vectors, all right" ;;
+        *) echo "  seed $s: WRONG -- $r (wrong count, then the first: \$8000+i a format, \$4000+i toJSON, \$2000+i strtod, \$1000+i %g)"; fail=1 ;;
     esac
 done
 
@@ -68,7 +70,8 @@ plant() {
 }
 plant "ties away from even" 's/^    if (round_bits == 0x200) sig \&= ~(uint64_t)1;  \/\* a tie: to even \*\/$//'
 plant "toJSON without Grisu2's rounding" 's/^        buf\[len - 1\]--;$/        ;/'
+plant "%g's ties away from even" 's/^    if (half > 0 || (half == 0 \&\& (q \& 1))) {   \/\* round to even \*\/$/    if (half >= 0) {/'
 plant "strtod without its sticky bit" 's/^    return norm_round_pack(sign, 1084 - sh, q | (nd != 0));$/    return norm_round_pack(sign, 1084 - sh, q);/'
 echo
 [ "$fail" -eq 0 ] || exit 1
-echo "FLOAT VECTORS OK: float.c is the host's arithmetic, printf, toJSON text and strtod, bit for bit"
+echo "FLOAT VECTORS OK: float.c is the host's arithmetic, printf %f and %g, toJSON text and strtod, bit for bit"

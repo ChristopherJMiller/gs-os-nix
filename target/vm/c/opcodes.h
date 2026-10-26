@@ -137,6 +137,7 @@
 #define PRIM_FUNCTIONARGS       0x47 /* 1 */
 #define PRIM_TOJSON             0x48 /* 1 */
 #define PRIM_FROMJSON           0x49 /* 1 */
+#define PRIM_TOXML              0x4A /* 1 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */

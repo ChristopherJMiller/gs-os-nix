@@ -76,8 +76,13 @@ rather than truncating.
 
 **Chunk kinds**, after the chunks and inside `total_size`: `chunk_count` bytes,
 one per chunk -- `0` code, `1` a primop's outermost lambda, `2` one of its inner
-lambdas, so a primop given some but not all of its arguments. `kinds` is 0 when
-every chunk is code. **The VM never reads them**: they are for the printer,
+lambdas, so a primop given some but not all of its arguments, `3` a lambda's
+body, `4` the body of a lambda with formals. Then `chunk_count` `u16`s, each
+the offset of the chunk's info record or 0, and the records: `u8` flags (bit 0,
+the formals have an ellipsis), `u16` length, the bytes of the parameter's name
+-- for formals the `@` name, or none. `kinds` is 0 when every chunk is code.
+`builtins.toXML` reads the records, as a function's `<varpat name=…>` or
+`<attrspat name=… ellipsis="1">`; the rest of the VM never does. Kinds 1 and 2 are for the printer,
 which shows a function as Nix does, `<PRIMOP>` and `<PRIMOP-APP>` where a
 lambda is `<LAMBDA>` ("Deep force and the printer"). A primop is a synthesised
 lambda here, and its code is the same as a user's `a: b: builtins.add a b`,
@@ -336,6 +341,7 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$47` | `functionArgs` | 1 | forced; a `LAMBDA` with formals gives a fresh copy of the set its `LAMBDA_ARGS` chunk builds, any other `LAMBDA` (a plain one, a primop, a primop partly applied) `{ }`; anything else, a `__functor` set too, is `E_TYPE` |
 | `$48` | `toJSON` | 1 | Nix's `value-to-json.cc`, then nlohmann/json's `dump` (`json.c`). The tree first, running bytecode: every value forced in Nix's order (a list's elements in order, a set's values by name), a set with `__toString` coerced through it (a path result is its text), one with `outPath` replaced by that, a function `E_TYPE`, a path `E_UNSUP` (Nix copies it to the store); the strings' contexts united. Then the text, with no bytecode: compact, keys sorted; a float as nlohmann writes it (`f_json`, its Grisu2: [FLOAT.md](FLOAT.md)), an infinity or NaN `null`; a string's bytes as `dump_escaped` writes them -- `"` `\` `\b` `\f` `\n` `\r` `\t` escaped, other bytes below `0x20` as `\u00xx`, the rest as they are -- and anything not UTF-8 `E_TYPE`, checked only now, as nlohmann checks it, so an evaluation error anywhere comes first. The result carries every string's context |
 | `$49` | `fromJSON` | 1 | a string without context, as Nix's `json-to-value.cc` reads it through nlohmann's `sax_parse` (`json.c`): a BOM at the start skipped, the four JSON whitespace characters, JSON's number grammar -- an integer token through `strtoull`/`strtoll`, too wide a float, an unsigned one above `INT64_MAX` an error -- a float through a correctly rounded `strtod` (`f_strtod`, [FLOAT.md](FLOAT.md)), its overflow an error; strings with their escapes, surrogate pairs joined, raw bytes held to UTF-8, a NUL an error; a repeated key's last value. Every error is `E_TYPE` |
+| `$4A` | `toXML` | 1 | Nix's `value-to-xml.cc` through its `XMLWriter` (`json.c`), no positions: the tree first (every value forced in Nix's order; a set's `type` forced to see a derivation, whose `drvPath` and `outPath` are forced and whose attributes are shown the first time its string `drvPath` is seen, else `<repeated />`; a lambda with formals has its `functionArgs` set built), then the text, indented two spaces a level, attribute values with `"` `<` `>` `&` and newline escaped. A lambda is `<function>` with the image's `<varpat>` or `<attrspat>` (BYTECODE.md "Chunk kinds"), a primop `<unevaluated />`, a float `printf("%g")` (`f_g`, [FLOAT.md](FLOAT.md)). The result carries the context of every string shown |
 | `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`

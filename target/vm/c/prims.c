@@ -564,7 +564,7 @@ static void force_function_slot(uint16_t k)
 
 /* The value of the attribute a C literal names, or 0: the literal stays with
  * the code, where a static name would be bank 0's. set is an original. */
-static obj_t *lit_attr(obj_t *set, const char *lit, uint16_t n)
+obj_t *lit_attr(obj_t *set, const char *lit, uint16_t n)
 {
     obj_t *s = deref(set);
     uint16_t k = AUX16(s), i;
@@ -1203,6 +1203,7 @@ void op_prim(void)
     case PRIM_FUNCTIONARGS:    prim_functionargs(); break;
     case PRIM_TOJSON:          prim_tojson(); break;
     case PRIM_FROMJSON:        prim_fromjson(); break;
+    case PRIM_TOXML:           prim_toxml(); break;
     default:                   err_exit(E_BADOP);
     }
 }

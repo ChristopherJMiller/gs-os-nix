@@ -887,3 +887,98 @@ uint64_t f_strtod(const char *s, uint16_t n)
     }
     return norm_round_pack(sign, 1084 - sh, q | (nd != 0));
 }
+
+/* --- toXML's floats: printf("%g") -------------------------------------------------------- */
+/* Nix prints a float in XML with boost::format's %1%, which is ostream's <<:
+ * printf("%g") at precision 6, which glibc rounds exactly -- six significant
+ * digits of the double's exact value, ties to even -- then fixed point for
+ * 10^-4 <= x < 10^6, else d.ddddde+XX, trailing zeros dropped. f_g finds the
+ * six digits as q = floor(x * 10^s) with 10^5 <= q < 10^6, by long division
+ * of exact bignums, and rounds on the remainder. */
+
+/* 2^a * 10^b into x (a, b >= 0), times the bits of m: its length. */
+static uint16_t bn_scaled(uint16_t *x, uint64_t m, uint16_t a, uint16_t b)
+{
+    uint16_t n;
+    x[0] = (uint16_t)m; x[1] = (uint16_t)(m >> 16); x[2] = (uint16_t)(m >> 32); x[3] = (uint16_t)(m >> 48);
+    n = 4;
+    while (n && !x[n - 1]) --n;
+    n = bn_pow10(x, n, b);
+    return bn_shl(x, n, a);
+}
+
+/* floor(m * 2^e * 10^s), below 2^28 (the caller's estimate of the exponent
+ * is at most two low, so the quotient is below 10^8), and how the rest
+ * compares with a half: -1 below, 0 a tie, 1 above. */
+static uint32_t g_digits(uint64_t m, int16_t e, int16_t s, int *half)
+{
+    uint16_t num[DL], den[DL], nn, nd, i;
+    uint32_t q = 0;
+    nn = bn_scaled(num, m, e > 0 ? (uint16_t)e : 0, s > 0 ? (uint16_t)s : 0);
+    nd = bn_scaled(den, 1, e < 0 ? (uint16_t)-e : 0, s < 0 ? (uint16_t)-s : 0);
+    nd = bn_shl(den, nd, 27);
+    for (i = 28; i-- > 0; ) {                   /* a bit at a time, down to den itself */
+        q <<= 1;
+        if (bn_ge(num, nn, den, nd)) { nn = bn_sub(num, nn, den, nd); q |= 1; }
+        if (i) nd = bn_shr1(den, nd);
+    }
+    /* den is the divisor again; rest = num: compare 2 * rest with it */
+    nn = bn_shl(num, nn, 1);
+    if (!nn) *half = -1;
+    else if (bn_ge(num, nn, den, nd)) *half = bn_ge(den, nd, num, nn) ? 0 : 1;
+    else *half = -1;
+    return q;
+}
+
+uint16_t f_g(uint64_t a, char *buf)
+{
+    uint16_t len = 0, i, nd;
+    int16_t e = F_EXP(a), x, s, L;
+    uint16_t u;
+    uint64_t m = F_FRAC(a);
+    uint32_t q, p, w;
+    int half;
+    char d[8];
+    if (F_SIGN(a)) buf[len++] = '-';
+    if (e == 0x7FF) return put_lit(buf, len, m ? "nan" : "inf", 3);
+    if (e == 0 && m == 0) { buf[len++] = '0'; return len; }
+    if (e) { m |= (uint64_t)1 << 52; e -= 1075; } else e = -1074;
+    L = (int16_t)(64 - clz64(m)) + e - 1;       /* 2^L <= x < 2^(L+1) */
+    w = (uint32_t)(L < 0 ? -L : L);             /* |L| * 1233 / 4096 ~ |L| * log10(2), in shifts: */
+    u = (uint16_t)(((w << 10) + (w << 7) + (w << 6) + (w << 4) + w) >> 12);   /* a multiply would link ~UMUL4 */
+    x = L >= 0 ? (int16_t)u : -(int16_t)u - 1;  /* floor(log10(x)), or up to two either side */
+    for (;;) {
+        s = 5 - x;
+        q = g_digits(m, e, s, &half);
+        if (q >= 1000000UL) { ++x; continue; }  /* x was low */
+        if (q < 100000UL) { --x; continue; }
+        break;
+    }
+    if (half > 0 || (half == 0 && (q & 1))) {   /* round to even */
+        if (++q == 1000000UL) { q = 100000UL; ++x; }
+    }
+    for (i = 6, p = q; i-- > 0; p /= 10) d[i] = (char)('0' + (uint16_t)(p % 10));
+    nd = 6;
+    while (nd > 1 && d[nd - 1] == '0') --nd;    /* %g drops trailing zeros */
+    if (x < -4 || x >= 6) {                     /* d.ddddde+XX */
+        buf[len++] = d[0];
+        if (nd > 1) { buf[len++] = '.'; for (i = 1; i < nd; ++i) buf[len++] = d[i]; }
+        buf[len++] = 'e';
+        buf[len++] = x < 0 ? '-' : '+';
+        u = (uint16_t)(x < 0 ? -x : x);         /* unsigned: a signed divide links ~DIV2 */
+        if (u >= 100) { buf[len++] = (char)('0' + u / 100); u %= 100; }
+        buf[len++] = (char)('0' + u / 10);
+        buf[len++] = (char)('0' + u % 10);
+    } else if (x >= 0) {                        /* ddd.ddd */
+        for (i = 0; i < nd || i <= (uint16_t)x; ++i) {
+            if (i == (uint16_t)x + 1) buf[len++] = '.';
+            buf[len++] = i < nd ? d[i] : '0';
+        }
+    } else {                                    /* 0.000ddd */
+        buf[len++] = '0';
+        buf[len++] = '.';
+        for (i = 1; i < (uint16_t)-x; ++i) buf[len++] = '0';
+        for (i = 0; i < nd; ++i) buf[len++] = d[i];
+    }
+    return len;
+}

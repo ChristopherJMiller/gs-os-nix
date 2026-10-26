@@ -24,14 +24,20 @@ pub enum Const {
 pub struct Chunk {
     pub consts: Vec<Const>,
     pub code: Vec<u8>,
-    /// For the printer only (BYTECODE.md "Chunk kinds"): KIND_CODE, or a
-    /// primop's lambda, outermost (KIND_PRIMOP) or inner (KIND_PRIMOP_APP).
+    /// BYTECODE.md "Chunk kinds": KIND_CODE; a primop's lambda, outermost
+    /// (KIND_PRIMOP) or inner (KIND_PRIMOP_APP), for the printer; or a
+    /// lambda's body (KIND_LAMBDA, KIND_FORMALS), for builtins.toXML.
     pub kind: u8,
+    /// A lambda body's parameter name -- for formals the `@` name, or "" --
+    /// and whether its formals have an ellipsis.
+    pub info: Option<(String, bool)>,
 }
 
 pub const KIND_CODE: u8 = 0;
 pub const KIND_PRIMOP: u8 = 1;
 pub const KIND_PRIMOP_APP: u8 = 2;
+pub const KIND_LAMBDA: u8 = 3;
+pub const KIND_FORMALS: u8 = 4;
 
 /// One environment object at runtime: a let's bindings, a lambda's parameter,
 /// or a `with` (no names; identifiers fall through to it at runtime).
@@ -146,8 +152,9 @@ impl Compiler {
     /// -- the same shape as a one-binding let, so the scope chain is the same.
     /// With `args`, a lambda with formals: LAMBDA_ARGS, and that chunk builds
     /// its builtins.functionArgs set.
-    fn emit_lambda(&mut self, param: &str, body: &Expr, chunk: usize, args: Option<usize>) -> Result<(), Unsupported> {
-        self.chunks.push(Chunk::default());
+    fn emit_lambda(&mut self, param: &str, body: &Expr, chunk: usize, args: Option<usize>,
+                   info: (u8, String, bool)) -> Result<(), Unsupported> {
+        self.chunks.push(Chunk { kind: info.0, info: Some((info.1, info.2)), ..Chunk::default() });
         let body_chunk = self.chunks.len() - 1;
         self.scopes.push(Scope { names: vec![param.to_string()], with: false });
         self.strict(body, body_chunk)?;
@@ -459,8 +466,10 @@ impl Compiler {
                 self.emit(chunk, OP_ENV_POP);
                 self.scopes.pop();
             }
-            Expr::Lambda(Param::Ident(param), _, body) => self.emit_lambda(param, body, chunk, None)?,
-            Expr::Lambda(Param::Formals { entries, bind, .. }, pos, body) => {
+            Expr::Lambda(Param::Ident(param), _, body) => {
+                self.emit_lambda(param, body, chunk, None, (KIND_LAMBDA, param.clone(), false))?
+            }
+            Expr::Lambda(Param::Formals { entries, bind, ellipsis }, pos, body) => {
                 // { a, b ? d } @ s: body  ==  s: let a = s.a; b = s.b or d; in body
                 // Lazy, defaults may refer to other formals. The closed-formals
                 // check ("unexpected argument") is not performed.
@@ -494,7 +503,8 @@ impl Compiler {
                 self.emit(args, OP_ATTRS);
                 self.emit_u16(args, n);
                 self.emit_return(args);
-                self.emit_lambda(&arg, &body, chunk, Some(args))?;
+                let info = (KIND_FORMALS, bind.clone().unwrap_or_default(), *ellipsis);
+                self.emit_lambda(&arg, &body, chunk, Some(args), info)?;
             }
             Expr::Seq(a, b) => {
                 self.strict(a, chunk)?;
@@ -836,8 +846,11 @@ mod tests {
         assert_eq!(kinds.iter().filter(|&&k| k == KIND_PRIMOP).count(), 2, "foldl' and add: {kinds:?}");
         assert_eq!(kinds.iter().filter(|&&k| k == KIND_PRIMOP_APP).count(), 3, "two of foldl's, one of add's: {kinds:?}");
         assert_eq!(ch[0].kind, KIND_CODE);
-        let user = ch.iter().filter(|k| k.kind == KIND_CODE).count();
-        assert_eq!(user, ch.len() - 5, "the program and the user's two lambdas are code: {kinds:?}");
+        // the user's two lambdas are lambda bodies, a and b, for toXML
+        let bodies: Vec<&str> = ch.iter().filter(|k| k.kind == KIND_LAMBDA)
+            .map(|k| k.info.as_ref().unwrap().0.as_str()).collect();
+        assert_eq!(bodies, vec!["a", "b"], "{kinds:?}");
+        assert_eq!(ch.iter().filter(|k| k.kind == KIND_CODE).count(), ch.len() - 7, "{kinds:?}");
     }
 
     #[test]

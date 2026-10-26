@@ -120,6 +120,9 @@ fixtures/eval-fail-tojson-function
 fixtures/eval-fail-tojson-incomplete
 fixtures/eval-fail-tojson-order
 fixtures/eval-fail-tojson-tostring-int
+fixtures/eval-fail-toxml-drvpath-first
+fixtures/eval-fail-toxml-throw
+fixtures/eval-fail-toxml-type-first
 fixtures/eval-fail-zipattrswith-function
 fixtures/eval-okay-assert
 fixtures/eval-okay-attr-builtins
@@ -185,6 +188,7 @@ fixtures/eval-okay-tojson
 fixtures/eval-okay-tostring-int64
 fixtures/eval-okay-tostring-lists
 fixtures/eval-okay-tostring-widths
+fixtures/eval-okay-toxml-rules
 fixtures/eval-okay-tryeval
 fixtures/eval-okay-tryeval-restore
 fixtures/eval-okay-versions-names
@@ -262,6 +266,8 @@ tvix/nix_tests/eval-okay-string
 tvix/nix_tests/eval-okay-strings-as-attrs-names
 tvix/nix_tests/eval-okay-substring
 tvix/nix_tests/eval-okay-tojson
+tvix/nix_tests/eval-okay-toxml
+tvix/nix_tests/eval-okay-toxml2
 tvix/nix_tests/eval-okay-tryeval
 tvix/nix_tests/eval-okay-types
 tvix/nix_tests/eval-okay-versions
@@ -356,6 +362,7 @@ tvix/tvix_tests/eval-okay-builtins-tail-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-thunked-function-calls
 tvix/tvix_tests/eval-okay-builtins-to-json-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-to-string-propagate-catchable
+tvix/tvix_tests/eval-okay-builtins-to-xml-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-toString
 tvix/tvix_tests/eval-okay-builtins-tojson-literals
 tvix/tvix_tests/eval-okay-builtins-tojson-outpath
@@ -502,6 +509,7 @@ tvix/tvix_tests/eval-okay-thunked-if
 tvix/tvix_tests/eval-okay-thunked-string-interpolation
 tvix/tvix_tests/eval-okay-thunked-with
 tvix/tvix_tests/eval-okay-toplevel-finaliser
+tvix/tvix_tests/eval-okay-toxml
 tvix/tvix_tests/eval-okay-tryeval-thunk-twice
 tvix/tvix_tests/eval-okay-unpoison-scope
 tvix/tvix_tests/eval-okay-useless-inherit-with

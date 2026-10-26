@@ -171,8 +171,9 @@ target/vm/c/
               checks.float-vectors tests it alone (FLOAT.md) -- segment "float"
   numbers.c   the VM's floats: FLOAT objects, mixed INT/float arithmetic and
               comparison, floor, ceil, toString -- segment "float"
-  json.c      builtins.toJSON (Nix's tree, then nlohmann's text) and
-              builtins.fromJSON (nlohmann's lexer and parser) -- segment "json"
+  json.c      builtins.toJSON (Nix's tree, then nlohmann's text),
+              builtins.fromJSON (nlohmann's lexer and parser) and
+              builtins.toXML (Nix's XMLWriter) -- segment "json"
 ```
 
 `float` and `json` are in bank 6: `prims` fills bank 4 (omf2bin skips bank 5,

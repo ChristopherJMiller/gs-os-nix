@@ -2,7 +2,7 @@
 //! disassembler. The reader exists for `nbc --dump` and for the round-trip test;
 //! the VM has its own loader in 65816 assembly.
 
-use crate::compiler::{Chunk, Const, KIND_CODE, KIND_PRIMOP, KIND_PRIMOP_APP};
+use crate::compiler::{Chunk, Const, KIND_CODE, KIND_FORMALS, KIND_LAMBDA, KIND_PRIMOP, KIND_PRIMOP_APP};
 use crate::opcodes::*;
 
 pub const MAGIC: &[u8; 3] = b"NBC";
@@ -20,7 +20,23 @@ pub fn write(chunks: &[Chunk]) -> Vec<u8> {
     out.extend_from_slice(&0u16.to_le_bytes()); // entry chunk
     let body: usize = HEADER_LEN + table_len + bodies.iter().map(Vec::len).sum::<usize>();
     let kinded = chunks.iter().any(|c| c.kind != KIND_CODE);
-    let total = if kinded { body + chunks.len() } else { body };
+    // After the kinds: a u16 per chunk, the offset of its info record or 0;
+    // then the records, [flags u8 (bit 0: an ellipsis)][u16 length][name].
+    let mut infos: Vec<u8> = Vec::new();
+    let mut offsets: Vec<u16> = Vec::new();
+    let info_at = body + chunks.len() + 2 * chunks.len();
+    for c in chunks {
+        match &c.info {
+            Some((name, ellipsis)) => {
+                offsets.push((info_at + infos.len()) as u16);
+                infos.push(*ellipsis as u8);
+                infos.extend_from_slice(&(name.len() as u16).to_le_bytes());
+                infos.extend_from_slice(name.as_bytes());
+            }
+            None => offsets.push(0),
+        }
+    }
+    let total = if kinded { info_at + infos.len() } else { body };
     out.extend_from_slice(&(total as u32).to_le_bytes());
     out.extend_from_slice(&(if kinded { body as u32 } else { 0 }).to_le_bytes()); // kinds
     let mut off = HEADER_LEN + table_len;
@@ -33,6 +49,10 @@ pub fn write(chunks: &[Chunk]) -> Vec<u8> {
     }
     if kinded {
         out.extend(chunks.iter().map(|c| c.kind));
+        for o in &offsets {
+            out.extend_from_slice(&o.to_le_bytes());
+        }
+        out.extend_from_slice(&infos);
     }
     debug_assert_eq!(out.len(), total);
     out
@@ -136,7 +156,19 @@ pub fn read(b: &[u8]) -> Result<Image, String> {
         let code = b.get(p..p + code_len).ok_or("truncated code")?.to_vec();
         let kinds = u32_at(b, 12)? as usize;
         let kind = if kinds == 0 { KIND_CODE } else { *b.get(kinds + i).ok_or("truncated chunk kinds")? };
-        chunks.push(Chunk { consts, code, kind });
+        let info = if kinds == 0 {
+            None
+        } else {
+            match u16_at(b, kinds + n + 2 * i)? as usize {
+                0 => None,
+                at => {
+                    let len = u16_at(b, at + 1)? as usize;
+                    let name = b.get(at + 3..at + 3 + len).ok_or("truncated lambda info")?;
+                    Some((String::from_utf8_lossy(name).into_owned(), b[at] & 1 != 0))
+                }
+            }
+        };
+        chunks.push(Chunk { consts, code, kind, info });
     }
     Ok(Image { entry, chunks })
 }
@@ -145,7 +177,14 @@ pub fn disassemble(img: &Image) -> String {
     let mut s = String::new();
     s.push_str(&format!("entry chunk {}\n", img.entry));
     for (ci, ch) in img.chunks.iter().enumerate() {
-        let kind = match ch.kind { KIND_PRIMOP => ", a primop", KIND_PRIMOP_APP => ", a primop's inner lambda", _ => "" };
+        let kind = match (ch.kind, &ch.info) {
+            (KIND_PRIMOP, _) => ", a primop".to_string(),
+            (KIND_PRIMOP_APP, _) => ", a primop's inner lambda".to_string(),
+            (KIND_LAMBDA, Some((n, _))) => format!(", the body of {n}: ..."),
+            (KIND_FORMALS, Some((n, e))) => format!(", the body of {{ ...{} }}{}: ...", if *e { ", ..." } else { "" },
+                                                    if n.is_empty() { String::new() } else { format!("@{n}") }),
+            _ => String::new(),
+        };
         s.push_str(&format!("chunk {ci}: {} constants, {} bytes{kind}\n", ch.consts.len(), ch.code.len()));
         for (ki, k) in ch.consts.iter().enumerate() {
             match k {

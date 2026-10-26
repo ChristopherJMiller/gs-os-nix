@@ -595,7 +595,7 @@ void read_chunk_kinds(const std::vector<uint8_t> &nbc) {
     const unsigned n = u16(4);
     if (kinds == 0 || kinds + n > nbc.size()) return;
     for (unsigned i = 0; i < n; ++i) {
-        if (nbc[kinds + i] == 0) continue;
+        if (nbc[kinds + i] != 1 && nbc[kinds + i] != 2) continue;   // a primop's; 3 and 4 are lambda bodies (toXML's)
         size_t q = u32(16 + 4 * i);
         const unsigned consts = u16(q);
         q += 4;

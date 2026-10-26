@@ -94,6 +94,18 @@ between neighbouring doubles -- glibc prints a midpoint exactly from x86's
 planted bug that drops the remainder's sticky bit is caught (by 10; random
 decimals alone never caught it).
 
+**toXML's floats are `printf("%g")`'s**: Nix formats them with boost's
+`%1%`, which is `ostream <<`, precision 6. `float.c` `f_g` finds the six
+digits exactly -- `floor(x * 10^s)` between `10^5` and `10^6` by long
+division of bignums, the remainder deciding the rounding, ties to even --
+and lays them out as `%g` does: fixed point for `10^-4 <= x < 10^6`, else
+`d.ddddde+XX`, trailing zeros dropped. It is slow on the 65816 for an
+extreme exponent (a long division of some 1,100 bits, ~2.5M cycles), which
+toXML can afford. Measured natively on 2,000,000 doubles, then
+`checks.float-vectors` on the ORCA/C build: 200 vectors a seed against the
+host's `printf`, among them exact ties at six digits, and a planted
+ties-away bug is caught.
+
 `typeOf` is `"float"`; `builtins.isFloat`.
 
 ## Where

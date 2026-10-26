@@ -197,8 +197,13 @@ correctly rounded `strtod` (`f_strtod`, FLOAT.md) held to the host's on exact
 midpoints; 5 corpus tests, 20 fixtures, 9 mutations. On the way the
 scoreboard's own parsing was wrong: it split a2min's output with
 `splitlines()`, which also breaks at a form feed, so a value holding a raw
-`\f` was cut short and failed -- it splits at newlines now; `toXML`,
-`fromTOML`; ~~`compareVersions`, `splitVersion`,
+`\f` was cut short and failed -- it splits at newlines now; ~~`toXML`~~
+**done** (`json.c`): Nix's `XMLWriter` output, derivations once and then
+`<repeated />`, a function's parameter from the image -- the generator now
+records every lambda's parameter name, `@` name and ellipsis there (BYTECODE.md
+"Chunk kinds"), read only by toXML and costing nothing at load -- and floats
+by an exact `printf("%g")` (`f_g`, FLOAT.md); 4 corpus tests, 4 fixtures, 7
+mutations; `fromTOML`; ~~`compareVersions`, `splitVersion`,
 `parseDrvName`, `replaceStrings`~~ **done** (`names.cc` and `primops.cc` rule
 by rule: a run of digits is a version number only while it fits a C++
 `int`; a `to` is forced on first use; 10 corpus tests -- one, tvix's
@@ -324,8 +329,9 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **512 / 562** (2026-10-26, after `fromJSON`; 0 fail, 6
-error, 26 unsupported, 18 notyetpassing). It was 487 / 542 after `toJSON`
+The scoreboard reads **520 / 566** (2026-10-26, after `toXML`; 0 fail, 6
+error, 22 unsupported, 18 notyetpassing). It was 512 / 562 after `fromJSON`
+(26 unsupported). It was 487 / 542 after `toJSON`
 (31 unsupported). It was 473 / 535 after
 `functionArgs` (38 unsupported). It was 467 / 532 after
 the version and name primops (41 unsupported). It was 446 /
