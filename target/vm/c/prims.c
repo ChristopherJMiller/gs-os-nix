@@ -1829,7 +1829,7 @@ static void prim_dirof(void)
 }
 
 /* --- errors, forcing, types --------------------------------------------------------------- */
-static void throw_exit(uint8_t code)
+_Noreturn static void throw_exit(uint8_t code)
 {
     obj_t *so, *s = force_pop_as(T_STRING, &so);
     *(obj_t **)RESULT_ADDR = so;                /* the message travels in RESULT */

@@ -182,6 +182,11 @@ quiet-clock: build-a2min cvm nbc-build asm-headless
     ./scripts/quiet-clock.sh ./sim/build_a2min/a2min target/build/cvm.bin \
         target/build/nbc-fixtures target/build/storepath_demo_headless.bin {{VECTORS}}
 
+# ORCA/C's lint and the memory map's static asserts can fail: a planted
+# violation of each, in a copy, must stop the build (D14).
+orca-lint:
+    ./scripts/orca-lint-selftest.sh
+
 # Prove the collector fixtures can fail: break the remembered set six ways, object
 # sizes three, the nursery reserves four, path + once, string coercion twice and
 # SHA-256 three times.

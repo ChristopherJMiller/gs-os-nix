@@ -81,7 +81,7 @@ void vm_entry(void)
  * every register the frame saved is restored, and every thunk that was under
  * evaluation inside the tryEval is made a THUNK again, so forcing one a second
  * time re-runs it (and re-throws), as Nix would. Anything else ends the run. */
-void err_exit(uint8_t code)
+_Noreturn void err_exit(uint8_t code)
 {
     if ((code == E_THROW || code == E_ASSERT) && catch_n) {
         struct catch_frame *c = &catches[--catch_n];
@@ -98,9 +98,9 @@ void err_exit(uint8_t code)
     longjmp(top_jb, 1);
 }
 
-void nomem(void)    { err_exit(E_NOMEM); }
-void type_err(void) { err_exit(E_TYPE); }
-void badnbc(void)   { err_exit(E_BADNBC); }
+_Noreturn void nomem(void)    { err_exit(E_NOMEM); }
+_Noreturn void type_err(void) { err_exit(E_TYPE); }
+_Noreturn void badnbc(void)   { err_exit(E_BADNBC); }
 
 /* --- the loader ----------------------------------------------------------------------- */
 /* Validate the header, materialise every chunk's constants into the nursery,

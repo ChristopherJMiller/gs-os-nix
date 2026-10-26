@@ -66,6 +66,9 @@ static uint16_t gscan;      /* Cheney scan pointer */
  * stored twice is two entries, and evac() is idempotent -- because a search per
  * store would cost more than the rare duplicate does. */
 struct rs_entry { obj_t *obj; uint16_t off; obj_t *val; };
+#ifdef __ORCAC__
+_Static_assert(sizeof(struct rs_entry) == 10, "RSET_N entries of 10 bytes (vm.h)");
+#endif
 #define RSET ((struct rs_entry *)(YOUNG_TAG | RSET_BASE))
 uint16_t rs_n;
 

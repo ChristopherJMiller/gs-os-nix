@@ -440,6 +440,19 @@
             grep -q "MUTATION PASS" "$out"
           '';
 
+        # ORCA/C's lint (vm.h `#pragma lint -1`) and the memory map's
+        # _Static_asserts stop the build -- proven by planting a violation of
+        # each in a copy (scripts/orca-lint-selftest.sh, D14).
+        orca-lint = pkgs.runCommand "check-orca-lint"
+          { nativeBuildInputs = [ ours.orca-toolchain ]; }
+          ''
+            cp -r ${self}/target ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            ./scripts/orca-lint-selftest.sh | tee "$out"
+            grep -q "^ORCA LINT OK" "$out"
+          '';
+
         # D18: the C toolchain end to end. ORCA/C compiles target/tests/smoke.c under
         # orcarun, the ORCA linker links it, omf2bin flattens it, and a2min runs the
         # result: the bytes it leaves in the result area are checked against values

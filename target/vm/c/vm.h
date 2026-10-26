@@ -16,6 +16,11 @@
 #ifndef VM_H
 #define VM_H
 
+/* ORCA/C's own lint, every check, as errors: an undefined (unprototyped)
+ * function, an unused variable or a constant that a conversion changes stops
+ * the build. Every .c includes this first, so it covers all the VM's code. */
+#pragma lint -1
+
 #include <stdint.h>
 #include <string.h>
 #include <setjmp.h>
@@ -98,6 +103,14 @@
 #define RSET_BASE        0x0005F000UL
 #define RSET_N           256
 
+_Static_assert(WINDOW_BASE + WINDOW_RING == RSET_BASE, "the remembered set is just above the window ring");
+_Static_assert(RSET_BASE + 10UL * RSET_N <= 0x00060000UL, "the remembered set fits in bank 5");
+_Static_assert(WINDOW_RING - WINDOW_FLOOR >= 2UL * WINDOW_MAX, "two views of the largest objects fit an instruction");
+_Static_assert(IMAGE_MAX <= APPLY_CODE_OFF, "the .nbc image ends below the apply code");
+#ifdef __ORCAC__
+_Static_assert(sizeof(int) == 2 && sizeof(long) == 4 && sizeof(void *) == 4, "ORCA/C's data model");
+#endif
+
 #define GC_MARGIN        0x0800U    /* collect when less than this is free */
 #define NURSERY_LOW      0x2000U    /* with no card, a collection that leaves less than
                                        this free is E_NOMEM, not a storm (gc.c) */
@@ -124,6 +137,7 @@ typedef struct obj {
     uint8_t tag;
     uint8_t aux0, aux1, aux2;   /* 24-bit little-endian count/length, marks above */
 } obj_t;
+_Static_assert(sizeof(obj_t) == 4, "a header is four bytes (HEAP.md)");
 
 #define PBITS(p)     ((uint32_t)(p))
 /* Bytes and words of a 32-bit value, read out of its storage. ORCA/C compiles a
@@ -222,10 +236,10 @@ extern obj_t *str_success, *str_value;
 #define CTAB_OFF()     ((uint16_t)((uint8_t *)ctab - (uint8_t *)ctab_pool))
 
 /* --- main.c ----------------------------------------------------------------------- */
-void err_exit(uint8_t code);        /* never returns */
-void nomem(void);
-void type_err(void);
-void badnbc(void);
+_Noreturn void err_exit(uint8_t code);
+_Noreturn void nomem(void);
+_Noreturn void type_err(void);
+_Noreturn void badnbc(void);
 
 /* --- data.c: allocation, stacks, values ------------------------------------------ */
 obj_t *alloc(uint16_t size);        /* size a multiple of 4, >= 8 */

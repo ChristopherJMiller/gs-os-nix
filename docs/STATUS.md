@@ -73,10 +73,14 @@ path antiquotation, `import` as a value, `__curPos`, `toPath`,
 **A. Maintainability first** (the C review of 2026-10-25; its tools are in
 the session scratchpad and are adopted only after being read):
 
-1. Dead code out of bank 0: `card_name_eq`, `card_memcmp`, `gc_maybe`
-   (611 B), and the comments that still describe them.
-2. ORCA/C's own lint (`#pragma lint -1`), `_Noreturn` on the error exits,
-   `_Static_assert`s on the memory map.
+1. ~~Dead code out of bank 0~~ **done**: `card_name_eq`, `card_memcmp`,
+   `gc_maybe`; bank 0 38,406 -> 37,795 bytes.
+2. ~~ORCA/C's own lint, `_Noreturn`, `_Static_assert`s~~ **done**: `vm.h`
+   turns on `#pragma lint -1` for every VM file (an undefined function, an
+   unused variable or a constant a conversion changes stops the build), the
+   error exits are `_Noreturn`, and the memory map's invariants are asserts.
+   The binary is byte-identical. `checks.orca-lint` plants five violations in
+   a copy and requires each to stop the build.
 3. A bank-layout gate: bank-0 bytes as a ratchet, the linked ORCA/C runtime
    routines against an allowlist, no code in banks 1-3 or 5 -- and `omf2bin`
    refusing those banks itself.
