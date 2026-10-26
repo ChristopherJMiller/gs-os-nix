@@ -544,6 +544,209 @@ static void prim_listtoattrs(void)              /* [ { name; value; } ... ] */
     push(set);
 }
 
+/* --- more attribute-set primops: Nix 2.34's, rule by rule ------------------------------ */
+/* Nix's forceFunction, on a forced view and its original: a lambda (every
+ * primop is one here) or a set with __functor. */
+static void need_function(obj_t *v, obj_t *orig)
+{
+    if (v->tag == T_LAMBDA) return;
+    if (v->tag == T_ATTRS && has_attr(orig, str_functor)) return;
+    type_err();
+}
+
+/* Force the argument k from the top (1 = the top) in place, and check it is a
+ * function. */
+static void force_function_slot(uint16_t k)
+{
+    force_slot(k);
+    need_function(deref(vstack[vsp - k]), vstack[vsp - k]);
+}
+
+/* The value of the attribute a C literal names, or 0: the literal stays with
+ * the code, where a static name would be bank 0's. set is an original. */
+static obj_t *lit_attr(obj_t *set, const char *lit, uint16_t n)
+{
+    obj_t *s = deref(set);
+    uint16_t k = AUX16(s), i;
+    for (i = 0; i < k; ++i)
+        if (is_lit(deref(ANAMES(s, k)[i]), lit, n)) return AVALUES(deref(set), k)[i];
+    return 0;
+}
+
+static void prim_mapattrs(void)                 /* f set -> { n = f n v; }, each a thunk */
+{
+    obj_t *s = view_top_as(T_ATTRS), *f, *r;
+    uint16_t n = AUX16(s), i;
+    if (nursery_reserve_n(n, 68, 4)) s = view_top_as(T_ATTRS);   /* two applications and an entry each */
+    f = vstack[vsp - 2];                        /* not forced: Nix does not */
+    r = attrs_alloc(n);
+    for (i = 0; i < n; ++i) {
+        copy_entry(r, n, i, s, n, i);
+        AVALUES(r, n)[i] = make_apply(make_apply(f, ANAMES(s, n)[i]), AVALUES(s, n)[i]);
+    }
+    vsp -= 2;
+    push(r);
+}
+
+static void prim_catattrs(void)                 /* name [ sets ] -> their values for name, unforced */
+{
+    uint16_t b = rsp, n, i, found = 0, ix;
+    obj_t *lo, *l, *nm, *eo, *av;
+    force_slot(2);                              /* the name first, as Nix */
+    nm = deref(vstack[vsp - 2]);
+    if (nm->tag != T_STRING || CTX(nm)) type_err();
+    l = force_pop_as(T_LIST, &lo);
+    n = AUX16(l);
+    rpush(lo);
+    rpush(pop());                               /* b+1: the name */
+    for (i = 0; i < n; ++i) {
+        push(RELEM(b, i, n));
+        (void)force_pop_as(T_ATTRS, &eo);
+        if (find_attr(eo, rstack[b + 1], &ix, &av)) { push(av); ++found; }
+    }
+    rsp = b;
+    push(list_from_stack(found));
+}
+
+/* groupBy f list: f forced first, then the list; each element's group is f's
+ * value, a STRING without context. Groups keep their elements in order. */
+static void prim_groupby(void)
+{
+    uint16_t b = rsp, n, i, j, k, at, groups = 0, cnt = 0, size;
+    obj_t *lo, *l, *g, *go, *set, *r;
+    force_function_slot(2);
+    l = force_pop_as(T_LIST, &lo);
+    n = AUX16(l);
+    rpush(lo);
+    rpush(pop());                               /* b+1: f */
+    at = vsp;
+    for (i = 0; i < n; ++i) {                   /* (group, element) pairs on the stack */
+        call_with(rstack[b + 1], RELEM(b, i, n));
+        g = force_pop_as(T_STRING, &go);
+        if (CTX(g)) type_err();
+        push(go);
+        push(RELEM(b, i, n));
+    }
+    rsp = b;
+    for (i = 0; i < n; ++i) {                   /* the first of each group */
+        for (j = 0; j < i && str_cmp(deref(vstack[at + 2 * j]), deref(vstack[at + 2 * i])) != 1; ++j) ;
+        if (j == i) ++groups;
+    }
+    nursery_reserve_n(n, 20, 8);                /* the set, and a list per group: pairs are on the stack */
+    set = attrs_alloc(groups);
+    for (i = 0; i < n; ++i) {
+        for (j = 0; j < i && str_cmp(deref(vstack[at + 2 * j]), deref(vstack[at + 2 * i])) != 1; ++j) ;
+        if (j < i) continue;                    /* not the first of its group */
+        for (size = 0, k = i; k < n; ++k)
+            if (str_cmp(deref(vstack[at + 2 * k]), deref(vstack[at + 2 * i])) == 1) ++size;
+        r = list_alloc(size);
+        for (size = 0, k = i; k < n; ++k)
+            if (str_cmp(deref(vstack[at + 2 * k]), deref(vstack[at + 2 * i])) == 1)
+                ELEMS(r)[size++] = vstack[at + 2 * k + 1];
+        insert_entry(set, groups, &cnt, vstack[at + 2 * i], r);
+    }
+    vsp = at;
+    push(set);
+}
+
+/* zipAttrsWith f [ sets ]: f forced, the list, each set; every name once,
+ * whose value is the thunk f name [ its values, in list order ]. */
+static void prim_zipattrswith(void)
+{
+    uint16_t b = rsp, n, i, j, k, m, at, names = 0, total = 0, cnt = 0, size, ix;
+    obj_t *lo, *l, *eo, *e, *set, *r, *av;
+    force_function_slot(2);
+    l = force_pop_as(T_LIST, &lo);
+    n = AUX16(l);
+    rpush(lo);
+    rpush(pop());                               /* b+1: f */
+    at = vsp;
+    for (i = 0; i < n; ++i) {                   /* the forced sets on the stack */
+        push(RELEM(b, i, n));
+        e = force_pop_as(T_ATTRS, &eo);
+        total += AUX16(e);
+        push(eo);
+    }
+    for (i = 0; i < n; ++i) {                   /* then each name not seen before */
+        e = deref(vstack[at + i]);
+        m = AUX16(e);
+        for (k = 0; k < m; ++k) {
+            for (j = 0; j < names; ++j)
+                if (str_cmp(deref(vstack[at + n + j]), deref(ANAMES(deref(vstack[at + i]), m)[k])) == 1) break;
+            if (j == names) { push(ANAMES(deref(vstack[at + i]), m)[k]); ++names; }
+        }
+    }
+    nursery_reserve_n(total, 80, 8);            /* an entry, a list and two applications per name */
+    set = attrs_alloc(names);
+    for (j = 0; j < names; ++j) {
+        for (size = 0, i = 0; i < n; ++i) size += find_attr(vstack[at + i], vstack[at + n + j], &ix, &av);
+        r = list_alloc(size);
+        for (size = 0, i = 0; i < n; ++i)
+            if (find_attr(vstack[at + i], vstack[at + n + j], &ix, &av)) ELEMS(r)[size++] = av;
+        insert_entry(set, names, &cnt, vstack[at + n + j],
+                     make_apply(make_apply(rstack[b + 1], vstack[at + n + j]), r));
+    }
+    rsp = b;
+    vsp = at;
+    push(set);
+}
+
+/* genericClosure { startSet; operator; }: breadth first from startSet, an
+ * element kept when its key equals no kept key's (std::map's equality: neither
+ * is less, so a NaN key equals every other). The work list is the stack, in
+ * (element, key) pairs: a duplicate's element becomes 0, and the elements left
+ * are the result, in order. */
+static void prim_genericclosure(void)
+{
+    uint16_t b = rsp, at, q, j, n, i, kept = 0;
+    obj_t *ao, *l, *lo, *v, *eo;
+    int c;
+    (void)force_pop_as(T_ATTRS, &ao);
+    rpush(ao);                                  /* b: the argument */
+    if (!(v = lit_attr(ao, "startSet", 8))) err_exit(E_NOATTR);
+    push(v);
+    l = force_pop_as(T_LIST, &lo);
+    if (AUX16(l) == 0) { rsp = b; push(lo); return; }   /* Nix returns it before reading operator */
+    rpush(lo);                                  /* b+1: startSet */
+    if (!(v = lit_attr(rstack[b], "operator", 8))) err_exit(E_NOATTR);
+    push(v);
+    force_function_slot(1);
+    rpush(pop());                               /* b+2: operator */
+    at = vsp;
+    n = AUX16(deref(rstack[b + 1]));
+    for (i = 0; i < n; ++i) { push(RELEM(b + 1, i, n)); push(0); }
+    for (q = at; q < vsp; q += 2) {
+        push(vstack[q]);
+        (void)force_pop_as(T_ATTRS, &eo);
+        vstack[q] = eo;
+        if (!(v = lit_attr(eo, "key", 3))) err_exit(E_NOATTR);
+        push(v);
+        force_top();
+        vstack[q + 1] = pop();
+        for (j = at; j < q; j += 2) {
+            if (!vstack[j]) continue;
+            push(vstack[j + 1]);
+            push(vstack[q + 1]);
+            c = cmp_values();
+            if (c == 1 || c == 3) break;        /* the same key */
+        }
+        if (j < q) { vstack[q] = 0; continue; }
+        ++kept;
+        call_with(rstack[b + 2], vstack[q]);
+        l = force_pop_as(T_LIST, &lo);
+        n = AUX16(l);
+        rpush(lo);                              /* b+3 */
+        for (i = 0; i < n; ++i) { push(RELEM(b + 3, i, n)); push(0); }
+        rsp = b + 3;
+    }
+    rsp = b;
+    nursery_reserve_n(kept, 4, 4);
+    l = list_alloc(kept);
+    for (i = 0, q = at; q < vsp; q += 2) if (vstack[q]) ELEMS(l)[i++] = vstack[q];
+    vsp = at;
+    push(l);
+}
+
 static void prim_partition(void)                /* f list -> { right; wrong; } */
 {
     uint16_t b = rsp, n, i, nr = 0, nw = 0, at;
@@ -793,6 +996,12 @@ void op_prim(void)
     case PRIM_ISFLOAT:         is_tag(T_FLOAT); break;
     case PRIM_FLOOR:           prim_floor(); break;
     case PRIM_CEIL:            prim_ceil(); break;
+    case PRIM_MAPATTRS:        prim_mapattrs(); break;
+    case PRIM_CATATTRS:        prim_catattrs(); break;
+    case PRIM_GROUPBY:         prim_groupby(); break;
+    case PRIM_ZIPATTRSWITH:    prim_zipattrswith(); break;
+    case PRIM_ISPATH:          is_tag(T_PATH); break;
+    case PRIM_GENERICCLOSURE:  prim_genericclosure(); break;
     default:                   err_exit(E_BADOP);
     }
 }

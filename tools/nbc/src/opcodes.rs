@@ -128,6 +128,12 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("isFloat", 0x39, 1),
     ("floor", 0x3A, 1),
     ("ceil", 0x3B, 1),
+    ("mapAttrs", 0x3C, 2),
+    ("catAttrs", 0x3D, 2),
+    ("groupBy", 0x3E, 2),
+    ("zipAttrsWith", 0x3F, 2),
+    ("isPath", 0x40, 1),
+    ("genericClosure", 0x41, 1),
 ];
 
 /// The builtins Nix also exposes unqualified.

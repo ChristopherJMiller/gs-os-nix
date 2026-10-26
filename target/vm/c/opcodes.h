@@ -122,6 +122,12 @@
 #define PRIM_ISFLOAT            0x39 /* 1 */
 #define PRIM_FLOOR              0x3A /* 1 */
 #define PRIM_CEIL               0x3B /* 1 */
+#define PRIM_MAPATTRS           0x3C /* 2 */
+#define PRIM_CATATTRS           0x3D /* 2 */
+#define PRIM_GROUPBY            0x3E /* 2 */
+#define PRIM_ZIPATTRSWITH       0x3F /* 2 */
+#define PRIM_ISPATH             0x40 /* 1 */
+#define PRIM_GENERICCLOSURE     0x41 /* 1 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */

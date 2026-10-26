@@ -321,6 +321,12 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$39` | `isFloat` | 1 | `true` for a `FLOAT` |
 | `$3A` | `floor` | 1 | a `FLOAT` or `INT` to an `INT` in [-2^63, 2^63), else `E_TYPE` ([FLOAT.md](FLOAT.md)) |
 | `$3B` | `ceil` | 1 | likewise, rounding up |
+| `$3C` | `mapAttrs` | 2 | `f set` → the set's names, each value the thunk `f name value`; `f` is not forced |
+| `$3D` | `catAttrs` | 2 | `name list`: the name forced first (a `STRING` without context), then each element (an `ATTRS`); the values it has for `name`, unforced |
+| `$3E` | `groupBy` | 2 | `f list`: `f` forced (a function), then `f x` for each element, a `STRING` without context; `{ group = [ elements in order ]; }` |
+| `$3F` | `zipAttrsWith` | 2 | `f list`: `f` forced, each element forced (an `ATTRS`); every name once, its value the thunk `f name [ its values in list order ]` |
+| `$40` | `isPath` | 1 | `true` for a `PATH` |
+| `$41` | `genericClosure` | 1 | `{ startSet; operator; }`: breadth first from `startSet`; each element forced (an `ATTRS`), its `key` forced, and kept when no kept key equals it (as `std::map` with Nix's ordering: neither less; incomparable keys are `E_TYPE`); `operator` (forced only when `startSet` is not empty) gives each kept element's successors. The work list lives on the value stack, two slots an element |
 | `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`

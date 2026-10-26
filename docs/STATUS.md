@@ -158,10 +158,25 @@ is evaluated when the set is, in its scope, never merged, dropped when
 `null`, and a clash is `E_DUPATTR` (new, `$10`). Two opcodes, `ATTR_NAME` and
 `ATTRS_DYN`, whose work is in bank 4 (bank 0 +14). 10 corpus tests, 15
 fixtures, 4 mutations; one of them caught the first version, which took a
-computed name that was a selection of a thunk for a type error. Then `toJSON`/`fromJSON`/`toXML`/`fromTOML`; the primop tail (`mapAttrs`,
-`catAttrs`, `groupBy`, `genericClosure`, `functionArgs`, `splitVersion`,
-`compareVersions`, `parseDrvName`, `replaceStrings`, `sort`, regex `match`/
-`split`, ...); positions (`unsafeGetAttrPos`, `__curPos`); search paths, URI
+computed name that was a selection of a thunk for a type error. ~~The
+attribute-set primops~~ **done**: `mapAttrs`, `catAttrs`, `groupBy`,
+`zipAttrsWith`, `isPath`, `genericClosure` (primops `$3C`-`$41`), each
+forcing what Nix 2.34's primops.cc forces, in its order; 17 corpus tests
+(one, `zipAttrsWith`, tvix's own notyetpassing) and 13 fixtures, 9
+mutations. `genericClosure` compares a new key with every kept one, O(n^2)
+where Nix's `std::map` is O(n log n), and keeps its work list on the value
+stack, two slots an element (some 400 elements). **Bank 4 holds 49.6 KB of
+`prims`** and the float segment after it, 2.6 KB from full: the next
+segment goes to bank 6. **The rest of C, by measure** (the corpus's first
+refusals, 2026-10-26, and the host's 118 builtins against nbc's 66): `sort`
+(Nix's own peeksort, which shows with an invalid comparator: `sort (a: b:
+true) [ 1 2 3 ]` is `[ 3 2 1 ]`); `functionArgs` (the generator must keep
+the formals it desugars); `toJSON`/`fromJSON` (a float's shortest
+round-trip text), `toXML`, `fromTOML`; `compareVersions`, `splitVersion`,
+`parseDrvName`, `replaceStrings`; regex `match`/`split`; `trace`, `warn`,
+`break`, `addErrorContext`, `langVersion`, `nixVersion`, `storeDir`,
+`placeholder`, `toPath`, `builtins.builtins`, `convertHash`,
+`flakeRefToString`/`parseFlakeRef`; positions (`unsafeGetAttrPos`, `__curPos`); search paths, URI
 literals, path antiquotation, `import` as a value, `scopedImport`; then the
 file builtins, which need GS/OS file calls (a2min implementing the ones
 `orcarun` already does is the likely route, and is L7's own first step).
@@ -274,8 +289,10 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **406 / 501** (2026-10-26, after dynamic attribute
-names; 0 fail, 8 error, 67 unsupported, 20 notyetpassing). It was 381 / 486
+The scoreboard reads **436 / 514** (2026-10-26, after the attribute-set
+primops; 0 fail, 7 error, 52 unsupported, 19 notyetpassing). It was 406 / 501
+after dynamic attribute names (0 fail, 8 error, 67 unsupported, 20
+notyetpassing). It was 381 / 486
 after the primop printer (0 fail, 8 error, 77 unsupported). It was 379 / 485 after
 floats (1 fail, 8 error, 77 unsupported, 20 notyetpassing). Floats brought 18 corpus tests and
 10 fixtures. The fail is tvix's `eval-okay-value-display`, refused for its
