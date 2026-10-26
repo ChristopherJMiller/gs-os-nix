@@ -443,3 +443,276 @@ uint16_t f_format(uint64_t a, char *buf)
     for (i = 6; i-- > 0; ) buf[len++] = d[i];
     return len;
 }
+
+/* --- toJSON's floats: nlohmann/json's to_chars --------------------------------------------- */
+/* Nix prints a float in JSON with nlohmann/json, whose to_chars is Grisu2: it
+ * always round-trips but is not always the shortest, so the VM ports it step
+ * for step rather than print the shortest digits (docs/FLOAT.md). From
+ * nlohmann/json 3.12.0 include/nlohmann/detail/conversions/to_chars.hpp,
+ * under this notice:
+ *
+ *   SPDX-FileCopyrightText: 2009 Florian Loitsch <https://florian.loitsch.com/>
+ *   SPDX-FileCopyrightText: 2013 - 2025 Niels Lohmann <https://nlohmann.me>
+ *   SPDX-License-Identifier: MIT
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a
+ *   copy of this software and associated documentation files (the
+ *   "Software"), to deal in the Software without restriction, including
+ *   without limitation the rights to use, copy, modify, merge, publish,
+ *   distribute, sublicense, and/or sell copies of the Software, and to permit
+ *   persons to whom the Software is furnished to do so, subject to the
+ *   following conditions:
+ *
+ *   The above copyright notice and this permission notice shall be included
+ *   in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ *   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+ *   NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+ *   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+ *   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+ *   USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * A diyfp is f * 2^e, kept as two variables: a struct copy would link ~MOVE
+ * into bank 0. */
+
+/* The upper 64 bits of x * y, rounded (diyfp::mul; the exponent is the sum
+ * plus 64). */
+static uint64_t dfp_mul(uint64_t x, uint64_t y)
+{
+    uint64_t u_lo = x & 0xFFFFFFFFUL, u_hi = x >> 32, v_lo = y & 0xFFFFFFFFUL, v_hi = y >> 32;
+    uint64_t p0 = u_lo * v_lo, p1 = u_lo * v_hi, p2 = u_hi * v_lo, p3 = u_hi * v_hi;
+    uint64_t q = (p0 >> 32) + (p1 & 0xFFFFFFFFUL) + (p2 & 0xFFFFFFFFUL);
+    q += (uint64_t)1 << 31;                     /* round, ties up */
+    return p3 + (p2 >> 32) + (p1 >> 32) + (q >> 32);
+}
+
+/* get_cached_power_for_binary_exponent: c = f * 2^e ~= 10^-k, k returned.
+ * The table is nlohmann's kCachedPowers, 10 bytes an entry (f, e; k is
+ * -300 + 8i), in a literal: a literal stays with this code in its segment,
+ * a static table would be bank 0's. k = f * 78913 / 2^18 (+1), C++'s
+ * truncating division, done in shifts and unsigned: a signed 32-bit divide or
+ * multiply would link a runtime routine into bank 0. */
+static int16_t cached_power(int16_t e, uint64_t *cf, int16_t *ce)
+{
+    const uint8_t *t = (const uint8_t *)
+        "\xCA\xC6\x9A\xC7\x17\xFE\x70\xAB\xDC\xFB\x4F\xDC\xBC\xBE\xFC\xB1\x77\xFF\xF6\xFB"
+        "\x0C\xD6\x6B\x41\xEF\x91\x56\xBE\x11\xFC\x3C\xFC\x7F\x90\xAD\x1F\xD0\x8D\x2C\xFC"
+        "\x83\x9A\x55\x31\x28\x5C\x51\xD3\x46\xFC\xB5\xC9\xA6\xAD\x8F\xAC\x71\x9D\x61\xFC"
+        "\xCB\x8B\xEE\x23\x77\x22\x9C\xEA\x7B\xFC\x6D\x53\x78\x40\x91\x49\xCC\xAE\x96\xFC"
+        "\x57\xCE\xB6\x5D\x79\x12\x3C\x82\xB1\xFC\x37\x56\xFB\x4D\x36\x94\x10\xC2\xCB\xFC"
+        "\x4F\x98\x48\x38\x6F\xEA\x96\x90\xE6\xFC\xC7\x3A\x82\x25\xCB\x85\x74\xD7\x00\xFD"
+        "\xF4\x97\xBF\x97\xCD\xCF\x86\xA0\x1B\xFD\xE5\xAC\x2A\x17\x98\x0A\x34\xEF\x35\xFD"
+        "\x8E\xB2\x35\x2A\xFB\x67\x38\xB2\x50\xFD\x3B\x3F\xC6\xD2\xDF\xD4\xC8\x84\x6B\xFD"
+        "\xBA\xCD\xD3\x1A\x27\x44\xDD\xC5\x85\xFD\x96\xC9\x25\xBB\xCE\x9F\x6B\x93\xA0\xFD"
+        "\x84\xA5\x62\x7D\x24\x6C\xAC\xDB\xBA\xFD\xF6\xDA\x5F\x0D\x58\x66\xAB\xA3\xD5\xFD"
+        "\x26\xF1\xC3\xDE\x93\xF8\xE2\xF3\xEF\xFD\xB8\x80\xFF\xAA\xA8\xAD\xB5\xB5\x0A\xFE"
+        "\x8B\x4A\x7C\x6C\x05\x5F\x62\x87\x25\xFE\x53\x30\xC1\x34\x60\xFF\xBC\xC9\x3F\xFE"
+        "\x55\x26\xBA\x91\x8C\x85\x4E\x96\x5A\xFE\xBD\x7E\x29\x70\x24\x77\xF9\xDF\x74\xFE"
+        "\x8F\xB8\xE5\xB8\x9F\xBD\xDF\xA6\x8F\xFE\x94\x7D\x74\x88\xCF\x5F\xA9\xF8\xA9\xFE"
+        "\xCF\x9B\xA8\x8F\x93\x70\x44\xB9\xC4\xFE\x6B\x15\x0F\xBF\xF8\xF0\x08\x8A\xDF\xFE"
+        "\xB6\x31\x31\x65\x55\x25\xB0\xCD\xF9\xFE\xAC\x7F\x7B\xD0\xC6\xE2\x3F\x99\x14\xFF"
+        "\x06\x3B\x2B\x2A\xC4\x10\x5C\xE4\x2E\xFF\xD3\x92\x73\x69\x99\x24\x24\xAA\x49\xFF"
+        "\x0E\xCA\x00\x83\xF2\xB5\x87\xFD\x63\xFF\xEB\x1A\x11\x92\x64\x08\xE5\xBC\x7E\xFF"
+        "\xCC\x88\x50\x6F\x09\xCC\xBC\x8C\x99\xFF\x2C\x65\x19\xE2\x58\x17\xB7\xD1\xB3\xFF"
+        "\x00\x00\x00\x00\x00\x00\x40\x9C\xCE\xFF\x00\x00\x00\x00\x10\xA5\xD4\xE8\xE8\xFF"
+        "\x00\x00\x62\xAC\xC5\xEB\x78\xAD\x03\x00\x84\x09\x94\xF8\x78\x39\x3F\x81\x1E\x00"
+        "\xB3\x15\x07\xC9\x7B\xCE\x97\xC0\x38\x00\x70\x5C\xEA\x7B\xCE\x32\x7E\x8F\x53\x00"
+        "\x68\x80\xE9\xAB\xA4\x38\xD2\xD5\x6D\x00\x45\x22\x9A\x17\x26\x27\x4F\x9F\x88\x00"
+        "\x27\xFB\xC4\xD4\x31\xA2\x63\xED\xA2\x00\xA8\xAD\xC8\x8C\x38\x65\xDE\xB0\xBD\x00"
+        "\xDB\x65\xAB\x1A\x8E\x08\xC7\x83\xD8\x00\x9A\x1D\x71\x42\xF9\x1D\x5D\xC4\xF2\x00"
+        "\x58\xE7\x1B\xA6\x2C\x69\x4D\x92\x0D\x01\xEA\x8D\x70\x1A\x64\xEE\x01\xDA\x27\x01"
+        "\x4A\x77\xEF\x9A\x99\xA3\x6D\xA2\x42\x01\x85\x6B\x7D\xB4\x7B\x78\x09\xF2\x5C\x01"
+        "\x77\x18\xDD\x79\xA1\xE4\x54\xB4\x77\x01\xC2\xC5\x9B\x5B\x92\x86\x5B\x86\x92\x01"
+        "\x3D\x5D\x96\xC8\xC5\x53\x35\xC8\xAC\x01\xB3\xA0\x97\xFA\x5C\xB4\x2A\x95\xC7\x01"
+        "\xE3\x5F\xA0\x99\xBD\x9F\x46\xDE\xE1\x01\x25\x8C\x39\xDB\x34\xC2\x9B\xA5\xFC\x01"
+        "\x5C\x9F\x98\xA3\x72\x9A\xC6\xF6\x16\x02\xCE\xBE\xE9\x54\x53\xBF\xDC\xB7\x31\x02"
+        "\xE2\x41\x22\xF2\x17\xF3\xFC\x88\x4C\x02\xA5\x78\x5C\xD3\x9B\xCE\x20\xCC\x66\x02"
+        "\xDF\x53\x21\x7B\xF3\x5A\x16\x98\x81\x02\x3A\x30\x1F\x97\xDC\xB5\xA0\xE2\x9B\x02"
+        "\x96\xB3\xE3\x5C\x53\xD1\xD9\xA8\xB6\x02\x3C\x44\xA7\xA4\xD9\x7C\x9B\xFB\xD0\x02"
+        "\x10\x44\xA4\xA7\x4C\x4C\x76\xBB\xEB\x02\x1A\x9C\x40\xB6\xEF\x8E\xAB\x8B\x06\x03"
+        "\x2C\x84\x57\xA6\x10\xEF\x1F\xD0\x20\x03\x29\x31\x91\xE9\xE5\xA4\x10\x9B\x3B\x03"
+        "\x9D\x0C\x9C\xA1\xFB\x9B\x10\xE7\x55\x03\x29\xF4\x3B\x62\xD9\x20\x28\xAC\x70\x03"
+        "\x85\xCF\xA7\x7A\x5E\x4B\x44\x80\x8B\x03\x2D\xDD\xAC\x03\x40\xE4\x21\xBF\xA5\x03"
+        "\x8F\xFF\x44\x5E\x2F\x9C\x67\x8E\xC0\x03\x41\xB8\x8C\x9C\x9D\x17\x33\xD4\xDA\x03"
+        "\xA9\x1B\xE3\xB4\x92\xDB\x19\x9E\xF5\x03";
+    int16_t f = -61 - e, k;
+    uint32_t a, p;
+    uint16_t i;
+    a = (uint32_t)(f < 0 ? -f : f);
+    p = (a << 16) + (a << 13) + (a << 12) + (a << 10) + (a << 6) + a;   /* a * 78913 */
+    k = (int16_t)(p >> 18);
+    if (f < 0) k = -k;
+    else if (f > 0) ++k;
+    i = (uint16_t)(300 + k + 7) >> 3;
+    memcpy(cf, t + 10 * i, 8);
+    memcpy(ce, t + 10 * i + 8, 2);
+    return -300 + 8 * (int16_t)i;
+}
+
+static uint16_t largest_pow10(uint32_t n, uint32_t *pow10)   /* find_largest_pow10 */
+{
+    uint32_t p = 1000000000UL;
+    uint16_t k = 10;
+    while (k > 1 && n < p) { p /= 10; --k; }
+    *pow10 = p;
+    return k;
+}
+
+static void grisu2_round(char *buf, uint16_t len, uint64_t dist, uint64_t delta, uint64_t rest, uint64_t ten_k)
+{
+    while (rest < dist && delta - rest >= ten_k && (rest + ten_k < dist || dist - rest > rest + ten_k - dist)) {
+        buf[len - 1]--;
+        rest += ten_k;
+    }
+}
+
+/* grisu2_digit_gen: the digits of V, M- <= V <= M+, all at the exponent e
+ * (-60..-32); *dexp is adjusted. Its length. */
+static uint16_t grisu2_digits(char *buf, int16_t *dexp, uint64_t mm, uint64_t w, uint64_t mp, int16_t e)
+{
+    uint64_t delta = mp - mm, dist = mp - w, one = shl(1, (uint16_t)-e), p2, rest, d;
+    uint32_t p1, pow10, dd;
+    uint16_t len = 0, n, m = 0, s = (uint16_t)-e;
+    p1 = (uint32_t)shr(mp, s);
+    p2 = mp & (one - 1);
+    n = largest_pow10(p1, &pow10);
+    while (n > 0) {
+        dd = p1 / pow10;
+        p1 %= pow10;
+        buf[len++] = (char)('0' + dd);
+        --n;
+        rest = shl(p1, s) + p2;
+        if (rest <= delta) {
+            *dexp += (int16_t)n;
+            grisu2_round(buf, len, dist, delta, rest, shl(pow10, s));
+            return len;
+        }
+        pow10 /= 10;
+    }
+    for (;;) {
+        p2 *= 10;
+        d = shr(p2, s);
+        p2 &= one - 1;
+        buf[len++] = (char)('0' + (uint16_t)d);
+        ++m;
+        delta *= 10;
+        dist *= 10;
+        if (p2 <= delta) break;
+    }
+    *dexp -= (int16_t)m;
+    grisu2_round(buf, len, dist, delta, p2, one);
+    return len;
+}
+
+/* The e of a normalised f (top bit set): how far to shift f, which must not
+ * be 0. */
+static uint16_t norm(uint64_t *f)
+{
+    uint16_t z = clz64(*f);
+    *f = shl(*f, z);
+    return z;
+}
+
+/* compute_boundaries and grisu2: the digits of the positive finite a, and
+ * *dexp such that a ~= digits * 10^dexp. */
+static uint16_t grisu2(uint64_t a, char *buf, int16_t *dexp)
+{
+    int16_t E = F_EXP(a), ve, pe, me, ce;
+    uint64_t F = F_FRAC(a), vf, pf, mf, cf, w, wm, wp;
+    if (E == 0) { vf = F; ve = -1074; }
+    else { vf = F + ((uint64_t)1 << 52); ve = E - 1075; }
+    pf = 2 * vf + 1;                            /* m+ = (2v + 1) * 2^(e-1) */
+    pe = ve - 1;
+    if (F == 0 && E > 1) { mf = 4 * vf - 1; me = ve - 2; }   /* the lower boundary is closer */
+    else { mf = 2 * vf - 1; me = ve - 1; }
+    pe -= (int16_t)norm(&pf);                   /* w+ normalised */
+    mf = shl(mf, (uint16_t)(me - pe));          /* w- to w+'s exponent */
+    ve -= (int16_t)norm(&vf);                   /* w normalised: the same exponent as w+ */
+    *dexp = -cached_power(pe, &cf, &ce);
+    w  = dfp_mul(vf, cf);
+    wm = dfp_mul(mf, cf);
+    wp = dfp_mul(pf, cf);
+    (void)ve;
+    return grisu2_digits(buf, dexp, wm + 1, w, wp - 1, pe + ce + 64);
+}
+
+/* append_exponent: e, -1000 < e < 1000, as nlohmann writes it: a sign and
+ * at least two digits. */
+static uint16_t json_exp(char *buf, int16_t e)
+{
+    uint16_t k, n = 0;
+    buf[n++] = e < 0 ? '-' : '+';
+    k = (uint16_t)(e < 0 ? -e : e);
+    if (k >= 100) { buf[n++] = (char)('0' + k / 100); k %= 100; buf[n++] = (char)('0' + k / 10); }
+    else { buf[n++] = (char)('0' + k / 10); }
+    buf[n++] = (char)('0' + k % 10);
+    return n;
+}
+
+/* buf[at..at+n) moved up by by bytes, the overlap copied from the top down:
+ * memmove would link into bank 0 (136 bytes). */
+static void move_up(char *buf, uint16_t at, uint16_t n, uint16_t by)
+{
+    while (n--) buf[at + n + by] = buf[at + n];
+}
+
+/* format_buffer: lays out the k digits at buf, a ~= digits * 10^(n - k), as
+ * nlohmann does -- fixed point for 10^-4 <= a < 10^15, else d.ddde+NN. Its
+ * length. (One exit: with a return in each case, ORCA/C 2.3.0b1's optimizer
+ * produced a branch the linker could not reach, "Relative address out of
+ * range" -- TOOLCHAIN.md.) */
+static uint16_t json_layout(char *buf, int16_t k, int16_t n)
+{
+    uint16_t i, len;
+    if (k <= n && n <= 15) {                    /* digits[000].0 */
+        memset(buf + k, '0', (size_t)(n - k));
+        buf[n] = '.';
+        buf[n + 1] = '0';
+        len = (uint16_t)n + 2;
+    } else if (0 < n && n <= 15) {              /* dig.its */
+        move_up(buf, (uint16_t)n, (uint16_t)(k - n), 1);
+        buf[n] = '.';
+        len = (uint16_t)k + 1;
+    } else if (-4 < n && n <= 0) {              /* 0.[000]digits */
+        move_up(buf, 0, (uint16_t)k, (uint16_t)(2 - n));
+        buf[0] = '0';
+        buf[1] = '.';
+        for (i = 0; i < (uint16_t)-n; ++i) buf[2 + i] = '0';
+        len = 2 + (uint16_t)-n + (uint16_t)k;
+    } else {
+        if (k == 1) i = 1;                      /* dE+123 */
+        else {                                  /* d.igitsE+123 */
+            move_up(buf, 1, (uint16_t)(k - 1), 1);
+            buf[1] = '.';
+            i = (uint16_t)k + 1;
+        }
+        buf[i++] = 'e';
+        len = i + json_exp(buf + i, n - 1);
+    }
+    return len;
+}
+
+/* nlohmann's dump_float of a double: "null" for an infinity or a NaN, else
+ * to_chars -- a sign, "0.0" for a zero, else Grisu2's digits laid out by
+ * format_buffer. Its length; buf holds F_JSON_MAX. */
+uint16_t f_json(uint64_t a, char *buf)
+{
+    uint16_t s = 0, len;
+    int16_t dexp;
+    if (F_EXP(a) == 0x7FF) {
+        memcpy(buf, "null", 4);
+        len = 4;
+    } else {
+        if (F_SIGN(a)) { buf[s++] = '-'; a &= ~SIGN_BIT; }
+        if (a == 0) {
+            memcpy(buf + s, "0.0", 3);
+            len = s + 3;
+        } else {
+            len = grisu2(a, buf + s, &dexp);
+            len = s + json_layout(buf + s, (int16_t)len, (int16_t)len + dexp);
+        }
+    }
+    return len;
+}

@@ -53,7 +53,10 @@ version** ([LICENSE](LICENSE)). SPDX: `GPL-3.0-or-later`.
 Included under their own terms: the tvix corpus in `tests/corpus/tvix/` (GPL-3.0)
 and Nix's `derivation.nix` in `tools/nbc/src/` (LGPL-2.1), and `builtins.sort`'s
 peeksort in `target/vm/c/prims.c`, ported from Nix's `sort.hh` (LGPL-2.1), which
-adapts Sebastian Wild's powersort (MIT; its notice is with the code). Not included at all:
+adapts Sebastian Wild's powersort (MIT; its notice is with the code), and
+`builtins.toJSON`'s float formatting in `target/vm/c/float.c`, ported from
+nlohmann/json's `to_chars.hpp` (MIT, Florian Loitsch and Niels Lohmann; its notice
+is with the code). Not included at all:
 ORCA/C, which every build fetches from Byte Works under its own
 non-redistributable licence, and the Apple IIgs ROMs, which you supply
 ([docs/SOURCES.md](docs/SOURCES.md)).

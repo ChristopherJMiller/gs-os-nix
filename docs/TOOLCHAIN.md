@@ -114,6 +114,14 @@ The rewrite is an `if`. Nothing else in the VM had either shape. Measured
 for the first: optimize levels 2, 4, 8 and 14 compile it correctly, 1, 7, 11,
 13 and 15 do not; the second was seen at 1 and 15.
 
+A third, found writing `f_json` (toJSON's floats), fails loudly instead:
+**the link stops with "Relative address out of range"** inside a function of
+a dozen early `return`s over 64-bit and pointer arithmetic, with optimizer
+bits 1, 2 and 8 together (optimize 11 and 15; every other combination links,
+measured on a copy of the function alone, without its string literals too).
+A build that fails is no hazard, so there is no lint: the function has one
+exit now (`float.c` `json_layout`).
+
 ## Gates
 
 - **`checks.orcac-smoke`** — compile, link, convert, run; assert the result bytes.

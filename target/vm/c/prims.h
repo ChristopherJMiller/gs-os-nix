@@ -57,6 +57,7 @@ void prim_compareversions(void);                    /* strings.c: names.cc's rul
 void prim_splitversion(void);
 void prim_parsedrvname(void);
 void prim_replacestrings(void);
+void prim_tojson(void);                             /* json.c */
 void prim_unsafediscardstringcontext(void);
 void prim_unsafediscardoutputdependency(void);
 void prim_adddrvoutputdependencies(void);

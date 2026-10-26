@@ -96,6 +96,11 @@ fixtures/eval-fail-tofile-name
 fixtures/eval-fail-tofile-name-context
 fixtures/eval-fail-tofile-output
 fixtures/eval-fail-tofile-whole
+fixtures/eval-fail-tojson-continuation
+fixtures/eval-fail-tojson-function
+fixtures/eval-fail-tojson-incomplete
+fixtures/eval-fail-tojson-order
+fixtures/eval-fail-tojson-tostring-int
 fixtures/eval-fail-zipattrswith-function
 fixtures/eval-okay-assert
 fixtures/eval-okay-attr-builtins
@@ -156,6 +161,7 @@ fixtures/eval-okay-strings
 fixtures/eval-okay-tail-call
 fixtures/eval-okay-thunk-chain
 fixtures/eval-okay-tofile
+fixtures/eval-okay-tojson
 fixtures/eval-okay-tostring-int64
 fixtures/eval-okay-tostring-lists
 fixtures/eval-okay-tostring-widths
@@ -169,6 +175,7 @@ fixtures/refuse-derivation-hash-git
 fixtures/refuse-derivation-hash-text
 fixtures/refuse-derivation-path
 fixtures/refuse-hashstring-md5
+fixtures/refuse-tojson-path
 tvix/nix_tests/eval-okay-any-all
 tvix/nix_tests/eval-okay-arithmetic
 tvix/nix_tests/eval-okay-attrnames
@@ -232,6 +239,7 @@ tvix/nix_tests/eval-okay-splitversion
 tvix/nix_tests/eval-okay-string
 tvix/nix_tests/eval-okay-strings-as-attrs-names
 tvix/nix_tests/eval-okay-substring
+tvix/nix_tests/eval-okay-tojson
 tvix/nix_tests/eval-okay-tryeval
 tvix/nix_tests/eval-okay-types
 tvix/nix_tests/eval-okay-versions
@@ -323,8 +331,14 @@ tvix/tvix_tests/eval-okay-builtins-substring-negative-length
 tvix/tvix_tests/eval-okay-builtins-tail
 tvix/tvix_tests/eval-okay-builtins-tail-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-thunked-function-calls
+tvix/tvix_tests/eval-okay-builtins-to-json-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-to-string-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-toString
+tvix/tvix_tests/eval-okay-builtins-tojson-literals
+tvix/tvix_tests/eval-okay-builtins-tojson-outpath
+tvix/tvix_tests/eval-okay-builtins-tojson-outpath-nested
+tvix/tvix_tests/eval-okay-builtins-tojson-thunks
+tvix/tvix_tests/eval-okay-builtins-tojson-tostring
 tvix/tvix_tests/eval-okay-builtins-type-of
 tvix/tvix_tests/eval-okay-builtins-type-of-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-type-predicates

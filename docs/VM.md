@@ -168,10 +168,14 @@ target/vm/c/
   card.c      the driver: ALU64, RESERVE, DATA, LOOKUP, the SHA-256 verbs
   sha256.c    SHA-256 and the store-path fold on the CPU, for no card -- bank 4
   float.c     IEEE-754 binary64 on bit patterns, and %f: no VM in it, so
-              checks.float-vectors tests it alone (FLOAT.md) -- bank 4, segment "float"
+              checks.float-vectors tests it alone (FLOAT.md) -- segment "float"
   numbers.c   the VM's floats: FLOAT objects, mixed INT/float arithmetic and
-              comparison, floor, ceil, toString -- bank 4, segment "float"
+              comparison, floor, ceil, toString -- segment "float"
+  json.c      builtins.toJSON: Nix's tree, then nlohmann's text -- segment "json"
 ```
+
+`float` and `json` are in bank 6: `prims` fills bank 4 (omf2bin skips bank 5,
+the window ring).
 
 `target/vm/c/SOURCES` is the one list of sources, in link order: the flake's
 `mkOrcaBinary`, `just cvm` and every script that builds the VM read it. Each

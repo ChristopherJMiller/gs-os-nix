@@ -103,6 +103,10 @@
             pkg-config
           ];
 
+          # toJSON's float answers come from the library Nix prints JSON with
+          # (scripts/float-vectors.sh, scripts/json-floats.cpp).
+          NLOHMANN_INCLUDE = "${pkgs.nlohmann_json}/include";
+
           shellHook = ''
             echo "gs-os-nix  --  see docs/STATUS.md to resume"
             echo "  ca65      $(ca65 --version 2>&1 | head -1)"
@@ -447,8 +451,8 @@
           '';
 
         # float.c, built by ORCA/C and run on a2min, against the host's own
-        # IEEE-754 arithmetic and printf (scripts/float-vectors.sh): three
-        # seeds of 1,120 vectors, then a planted rounding bug (D14).
+        # IEEE-754 arithmetic, printf and toJSON's text (scripts/float-vectors.sh):
+        # three seeds of 1,520 vectors, then two planted bugs (D14).
         float-vectors = pkgs.runCommandCC "check-float-vectors"
           { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ]; }
           ''
@@ -460,7 +464,7 @@
               -Wall -Wno-DECLFILENAME \
               --Mdir build -o a2min \
               rtl/a2nix_card.v sim/a2min.cpp
-            ./scripts/float-vectors.sh ./build/a2min > fv.txt || { cat fv.txt; exit 1; }
+            NLOHMANN_INCLUDE=${pkgs.nlohmann_json}/include ./scripts/float-vectors.sh ./build/a2min > fv.txt || { cat fv.txt; exit 1; }
             cat fv.txt
             grep -q "^FLOAT VECTORS OK" fv.txt
             cp fv.txt "$out"

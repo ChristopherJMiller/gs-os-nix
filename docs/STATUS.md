@@ -183,8 +183,15 @@ corpus tests, 3 fixtures, 3 mutations; bank 0 +7). **`mutation-vm` is three
 times faster per mutation** (20 s to 6 s, measured on eight): the baseline
 times each fixture, a mutated VM runs every fixture plainly first, cheapest
 first, before the stress modes, and only the mutated file is recompiled
-(the split build is byte-identical to `orcabuild`'s); `toJSON`/`fromJSON` (a float's shortest
-round-trip text), `toXML`, `fromTOML`; ~~`compareVersions`, `splitVersion`,
+(the split build is byte-identical to `orcabuild`'s); ~~`toJSON`~~ **done**
+(`json.c`): Nix's two steps kept apart, the tree (every value forced in
+Nix's order, `__toString` before `outPath`, contexts united) and then
+nlohmann's text, so a UTF-8 error comes after any evaluation error as on the
+host; a float's text is nlohmann's Grisu2, ported (FLOAT.md) -- not the
+shortest digits, which would differ where Grisu2 does -- and held to
+nlohmann itself by `checks.float-vectors`; 7 corpus tests, 7 fixtures, 6
+mutations, bank 0 +1. A third ORCA/C optimizer bug on the way, a link error
+this time (TOOLCHAIN.md); `fromJSON`, `toXML`, `fromTOML`; ~~`compareVersions`, `splitVersion`,
 `parseDrvName`, `replaceStrings`~~ **done** (`names.cc` and `primops.cc` rule
 by rule: a run of digits is a version number only while it fits a C++
 `int`; a `to` is forced on first use; 10 corpus tests -- one, tvix's
@@ -254,7 +261,7 @@ a2min.
   other, were decided -- soft-float in C -- and are done: [FLOAT.md](FLOAT.md).)
 - **Card-side `MARK`** only when the promoted-bytes counter shows the 512 KB
   ceiling binding on a real program; nothing has yet.
-- **Bank 0** (38,210 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
+- **Bank 0** (38,211 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
   far pointers would buy the md5/sha1/sha512 tables. Watch for ORCA/C library
   routines: a struct copy links `~MOVE`, a variable left shift `~SHIFTLEFT`.
 - **The `eval-fail` corpus**, and **L5** (self-hosting, D7's exit).
@@ -287,8 +294,9 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-**Bank 0: 38,210 of 40,960 bytes** (2026-10-26, after `functionArgs`, +7
-for `LAMBDA_ARGS`; 38,203 after dynamic attribute names, +14 for two opcode
+**Bank 0: 38,211 of 40,960 bytes** (2026-10-26, after `toJSON`, +1, an
+object file's `~GLOBALS` byte; 38,210 after `functionArgs`, +7 for
+`LAMBDA_ARGS`; 38,203 after dynamic attribute names, +14 for two opcode
 cases; 38,189 after floats: +419, a tag
 test in each operation that can see a float -- the work is in bank 4 -- and
 `~SHL8`/`~LSHR8`, which ORCA/C links for any 64-bit shift; 37,770 after the
@@ -309,8 +317,9 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **473 / 535** (2026-10-26, after `functionArgs`; 0
-fail, 6 error, 38 unsupported, 18 notyetpassing). It was 467 / 532 after
+The scoreboard reads **487 / 542** (2026-10-26, after `toJSON`; 0 fail, 6
+error, 31 unsupported, 18 notyetpassing). It was 473 / 535 after
+`functionArgs` (38 unsupported). It was 467 / 532 after
 the version and name primops (41 unsupported). It was 446 /
 521 after `sort` (6 error, 50 unsupported). It was 436 / 514 after the
 attribute-set primops (7 error, 52 unsupported). It was 406 / 501

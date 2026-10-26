@@ -1201,6 +1201,7 @@ void op_prim(void)
     case PRIM_PARSEDRVNAME:    prim_parsedrvname(); break;
     case PRIM_REPLACESTRINGS:  prim_replacestrings(); break;
     case PRIM_FUNCTIONARGS:    prim_functionargs(); break;
+    case PRIM_TOJSON:          prim_tojson(); break;
     default:                   err_exit(E_BADOP);
     }
 }

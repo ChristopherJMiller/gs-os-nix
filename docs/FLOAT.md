@@ -57,6 +57,7 @@ the round trip through a double is an error too (Nix's own guard, issue 12899).
 |---|---|---|
 | `--eval`'s printer (a2min, the harness) | C++ `ostream << double`: `%g`, 6 significant digits | `1`, `0.333333`, `1.23457e+06`, `1e-05`, `inf`, `-0`, `-nan` |
 | `toString` (the VM: a STRING value) | `std::to_string`: `%f`, 6 decimals, exact | `"0.100000"`, `"4.200000"`, `"-0.000000"`, `"-nan"`, `"1000000000000000019884624838656.000000"`; `0.0000005` is `"0.000000"` and `0.0000015` `"0.000002"`, each the exact binary value rounded |
+| `toJSON` (the VM) | nlohmann/json's `dump`: its `to_chars`, Grisu2, then fixed point for 10^-4 <= x < 10^15, else `d.ddde+NN`; an infinity or a NaN `null` | `1.0`, `0.1`, `0.30000000000000004`, `1e+15`, `1e-05`, `0.0001`, `123456789.0`, `-0.0`, `1.7976931348623157e+308` |
 
 The printer is the harness's, so a2min prints with the host's own `printf`. A
 `toString` is the VM's to compute, and exactly: the decimal expansion of a
@@ -65,12 +66,23 @@ value, so `float.c` works on the integer `M * 2^E` with a bignum of 16-bit
 limbs (a double's integer part has at most 309 digits). `"${x}"` of a float is
 an error, as in Nix (only `toString`'s wider rules coerce one).
 
+**toJSON's digits are Grisu2's, not the shortest**: Grisu2 always round-trips
+but in rare cases gives more digits than the shortest text that does, and
+Nix prints what nlohmann's Grisu2 gives. So `float.c` `f_json` ports
+nlohmann's `to_chars.hpp` (3.12.0, MIT; the notice is with the code) step for
+step: the boundaries, the cached power of ten (its 79-entry table a string
+literal, which stays with the code -- a static table would be bank 0's), the
+digit generation and its rounding, and `format_buffer`'s layout.
+`checks.float-vectors` holds it to nlohmann itself: `scripts/json-floats.cpp`
+answers 400 vectors per seed with `nlohmann::json(x).dump()`, and a planted
+bug (Grisu2 without its rounding step) must be caught, as it is, by 142.
+
 `typeOf` is `"float"`; `builtins.isFloat`.
 
 ## Where
 
-Two files in `segment "float"`, which bank 4 holds after the 44 KB of
-`prims` (omf2bin places a segment in bank 4 while it fits, then bank 6):
+Two files in `segment "float"`, in bank 6 since `prims` filled bank 4
+(omf2bin places a segment in bank 4 while it fits, then bank 6):
 
 - `float.c` is the arithmetic on bit patterns and nothing else -- no VM in it,
   so `checks.float-vectors` builds and tests it alone. Every operation uses

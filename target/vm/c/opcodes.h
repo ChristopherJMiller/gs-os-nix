@@ -135,6 +135,7 @@
 #define PRIM_PARSEDRVNAME       0x45 /* 1 */
 #define PRIM_REPLACESTRINGS     0x46 /* 3 */
 #define PRIM_FUNCTIONARGS       0x47 /* 1 */
+#define PRIM_TOJSON             0x48 /* 1 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */

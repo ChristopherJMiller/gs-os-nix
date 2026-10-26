@@ -376,6 +376,8 @@ int      f_eq(uint64_t a, uint64_t b);      /* -0 == +0; a NaN is unequal to all
 int      f_lt(uint64_t a, uint64_t b);      /* false if either is a NaN */
 int      f_round_int(uint64_t a, int up, int64_t *out);   /* floor/ceil; 0 if out of int64 */
 uint16_t f_format(uint64_t a, char *buf);   /* printf("%f"), exactly: its length */
+#define F_JSON_MAX 32                       /* f_json's longest: -1.7976931348623157e+308 */
+uint16_t f_json(uint64_t a, char *buf);     /* toJSON's text, nlohmann's: its length */
 /* ...and the VM's floats, on views: */
 obj_t   *new_float(uint64_t bits);          /* 12 bytes, as new_int: inside the boundary's margin */
 void     float_arith(uint16_t op, obj_t *a, obj_t *b);   /* ADD SUB MUL DIV NEG, one a FLOAT: pushes it */
