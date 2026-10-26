@@ -25,7 +25,8 @@ The fixtures are the host's own output, never a model's.
 
 - A value: `nix-instantiate --eval --strict f.nix > f.exp`.
 - A derivation's ATerm: `nix-instantiate f.nix` prints the `.drv` path; `cat`
-  it. If Nix cannot write the `.drv` (e.g. an unescaped quote in `system`),
+  it. A fixture with a `drvPath` in a string needs `--read-write-mode` with
+  `--eval --strict`: Nix computes that closure from the store. If Nix cannot write the `.drv` (e.g. an unescaped quote in `system`),
   make a variant it can write and diff that.
 - Before writing C for anything subtle, check your understanding with a
   throwaway Python model in the scratchpad against the host -- this found that

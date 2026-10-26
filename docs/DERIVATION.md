@@ -246,11 +246,38 @@ context lives in the bank that is full.
 
 **Consumed** by `derivationStrict`: the union over every coerced attribute and
 argument. `!o!<drv>` makes `<drv>` an input derivation with output `o`; a path
-makes an input source. `=<drv>` needs the closure of that `.drv`, which the VM
-does not keep: refused. The modulo hash of each derivation the program made is
-kept in a table (`drv_table`, a root: `[drvPath, hex, next]` lists), and an
-input it cannot find there -- a context the program did not make -- is refused
-too.
+makes an input source; `=<drv>` brings the `.drv`'s whole closure (below). Each
+derivation the program made is kept in a table (`drv_table`, a root: `[drvPath,
+modulo hash, inputs, outputs, next]` lists, the inputs being the context union
+it was made from), and an input it cannot find there -- a context the program
+did not make -- is refused.
+
+### A .drv in a string
+
+A `drvPath` used in a string carries `=<drv>`, and Nix (`derivationStrict`,
+`DrvDeep`) then adds the `.drv`'s **store closure**: every path in it becomes an
+input source -- the `.drv` files included -- and every `.drv` in it an input
+derivation with **all** its outputs, whatever the strings named. Measured:
+`leaf = derivation { ...; x = a.drvPath; }` with `a` of outputs `out`, `dev` has
+input derivations `[(a.drv, ["dev","out"])]` and sources `[a.drv]`.
+
+A read-only evaluation cannot do this unless the `.drv` is already in the
+store: Nix computes the closure from the store, so `nix-instantiate --eval`
+says `path '...drv' is not valid`. Such a fixture is generated with
+`nix-instantiate --eval --strict --read-write-mode`, which writes each `.drv`
+as it is made, and a later read-only evaluation then agrees.
+
+The VM has no store, but a `.drv` file's references are exactly its derivation's
+inputs (sources and input `.drv`s), and `drv_table` keeps those: `ctx_deep`
+grows the closure from the `=<drv>` elements through each `.drv`'s recorded
+inputs to a fixpoint, then forms the union -- the elements that were not `=`,
+each closure path as a source, `!o!<drv>` for every output of every `.drv` --
+in the element syntax the rest of `derivationStrict` already reads. The
+closure is kept apart from the original elements on purpose: an opaque `.drv`
+path already in a context (`unsafeDiscardOutputDependency` makes one) is a
+source only, while the same path reached through a closure is expanded, as in
+Nix. A plain source met in a closure is refused: its own references are not
+recorded, and none can arise before `builtins.toFile` and L7's paths.
 
 **Not yet:** `getContext`, `hasContext`, `appendContext`,
 `unsafeDiscardStringContext`; and Nix rejects context in attribute names
@@ -261,13 +288,11 @@ too.
 `E_UNSUP` ($0E) means *valid Nix that the VM does not implement yet*. It is
 distinct from a type error so the scoreboard's error list says what is missing,
 and a `refuse-*` fixture passes only on that error (`tests/fixtures`,
-`scripts/scoreboard.py`): a `drvPath` in a string, the `text` and `git` hash
-modes, `blake3`, a path, and `md5` each have one.
+`scripts/scoreboard.py`): the `text` and `git` hash modes, `blake3`, a path,
+and `md5` each have one.
 
-- **A `drvPath` in a derivation's attributes** (`=<drv>` context): Nix adds the
-  whole closure of that `.drv`, which the VM does not record.
 - **A context the program did not make**: an input derivation missing from the
-  table.
+  table, or a plain source met in a closure (its references are not recorded).
 - `__structuredAttrs = true`, `__contentAddressed = true`, `__impure = true`.
 - `outputHashMode = "text"` or `"git"`, `outputHashAlgo = "blake3"` or a
   `blake3` hash: each is Nix behind an experimental feature (the host rejects

@@ -303,7 +303,7 @@ static void put_fixed(struct sink *k, struct drv *d)
 
 /* --- the inputs: the elements of the context union ---
  * Sorted by bytes, the "!<o>!<drv>" elements come first ('!' < '/'), then the
- * "/<path>" sources; "=<drv>" was refused. Each input is read through a KEY:
+ * "/<path>" sources; ctx_deep has replaced each "=<drv>" by its closure. Each input is read through a KEY:
  * the .drv path, its modulo hash from drv_table, or the store path an element
  * refers to (the .drv, or the source). Keys are views, valid until the ring
  * turns over, which only happens where no key is held. */
@@ -317,20 +317,163 @@ static int bytes_cmp(const char *a, uint16_t na, const char *b, uint16_t nb)
     return c ? c : (int)na - (int)nb;
 }
 
-/* The derivation this program made whose .drv path is p[0..n): its modulo
- * hash, a view of a 64-character STRING. E_UNSUP if there is none -- a
- * context the program did not make. */
-static obj_t *drv_hex(const char *p, uint16_t n)
+/* A drv_table entry is a LIST: [drvPath, modulo hash, inputs, outputs, next].
+ * The inputs are the context union the derivation was made from, after its
+ * own "=<drv>" elements were expanded (0 for none): exactly its .drv file's
+ * references, which is what a later closure needs. The outputs are a LIST of
+ * its output names. */
+#define DT_PATH 0
+#define DT_HEX  1
+#define DT_INS  2
+#define DT_OUTS 3
+#define DT_NEXT 4
+
+/* The entry (an original) of the derivation this program made whose .drv path
+ * is p[0..n). E_UNSUP if there is none -- a context the program did not make. */
+static obj_t *drv_entry(const char *p, uint16_t n)
 {
     obj_t *t = drv_table, *tv, *pv;
     while (t) {
-        tv = deref(t);                          /* [drvPath, hex, next] */
-        pv = deref(ELEMS(tv)[0]);
-        if (AUX16(pv) == n && memcmp(STRBYTES(pv), p, n) == 0) return deref(ELEMS(tv)[1]);
-        t = ELEMS(tv)[2];
+        tv = deref(t);
+        pv = deref(ELEMS(tv)[DT_PATH]);
+        if (AUX16(pv) == n && memcmp(STRBYTES(pv), p, n) == 0) return t;
+        t = ELEMS(tv)[DT_NEXT];
     }
     err_exit(E_UNSUP);
     return 0;
+}
+
+/* Its modulo hash: a view of a 64-character STRING. */
+static obj_t *drv_hex(const char *p, uint16_t n)
+{
+    return deref(ELEMS(deref(drv_entry(p, n)))[DT_HEX]);
+}
+
+/* --- a .drv in a string: "=<drv>" (DERIVATION.md "A .drv in a string") ---
+ * Nix adds the .drv's whole store closure: every path in it as a source, and
+ * every .drv in it, the named one included, with ALL its outputs. The VM has
+ * no store, but drv_table keeps each derivation's inputs, which are its .drv
+ * file's references, so the closure is computed from them. */
+
+/* A fresh STRING: the bytes of the STRING original s from offset off, after
+ * "!<o>!" when o (a STRING original) is given. It reserves first, so it may
+ * collect: s and o are on the stack across that. The result is young and not
+ * yet rooted; the caller inserts it before anything else allocates. */
+static obj_t *elem_new(obj_t *o, obj_t *s, uint16_t off)
+{
+    uint16_t ol, sl, at;
+    obj_t *r;
+    push(s);
+    push(o);
+    ol = o ? AUX16(deref(o)) : 0;
+    sl = AUX16(deref(s)) - off;
+    at = ol ? 2 + ol : 0;
+    nursery_reserve(round4(at + sl) + 8);
+    o = pop();
+    s = pop();
+    r = str_alloc(at + sl);
+    if (ol) {
+        STRBYTES(r)[0] = '!';
+        memcpy(STRBYTES(r) + 1, STRBYTES(deref(o)), ol);
+        STRBYTES(r)[1 + ol] = '!';
+    }
+    memcpy(STRBYTES(r) + at, STRBYTES(deref(s)) + off, sl);
+    return r;
+}
+
+/* Insert the STRING r into the set vstack[base..vsp), sorted by bytes, once:
+ * 1 if it was not there. Allocates nothing. */
+static int set_insert(uint16_t base, obj_t *r)
+{
+    uint16_t k, i;
+    uint8_t c = 0;
+    for (k = base; k < vsp && (c = (uint8_t)str_cmp(deref(vstack[k]), deref(r))) == 0; ++k) ;
+    if (k < vsp && c == 1) return 0;
+    push(r);
+    for (i = vsp - 1; i > k; --i) vstack[i] = vstack[i - 1];
+    vstack[k] = r;
+    return 1;
+}
+
+/* The context union x (a LIST original, or 0) with each "=<drv>" element
+ * replaced by that .drv's closure: a fresh LIST, sorted, or x itself when it
+ * has no "=" element. May collect (x is on the stack across it); turns the
+ * window ring over between elements, holding no view. */
+static obj_t *ctx_deep(obj_t *x)
+{
+    uint16_t n, i, j, k, m, cb, cn, base;
+    uint8_t grew;
+    obj_t *e, *t, *l;
+    const char *p;
+    if (!x) return 0;
+    n = AUX16(deref(x));
+    for (i = 0; i < n && STRBYTES(deref(list_elem(x, i, n)))[0] != '='; ++i) ;
+    if (i == n) return x;
+    push(x);                                    /* vstack[cb - 1] */
+    /* 1. The closure, as plain store paths: the "=<drv>" elements' .drvs, then
+     * each .drv's references, to a fixpoint. The set shifts as it grows, so a
+     * pass can miss an element; the next one, run whenever anything grew,
+     * catches it. */
+    cb = vsp;
+    for (i = 0; i < n; ++i) {
+        windows_maybe();
+        e = list_elem(vstack[cb - 1], i, n);
+        if (STRBYTES(deref(e))[0] == '=') set_insert(cb, elem_new(0, e, 1));
+    }
+    do {
+        grew = 0;
+        for (i = cb; i < vsp; ++i) {
+            windows_maybe();
+            e = deref(vstack[i]);
+            p = STRBYTES(e);
+            m = AUX16(e);
+            /* A source's own references are not recorded (none can arise
+             * before builtins.toFile and L7's paths): refused, not ignored. */
+            if (m < 4 || memcmp(p + m - 4, ".drv", 4) != 0) err_exit(E_UNSUP);
+            l = ELEMS(deref(drv_entry(p, m)))[DT_INS];
+            if (!l) continue;
+            rpush(l);
+            m = AUX16(deref(l));
+            for (j = 0; j < m; ++j) {
+                windows_maybe();
+                e = list_elem(rstack[rsp - 1], j, m);
+                p = STRBYTES(deref(e));
+                if (p[0] == '!') {              /* "!<o>!<drv>": its .drv */
+                    for (k = 1; p[k] != '!'; ++k) ;
+                    grew |= (uint8_t)set_insert(cb, elem_new(0, e, k + 1));
+                } else {                        /* a path, plain already */
+                    grew |= (uint8_t)set_insert(cb, e);
+                }
+            }
+            rpop();
+        }
+    } while (grew);
+    cn = vsp - cb;
+    /* 2. The union: the elements that were not "=<drv>", every path of the
+     * closure as a source, and every output of every .drv in it. */
+    base = vsp;
+    for (i = 0; i < n; ++i) {
+        windows_maybe();
+        e = list_elem(vstack[cb - 1], i, n);
+        if (STRBYTES(deref(e))[0] != '=') set_insert(base, e);
+    }
+    for (i = 0; i < cn; ++i) {
+        windows_maybe();
+        set_insert(base, vstack[cb + i]);
+        e = deref(vstack[cb + i]);
+        t = drv_entry(STRBYTES(e), AUX16(e));
+        rpush(ELEMS(deref(t))[DT_OUTS]);
+        rpush(ELEMS(deref(t))[DT_PATH]);
+        m = AUX16(deref(rstack[rsp - 2]));
+        for (j = 0; j < m; ++j) {
+            windows_maybe();
+            set_insert(base, elem_new(list_elem(rstack[rsp - 2], j, m), rstack[rsp - 1], 0));
+        }
+        rsp -= 2;
+    }
+    l = list_from_stack(vsp - base);
+    vsp = cb - 1;
+    return l;
 }
 
 static obj_t *in_elem(struct drv *d, uint16_t j)       /* element j, a view */
@@ -638,6 +781,8 @@ void prim_derivationstrict(void)
     vsp -= m;
     d.ctx = vsp;
     push(v);
+    vstack[d.ctx] = ctx_deep(vstack[d.ctx]);    /* "=<drv>": its closure */
+    v = vstack[d.ctx];
     d.nin = v ? AUX16(deref(v)) : 0;
     for (i = 0; i < d.nin; ++i) {
         windows_maybe();
@@ -650,7 +795,7 @@ void prim_derivationstrict(void)
             drv_hex(p + j + 1, m - j - 1);      /* one this program made, or E_UNSUP */
             hasdrv = 1;
         } else if (p[0] != '/') {
-            err_exit(E_UNSUP);                  /* "=<drv>": its closure (DERIVATION.md) */
+            badnbc();                           /* ctx_deep left no "=<drv>" */
         }
     }
 
@@ -730,7 +875,8 @@ void prim_derivationstrict(void)
     need = (round4(7) + 8)                      /* "drvPath" */
          + (round4(dl) + 8)                     /* the .drv's path */
          + (round4(1 + dl) + 8 + 8)             /* its context, "=<drv>" in a LIST */
-         + (16 + 72)                            /* its drv_table entry and modulo hash */
+         + (24 + 72)                            /* its drv_table entry and modulo hash */
+         + (4 + 4 * d.no)                       /* the entry's list of output names */
          + (4 + 12 * (d.no + 1));               /* the result set */
     for (i = 0; i < d.no; ++i) {
         pl = path_name(pn, deref(PAIR_VAL(&d, d.name)), deref(OUT_NAME(&d, i)));
@@ -804,10 +950,14 @@ void prim_derivationstrict(void)
     }                                           /* (with none, the final ATerm's) */
     nm = str_alloc(64);
     hex_of(dig, 32, STRBYTES(nm));
-    e = list_alloc(3);
-    ELEMS(e)[0] = v;
-    ELEMS(e)[1] = nm;
-    ELEMS(e)[2] = drv_table;
+    r = list_alloc(d.no);                       /* its output names, for a closure */
+    for (i = 0; i < d.no; ++i) ELEMS(r)[i] = OUT_NAME(&d, i);
+    e = list_alloc(5);
+    ELEMS(e)[DT_PATH] = v;
+    ELEMS(e)[DT_HEX] = nm;
+    ELEMS(e)[DT_INS] = vstack[d.ctx];
+    ELEMS(e)[DT_OUTS] = r;
+    ELEMS(e)[DT_NEXT] = drv_table;
     drv_table = e;
     /* The results' contexts: the .drv as a whole, and each output of it. */
     STRCTX(v, dl) = ctx_one("=", 1, STRBYTES(v), dl);

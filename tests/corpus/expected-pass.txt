@@ -40,6 +40,7 @@ fixtures/eval-okay-deep-equality
 fixtures/eval-okay-deepseq-cycle
 fixtures/eval-okay-derivation
 fixtures/eval-okay-derivation-context
+fixtures/eval-okay-derivation-deep
 fixtures/eval-okay-derivation-dependent
 fixtures/eval-okay-derivation-equality
 fixtures/eval-okay-derivation-escapes
@@ -81,7 +82,6 @@ fixtures/eval-okay-tryeval
 fixtures/eval-okay-tryeval-restore
 fixtures/eval-okay-with
 fixtures/eval-okay-with-captured
-fixtures/refuse-derivation-drvpath
 fixtures/refuse-derivation-hash-blake3
 fixtures/refuse-derivation-hash-git
 fixtures/refuse-derivation-hash-text

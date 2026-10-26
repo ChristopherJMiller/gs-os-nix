@@ -118,8 +118,10 @@ the session scratchpad and are adopted only after being read):
    bytes, for the calls. 11 mutations; `checks.nbc-opcodes` now also holds
    the 15 error codes to BYTECODE.md and a2min's positional name table.
 
-**B. L6, what is left before the store** (as listed below): `=<drv>`
-context; the context builtins; `builtins.toFile`; `currentSystem`.
+**B. L6, what is left before the store** (as listed below): ~~`=<drv>`
+context~~ **done** (DERIVATION.md "A .drv in a string": the closure from
+`drv_table`'s recorded inputs, matching the host on 10 paths); the context
+builtins; `builtins.toFile`; `currentSystem`.
 
 **C. Coverage, from the top of the histogram:** floats; dynamic attribute
 names; `toJSON`/`fromJSON`/`toXML`/`fromTOML`; the primop tail (`mapAttrs`,
@@ -151,10 +153,11 @@ the fixture (D7), a regression that provably fails (D14), the gates one at a tim
    in silence. No md5/sha1/sha512 is computed: the hash is given. `text`, `git`
    and `blake3` are experimental features: `E_UNSUP`. One fixture, 14
    `eval-fail` and 3 `refuse` fixtures, and 26 mutations.
-2. **`=<drv>` context** (a `drvPath` in a string; now `E_UNSUP`): Nix adds the
-   `.drv`'s whole closure -- its sources, and every input `.drv` with all its
-   outputs. `drv_table` would have to keep each derivation's inputs, not just
-   its modulo hash.
+2. ~~**`=<drv>` context**~~ **done** (2026-10-26): the `.drv`'s whole
+   closure, every `.drv` in it with all its outputs and as a source too,
+   computed from the inputs `drv_table` now keeps. Nix itself needs the `.drv`
+   in its store for this, so the fixture is generated with
+   `--read-write-mode`.
 3. **The context builtins:** `hasContext`, `unsafeDiscardStringContext`,
    `getContext`, `appendContext`, `unsafeDiscardOutputDependency`. And Nix
    *rejects* context in attribute names (`listToAttrs`, `getAttr`), which the
