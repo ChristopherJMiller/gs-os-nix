@@ -327,6 +327,7 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$3F` | `zipAttrsWith` | 2 | `f list`: `f` forced, each element forced (an `ATTRS`); every name once, its value the thunk `f name [ its values in list order ]` |
 | `$40` | `isPath` | 1 | `true` for a `PATH` |
 | `$41` | `genericClosure` | 1 | `{ startSet; operator; }`: breadth first from `startSet`; each element forced (an `ATTRS`), its `key` forced, and kept when no kept key equals it (as `std::map` with Nix's ordering: neither less; incomparable keys are `E_TYPE`); `operator` (forced only when `startSet` is not empty) gives each kept element's successors. The work list lives on the value stack, two slots an element |
+| `$42` | `sort` | 2 | `f list`: the list forced, and if it is empty that is the answer, `f` unforced; else `f` forced (a function), each element forced in order, and Nix 2.34's peeksort (`sort.hh`: insertion sort up to 16, natural runs, stable merges), ported step for step so that an invalid comparator gives Nix's order too. The elements and the merge buffer are `2n` value-stack slots |
 | `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`

@@ -747,6 +747,158 @@ static void prim_genericclosure(void)
     push(l);
 }
 
+/* --- sort: Nix 2.34's peeksort ---------------------------------------------------------- */
+/* Ported from Nix's libutil/include/nix/util/sort.hh (LGPL-2.1, as Nix),
+ * step for step, so that a comparator that is no strict weak order gives
+ * Nix's answer too: sort (a: b: true) [ 1 2 3 ] is [ 3 2 1 ]. Nix adapted it
+ * from the reference implementation at https://github.com/sebawild/powersort,
+ * under this notice:
+ *
+ *   MIT License
+ *
+ *   Copyright (c) 2022 Sebastian Wild
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a
+ *   copy of this software and associated documentation files (the
+ *   "Software"), to deal in the Software without restriction, including
+ *   without limitation the rights to use, copy, modify, merge, publish,
+ *   distribute, sublicense, and/or sell copies of the Software, and to permit
+ *   persons to whom the Software is furnished to do so, subject to the
+ *   following conditions:
+ *
+ *   The above copyright notice and this permission notice shall be included
+ *   in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ *   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+ *   NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+ *   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+ *   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+ *   USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * The range is value-stack slots, and the working buffer the n slots after
+ * them: the comparator runs bytecode, which may collect, and the stack is a
+ * root that never moves. fk is the comparator's rstack slot -- a parameter,
+ * not a static, as a comparator may itself sort. */
+static int sort_less(uint16_t fk, uint16_t x, uint16_t y)   /* comp(*x, *y) */
+{
+    obj_t *v, *vo;
+    call_with(rstack[fk], vstack[x]);
+    push(vstack[y]);
+    do_call();
+    v = force_pop_as(T_BOOL, &vo);
+    return BOOLVAL(v);
+}
+
+static void sort_swap(uint16_t x, uint16_t y)
+{
+    obj_t *t = vstack[x];
+    vstack[x] = vstack[y];
+    vstack[y] = t;
+}
+
+/* [begin, middle) and [middle, end) are sorted: merge them through the
+ * buffer at wb. Taking from the left unless right < left keeps it stable. */
+static void sort_merge(uint16_t fk, uint16_t begin, uint16_t middle, uint16_t end, uint16_t wb)
+{
+    uint16_t wl = wb, wm = wb + (middle - begin), wr = wm, we = wb + (end - begin), out = begin;
+    memcpy(&vstack[wb], &vstack[begin], 4 * (end - begin));
+    while (wl != wm && wr != we)
+        vstack[out++] = !sort_less(fk, wr, wl) ? vstack[wl++] : vstack[wr++];
+    while (wl != wm) vstack[out++] = vstack[wl++];
+    while (wr != we) vstack[out++] = vstack[wr++];
+}
+
+static void sort_insertion(uint16_t fk, uint16_t begin, uint16_t end)
+{
+    uint16_t cur, ip;
+    if (begin == end) return;
+    for (cur = begin + 1; cur != end; ++cur)
+        for (ip = cur; ip != begin && sort_less(fk, ip, ip - 1); --ip)
+            sort_swap(ip, ip - 1);
+}
+
+/* The maximal i <= end with [begin, i) strictly decreasing (weak = 0), or
+ * weakly increasing (weak = 1: the comparator negated, as Nix's not_fn). */
+static uint16_t sort_prefix(uint16_t fk, uint16_t begin, uint16_t end, int weak)
+{
+    if (begin == end) return begin;
+    while (begin + 1 != end && sort_less(fk, begin + 1, begin) != weak) ++begin;
+    return begin + 1;
+}
+
+/* The minimal i >= begin with [i, end) strictly decreasing, or weakly
+ * increasing. */
+static uint16_t sort_suffix(uint16_t fk, uint16_t begin, uint16_t end, int weak)
+{
+    if (begin == end) return end;
+    while (end - 1 > begin && sort_less(fk, end - 1, end - 2) != weak) --end;
+    return end - 1;
+}
+
+/* Sorts [begin, end), [begin, lre) and [rrb, end) being sorted already. */
+static void sort_peek(uint16_t fk, uint16_t wb, uint16_t begin, uint16_t end, uint16_t lre, uint16_t rrb)
+{
+    uint16_t middle, i, j, x, y;
+    stack_check();
+    if (lre == end || rrb == begin) return;
+    if (end - begin <= 16) { sort_insertion(fk, begin, end); return; }
+    middle = begin + (end - begin) / 2;
+    if (middle <= lre) {
+        sort_peek(fk, wb, lre, end, lre + 1, rrb);
+        sort_merge(fk, begin, lre, end, wb);
+        return;
+    }
+    if (middle >= rrb) {
+        sort_peek(fk, wb, begin, rrb, lre, rrb - 1);
+        sort_merge(fk, begin, rrb, end, wb);
+        return;
+    }
+    if (!sort_less(fk, middle, middle - 1)) {   /* *(middle - 1) <= *middle */
+        i = sort_suffix(fk, lre, middle, 1);
+        j = sort_prefix(fk, middle - 1, rrb, 1);
+    } else {
+        i = sort_suffix(fk, lre, middle, 0);
+        j = sort_prefix(fk, middle - 1, rrb, 0);
+        for (x = i, y = j; x + 1 < y; ++x, --y) sort_swap(x, y - 1);   /* std::reverse(i, j) */
+    }
+    if (i == begin && j == end) return;         /* a single run */
+    if (middle - i < j - middle) {
+        sort_peek(fk, wb, begin, i, lre, i - 1);
+        sort_peek(fk, wb, i, end, j, rrb);
+        sort_merge(fk, begin, i, end, wb);
+    } else {
+        sort_peek(fk, wb, begin, j, lre, i);
+        sort_peek(fk, wb, j, end, j + 1, rrb);
+        sort_merge(fk, begin, j, end, wb);
+    }
+}
+
+/* sort f list: the list forced; if it is empty, that is the answer and f is
+ * never forced. Otherwise f (a function), then each element, in order, as
+ * Nix does, and peeksort. */
+static void prim_sort(void)
+{
+    uint16_t b = rsp, n, i, at;
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo);
+    n = AUX16(l);
+    if (n == 0) { --vsp; push(lo); return; }
+    rpush(lo);
+    force_function_slot(1);
+    rpush(pop());                               /* b+1: f */
+    if ((uint16_t)(VSTACK_N - vsp) < 2 * n + 8) nomem();
+    at = vsp;
+    for (i = 0; i < n; ++i) { push(RELEM(b, i, n)); force_top(); }
+    for (i = 0; i < n; ++i) push(0);            /* the working buffer: n slots */
+    /* Nix's special cases for 1 and 2 elements make the comparisons insertion
+     * sort makes, which is where sort_peek sends them. */
+    sort_peek(b + 1, at + n, at, at + n, at, at + n);
+    vsp = at + n;
+    rsp = b;
+    push(list_from_stack(n));
+}
+
 static void prim_partition(void)                /* f list -> { right; wrong; } */
 {
     uint16_t b = rsp, n, i, nr = 0, nw = 0, at;
@@ -1002,6 +1154,7 @@ void op_prim(void)
     case PRIM_ZIPATTRSWITH:    prim_zipattrswith(); break;
     case PRIM_ISPATH:          is_tag(T_PATH); break;
     case PRIM_GENERICCLOSURE:  prim_genericclosure(); break;
+    case PRIM_SORT:            prim_sort(); break;
     default:                   err_exit(E_BADOP);
     }
 }

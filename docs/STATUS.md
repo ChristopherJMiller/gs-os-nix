@@ -168,9 +168,14 @@ where Nix's `std::map` is O(n log n), and keeps its work list on the value
 stack, two slots an element (some 400 elements). **Bank 4 holds 49.6 KB of
 `prims`** and the float segment after it, 2.6 KB from full: the next
 segment goes to bank 6. **The rest of C, by measure** (the corpus's first
-refusals, 2026-10-26, and the host's 118 builtins against nbc's 66): `sort`
-(Nix's own peeksort, which shows with an invalid comparator: `sort (a: b:
-true) [ 1 2 3 ]` is `[ 3 2 1 ]`); `functionArgs` (the generator must keep
+refusals, 2026-10-26, and the host's 118 builtins against nbc's 66): ~~`sort`~~ **done**: Nix 2.34's
+own peeksort (`sort.hh`), ported step for step, because an invalid
+comparator shows the algorithm (`sort (a: b: true) [ 1 2 3 ]` is `[ 3 2 1
+]`); elements and merge buffer on the value stack, `2n` slots. A throwaway
+model of the algorithm found inputs that tell each planted bug apart -- the
+first fixture's "pseudo-random" lists had every element alike mod 5, so its
+"no order" comparator was a constant and a cutoff of 8 for 16 survived. 3
+corpus tests, 7 fixtures, 6 mutations; `functionArgs` (the generator must keep
 the formals it desugars); `toJSON`/`fromJSON` (a float's shortest
 round-trip text), `toXML`, `fromTOML`; `compareVersions`, `splitVersion`,
 `parseDrvName`, `replaceStrings`; regex `match`/`split`; `trace`, `warn`,
@@ -289,8 +294,9 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **436 / 514** (2026-10-26, after the attribute-set
-primops; 0 fail, 7 error, 52 unsupported, 19 notyetpassing). It was 406 / 501
+The scoreboard reads **446 / 521** (2026-10-26, after `sort`; 0 fail, 6
+error, 50 unsupported, 19 notyetpassing). It was 436 / 514 after the
+attribute-set primops (7 error, 52 unsupported). It was 406 / 501
 after dynamic attribute names (0 fail, 8 error, 67 unsupported, 20
 notyetpassing). It was 381 / 486
 after the primop printer (0 fail, 8 error, 77 unsupported). It was 379 / 485 after

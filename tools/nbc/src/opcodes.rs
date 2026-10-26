@@ -134,6 +134,7 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("zipAttrsWith", 0x3F, 2),
     ("isPath", 0x40, 1),
     ("genericClosure", 0x41, 1),
+    ("sort", 0x42, 2),
 ];
 
 /// The builtins Nix also exposes unqualified.
