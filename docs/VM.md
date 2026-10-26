@@ -45,8 +45,8 @@ every value is promoted before it can be stored young, so the remembered set
 is never used; `k` = 2 or 3 is what tests it (DECISIONS.md D20).
 
 Bank 0's 40 KB were never going to hold the parser and the store layers, so
-code lives in load segments from the start: `prims.c` is `segment "prims"` and
-sits in bank 4; the core (`main`, `run`, `data`, `gc`, `card`) and every global
+code lives in load segments from the start: the primop files are `segment "prims"` and
+sit in bank 4; the core (`main`, `run`, `data`, `gc`, `card`) and every global
 stay in bank 0. `omf2bin` refuses a bank-0 segment past `$C000` rather than
 letting code land on the I/O page — the first time it did, the program ran as
 far as `$C0CF` and read the card's registers as instructions.
@@ -112,7 +112,7 @@ and the two spaces" has the rules; this is where they land in the C):
   dereferenced for anything it stores (`force_pop_view` hands out both). A view
   lasts exactly one bytecode instruction: the ring is turned over at boundaries
   and nowhere else, so a loop that calls back into Nix re-derefs every time
-  round (`prims.c` `RELEM`). See HEAP.md “How long a view lives” for why the
+  round (`prims.h` `RELEM`). See HEAP.md “How long a view lives” for why the
   alternative — wrapping whenever the ring filled — was a silent wrong answer.
 - **Writing:** `store_field()` / `store_byte()` are the write barrier: a store
   into a mature object goes through the bus and, if it wrote a young pointer,
@@ -158,16 +158,21 @@ target/vm/c/
   run.c       run(): dispatch, environments, calls, thunks, FORCE, catch frames
   data.c      strings, lists, attribute sets, hashing, equality, deep force,
               the write barrier and the window ring for mature objects
-  prims.c     the primops, string coercion, derivationStrict and the ATerm
-              (DERIVATION.md), and the set case of equality -- bank 4
+  prims.h     what the three primop files share (private to them)
+  prims.c     the primops' shared helpers, lists, sets, errors, the table -- bank 4
+  strings.c   string primops, coercion, interpolation, string context -- bank 4
+  derivation.c  derivationStrict, the ATerm, fixed outputs, and the
+              derivation rule of equality (DERIVATION.md) -- bank 4
   gc.c        the Cheney collector into bank 2, then promotion to the card
               (copy-back into the nursery when no card is present)
   card.c      the driver: ALU64, RESERVE, DATA, LOOKUP, the SHA-256 verbs
   sha256.c    SHA-256 and the store-path fold on the CPU, for no card -- bank 4
 ```
 
-`mkOrcaBinary { name = "cvm"; srcs = [ main.c run.c data.c prims.c gc.c card.c sha256.c ]; }`
-builds it; `just cvm` does the same in the tree.
+`target/vm/c/SOURCES` is the one list of sources, in link order: the flake's
+`mkOrcaBinary`, `just cvm` and every script that builds the VM read it. Each
+object file costs one byte of bank 0 (its `~GLOBALS` segment, measured when
+`prims.c` was split), whatever its segment.
 
 ## Phase counters and the profiler
 

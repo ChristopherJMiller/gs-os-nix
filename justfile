@@ -248,7 +248,7 @@ orca-smoke: build-a2min
 # --- The VM (docs/VM.md): C, compiled by ORCA/C ---------------------------------
 # main.c stays first: the load file's entry point is the first function of the
 # first object.
-CVM_SRCS := "target/vm/c/main.c target/vm/c/run.c target/vm/c/data.c target/vm/c/prims.c target/vm/c/gc.c target/vm/c/card.c target/vm/c/sha256.c"
+CVM_SRCS := `grep -v '^#' target/vm/c/SOURCES | sed 's|^|target/vm/c/|' | tr '\n' ' '`
 
 # Compile, link and flatten the VM to target/build/cvm.bin.
 cvm:

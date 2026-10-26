@@ -1,0 +1,13 @@
+# The VM's C sources, in link order. main.c must stay first: the load file's
+# entry point is the first function of the first object (docs/VM.md). This is
+# the one list -- flake.nix, the justfile and every script that builds the VM
+# read it; a line starting with # is a comment.
+main.c
+run.c
+data.c
+prims.c
+strings.c
+derivation.c
+gc.c
+card.c
+sha256.c

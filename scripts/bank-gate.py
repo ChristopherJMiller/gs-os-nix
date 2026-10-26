@@ -128,8 +128,8 @@ def self_test(binp, mapp, budp):
         with open(os.path.join(src, "data.c"), "a") as f:
             f.write("\nstruct gate_plant { uint8_t b[9]; };\n"
                     "void gate_plant(struct gate_plant *a, struct gate_plant *b) { *a = *b; }\n")
-        srcs = [os.path.join(src, s) for s in
-                "main.c run.c data.c prims.c gc.c card.c sha256.c".split()]
+        srcs = [os.path.join(src, s) for s in open("target/vm/c/SOURCES").read().split("\n")
+                if s and not s.startswith("#")]
         out = os.path.join(t, "cvm.bin")
         r = subprocess.run(["orcabuild", "-o", out, "-O", *srcs], capture_output=True, text=True)
         if r.returncode != 0:

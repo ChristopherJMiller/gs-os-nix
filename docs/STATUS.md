@@ -98,8 +98,15 @@ the session scratchpad and are adopted only after being read):
    never move, and are marked `/* gcsafe: mature */`. Six plants prove it,
    three of them `mutation-vm.sh`'s GC mutations, caught here without an
    ORCA/C build.
-5. One list of VM sources; `prims.c` split (derivations; strings and
-   context; the rest).
+5. ~~One list of VM sources; `prims.c` split~~ **done**:
+   `target/vm/c/SOURCES` is read by the flake, the justfile and every
+   script; `prims.c` (1,996 lines) is now `prims.c` (lists, sets, the table),
+   `strings.c` and `derivation.c`, sharing `prims.h`. Code moved byte for
+   byte (a line-set diff shows only headers, three macros and `static`).
+   Bank 0 +2 bytes: one `~GLOBALS` byte per object file. On the way,
+   **`orcalink` passed unresolved references**: the ORCA linker's error
+   level is 8 for one and 0 for a clean link, and the wrapper allowed 8. It
+   allows 0 now, and `checks.orca-lint` plants an unresolved reference.
 6. Integer overflow as Nix 2.34 has it: `+`, `-`, `*` (and `/` of the
    minimum by -1) throw instead of wrapping. Three fixtures from L4 slice 1
    assert wraparound, which the host no longer does (D7).

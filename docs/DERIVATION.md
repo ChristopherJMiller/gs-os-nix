@@ -241,7 +241,7 @@ one list shared by every part -- and allocates a merged list otherwise.
 context appended to a path is an error, as in Nix.
 
 String building left bank 0 with this: `"${}"` and string `+`, which were
-run.c's, are one routine in `prims.c` (bank 4), so no site that must carry
+run.c's, are one routine in `strings.c` (bank 4), so no site that must carry
 context lives in the bank that is full.
 
 **Consumed** by `derivationStrict`: the union over every coerced attribute and

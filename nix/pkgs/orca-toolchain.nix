@@ -101,8 +101,11 @@ let
       # symbol. It does not change the load file (checked byte for byte). It is
       # kept as OUT.sym, and omf2bin --syms turns it into addresses for a2min's
       # function profiler (A2MIN_SYMBOLS); the console shows the rest as before.
+      # --merr 0: the linker's error level is 0 for a clean link and 8 for an
+      # unresolved reference (measured); with --merr 8 an unresolved symbol
+      # linked "successfully" into a binary that jumps to nowhere.
       if ! "$RUN" --orca "$ORCA" --map "0=$work" --sfile "$list" --dfile "$out" \
-          --lops 2 --merr 8 --plus S \
+          --lops 2 --merr 0 --plus S \
           "$ORCA/Languages/Linker#B5DB01" link "$list" "keep=$out" > "$work/link.log" 2>&1; then
         cat "$work/link.log"; exit 1
       fi

@@ -39,8 +39,10 @@ The fixtures are the host's own output, never a model's.
 
 - **Bank 0 is nearly full.** Every static, and every ORCA/C library routine the
   code links, lands in bank 0 whatever its segment; string literals stay with
-  their code. Put new code in `prims.c`/`sha256.c` (`segment "prims"`, bank
-  4). `just bank-gate` holds bank 0 to the exact size in
+  their code. Put new code in a `segment "prims"` file (bank 4): `prims.c`
+  (helpers, lists, sets), `strings.c` (strings, context), `derivation.c`,
+  `sha256.c`; what they share goes in `prims.h`. A new file goes in
+  `target/vm/c/SOURCES`, the one list every build reads. `just bank-gate` holds bank 0 to the exact size in
   `target/vm/bank0.txt` and to an allowlist of runtime routines: when it
   changes, find out why in `target/build/cvm.map`, say so in the commit, and
   `just bank-gate --update`. ORCA/C's lint is on (`vm.h`): an unused variable

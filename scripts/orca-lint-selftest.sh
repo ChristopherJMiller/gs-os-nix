@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Prove the compiler's own checks can FAIL (DECISIONS.md D14): ORCA/C's lint,
-# which vm.h turns on for every VM file (`#pragma lint -1`), and the
-# _Static_asserts that pin the memory map. A check that cannot fail is
+# which vm.h turns on for every VM file (`#pragma lint -1`), the linker's
+# refusal of an unresolved reference, and the _Static_asserts that pin the
+# memory map. A check that cannot fail is
 # decorative, and a pragma placed where it does not apply would be exactly
 # that -- so each plant below goes into a COPY of the sources (never the tree),
 # and must stop the build with its own message, while the unplanted copy builds.
@@ -9,7 +10,7 @@
 # Usage: orca-lint-selftest.sh   (from the repo root; needs orcabuild on PATH)
 set -uo pipefail
 
-SRCS="main.c run.c data.c prims.c gc.c card.c sha256.c"   # link order: main.c first
+SRCS=$(grep -v '^#' target/vm/c/SOURCES)           # link order: main.c first
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -52,6 +53,7 @@ plant "lint: an unused variable (prims.c)"   prims.c  '$a static void lint_plant
 plant "lint: an unused variable (sha256.c)"  sha256.c '$a static void lint_plant(void) { int planted; }' 'unused variable'
 plant "lint: an undefined function (run.c)"  run.c    '$a void lint_plant(void) { planted(); }'           'undefined function'
 plant "lint: a constant changed (data.c)"    data.c   '$a void lint_plant(void) { uint8_t c = 300; (void)c; }' 'changes value of constant'
+plant "link: an unresolved reference (data.c)" data.c '$a extern obj_t *planted_global; void lint_plant(void) { planted_global = 0; }' 'Unresolved reference'
 plant "assert: the remembered set outgrows bank 5" vm.h 's/^#define RSET_N           256$/#define RSET_N           512/' 'fits in bank 5'
 
 echo

@@ -28,12 +28,13 @@
         orca-toolchain = self'.callPackage ./nix/pkgs/orca-toolchain.nix { };
         mkOrcaBinary = self'.callPackage ./nix/lib/mkOrcaBinary.nix { };
         # The VM itself (docs/VM.md): C, compiled by ORCA/C, flattened for a2min.
-        # `nix build .#cvm` -> result/cvm.bin. main.c must stay first.
+        # `nix build .#cvm` -> result/cvm.bin. The sources, in link order, are
+        # target/vm/c/SOURCES -- the one list every build reads.
         cvm = self'.mkOrcaBinary {
           name = "cvm";
-          srcs = [ ./target/vm/c/main.c ./target/vm/c/run.c ./target/vm/c/data.c
-                   ./target/vm/c/prims.c ./target/vm/c/gc.c ./target/vm/c/card.c
-                   ./target/vm/c/sha256.c ];
+          srcs = map (f: ./target/vm/c + "/${f}")
+            (builtins.filter (l: l != "" && builtins.substring 0 1 l != "#")
+              (nixpkgs.lib.splitString "\n" (builtins.readFile ./target/vm/c/SOURCES)));
           includes = [ ./target/vm/c ];
         };
       });

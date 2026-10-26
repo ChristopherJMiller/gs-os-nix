@@ -21,7 +21,7 @@ set -uo pipefail
 
 R=$PWD
 H=$R/scripts/hostlint
-SRCS="main.c run.c data.c prims.c gc.c card.c sha256.c"
+SRCS=$(grep -v '^#' target/vm/c/SOURCES)           # link order: main.c first
 RES=$(clang -print-resource-dir)
 CF=(--target=i686-linux-gnu -ffreestanding -nostdlibinc -isystem "$RES/include" -isystem "$H/include"
     -std=gnu99 -Wno-unknown-pragmas -Wno-unused-command-line-argument -include "$H/orca_shim.h" -I.)
@@ -72,7 +72,7 @@ plant "gcsafe: ++ keeps its views across a collecting reserve" run.c \
       's/            if (nursery_reserve_n(n + i, 4, 4)) view_two(\&a, \&b);/            nursery_reserve_n(n + i, 4, 4);/' 2
 plant "gcsafe: map keeps its view across a collecting reserve" prims.c \
       's/    if (nursery_reserve_n(n, 32, 4)) l = view_top_as(T_LIST);/    nursery_reserve_n(n, 32, 4);/' 2
-plant "gcsafe: string + reads a part it did not view" prims.c \
+plant "gcsafe: string + reads a part it did not view" strings.c \
       '/^    o = str_alloc(len);$/,/^    STRCTX(o, len) = pop();$/ s/^        s = deref(vstack\[at + i\]);$/        s = vstack[at + i];/' 2
 plant "gcsafe: removeAttrs keeps the set it forced past" prims.c \
       '/^static void prim_removeattrs(void)/,/^}/ s/^    so = rstack\[b\];$/    \/\* planted \*\//' 2
