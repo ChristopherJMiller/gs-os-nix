@@ -279,9 +279,29 @@ source only, while the same path reached through a closure is expanded, as in
 Nix. A plain source met in a closure is refused: its own references are not
 recorded, and none can arise before `builtins.toFile` and L7's paths.
 
-**Not yet:** `getContext`, `hasContext`, `appendContext`,
-`unsafeDiscardStringContext`; and Nix rejects context in attribute names
-(`listToAttrs`, `getAttr`), which the VM accepts.
+### Reading and rewriting a context
+
+The builtins Nix has for it (`primops/context.cc`), measured against the host
+and in `strings.c`, all in the element syntax above:
+
+| builtin | argument | result |
+|---|---|---|
+| `hasContext` | must be a string | whether its context is not empty |
+| `unsafeDiscardStringContext` | coerced, as `"${}"` coerces | the same text, no context |
+| `unsafeDiscardOutputDependency` | coerced | each `=<drv>` becomes the plain path `<drv>` |
+| `addDrvOutputDependencies` | coerced; one element, a plain `.drv` or `=<drv>` | that element as `=<drv>`; an output, or a path that is not a `.drv`, is an error |
+| `getContext` | must be a string | `{ "<path>" = { allOutputs; outputs; path; }; }`, each of the three only when true or non-empty, outputs in name order |
+| `appendContext s ctx` | `s` a string, `ctx` a set | `s` with, per key, a plain path, `=<drv>` and `!<o>!<drv>` elements; a key must be a store path (32 nix32 digits and a valid name), the last two only for a `.drv`, and an output name may not carry a context |
+
+A plain `.drv` path from `unsafeDiscardOutputDependency` is an opaque source
+to `derivationStrict` (no closure); `addDrvOutputDependencies` makes it whole
+again. Nix's `appendContext` asks the store whether a key exists only in
+read-write mode, so its fixture is generated read-only, and the VM, with no
+store, never asks.
+
+**No context where a name is wanted:** `getAttr`, `hasAttr`, `listToAttrs`,
+`removeAttrs` and `hashString`'s type use `forceStringNoCtx`, so a string with
+a context there is an error (`E_TYPE`), as is the name of a derivation.
 
 ## Refused (`E_UNSUP`), and why
 

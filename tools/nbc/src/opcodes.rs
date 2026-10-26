@@ -115,6 +115,12 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("tryEval", 0x2F, 1),
     ("hashString", 0x30, 2),
     ("derivationStrict", 0x31, 1),
+    ("hasContext", 0x32, 1),
+    ("unsafeDiscardStringContext", 0x33, 1),
+    ("unsafeDiscardOutputDependency", 0x34, 1),
+    ("addDrvOutputDependencies", 0x35, 1),
+    ("getContext", 0x36, 1),
+    ("appendContext", 0x37, 2),
 ];
 
 /// The builtins Nix also exposes unqualified.

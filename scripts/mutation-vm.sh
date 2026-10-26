@@ -42,7 +42,7 @@ NBC="$2"
 # The derivation fixtures first: they are cheap, and run_suite stops at the
 # first wrong answer, so a mutation they catch costs seconds. The refusal is a
 # fixture too -- its .exp is the error line (scripts/scoreboard.py).
-FIXTURES="eval-okay-int-limits eval-fail-int-overflow-add eval-fail-int-overflow-sub eval-fail-int-overflow-neg eval-fail-int-overflow-mul eval-fail-int-overflow-mul-min eval-fail-int-overflow-square eval-fail-int-overflow-div eval-fail-int-overflow-uncaught eval-okay-derivation eval-okay-derivation-fixed-output eval-fail-derivation-fixed-bin eval-fail-derivation-fixed-outputs eval-fail-derivation-hash-base16-digit eval-fail-derivation-hash-base64-digit eval-fail-derivation-hash-empty eval-fail-derivation-hash-length eval-fail-derivation-hash-mode eval-fail-derivation-hash-nix32-digit eval-fail-derivation-hash-nix32 eval-fail-derivation-hash-prefix eval-fail-derivation-hash-sri-long eval-fail-derivation-hash-sri-short eval-fail-derivation-hash-type eval-fail-derivation-hash-untyped refuse-derivation-hash-blake3 refuse-derivation-hash-git refuse-derivation-hash-text eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists eval-okay-derivation-deep eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
+FIXTURES="eval-okay-context-builtins eval-fail-context-adddrv-output eval-fail-context-adddrv-source eval-fail-context-adddrv-two eval-fail-context-append-alloutputs eval-fail-context-append-hash eval-fail-context-append-key eval-fail-context-append-output-ctx eval-fail-context-append-outputs eval-fail-context-getattr eval-fail-context-hasattr eval-fail-context-hascontext-path eval-fail-context-hashstring eval-fail-context-listtoattrs eval-fail-context-removeattrs eval-okay-int-limits eval-fail-int-overflow-add eval-fail-int-overflow-sub eval-fail-int-overflow-neg eval-fail-int-overflow-mul eval-fail-int-overflow-mul-min eval-fail-int-overflow-square eval-fail-int-overflow-div eval-fail-int-overflow-uncaught eval-okay-derivation eval-okay-derivation-fixed-output eval-fail-derivation-fixed-bin eval-fail-derivation-fixed-outputs eval-fail-derivation-hash-base16-digit eval-fail-derivation-hash-base64-digit eval-fail-derivation-hash-empty eval-fail-derivation-hash-length eval-fail-derivation-hash-mode eval-fail-derivation-hash-nix32-digit eval-fail-derivation-hash-nix32 eval-fail-derivation-hash-prefix eval-fail-derivation-hash-sri-long eval-fail-derivation-hash-sri-short eval-fail-derivation-hash-type eval-fail-derivation-hash-untyped refuse-derivation-hash-blake3 refuse-derivation-hash-git refuse-derivation-hash-text eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists eval-okay-derivation-deep eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
 MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1 mask:4"
 SRCS=$(grep -v '^#' target/vm/c/SOURCES)           # link order: main.c first
 WORK=$(mktemp -d)
@@ -265,10 +265,10 @@ mutate "the .drv's path names no references" derivation.c \
 # A .drv in a string ("=<drv>"): its whole closure, every .drv with all its
 # outputs and as a source too (eval-okay-derivation-deep, the host's answers).
 mutate "a closure's .drv is not a source" derivation.c \
-       's/^        set_insert(base, vstack\[cb + i\]);$//'
+       's/^        ctx_insert(base, vstack\[cb + i\]);$//'
 
 mutate "a closure's .drv brings only one output" derivation.c \
-       's/set_insert(base, elem_new(list_elem(rstack\[rsp - 2\], j, m), rstack\[rsp - 1\], 0));/set_insert(base, elem_new(list_elem(rstack[rsp - 2], 0, m), rstack[rsp - 1], 0));/'
+       's/ctx_insert(base, ctx_piece(0, list_elem(rstack\[rsp - 2\], j, m), rstack\[rsp - 1\], 0, CTX_REST));/ctx_insert(base, ctx_piece(0, list_elem(rstack[rsp - 2], 0, m), rstack[rsp - 1], 0, CTX_REST));/'
 
 mutate "the closure stops at the named .drv" derivation.c \
        's/^            l = ELEMS(deref(drv_entry(p, m)))\[DT_INS\];$/            l = 0;/'
@@ -360,6 +360,63 @@ mutate "Base64 takes any character" derivation.c \
 
 mutate "Base64 may be short" derivation.c \
        's/^        if (j != sz) type_err();$//'
+
+# The context builtins and the names that may not carry a context
+# (eval-okay-context-builtins and the eval-fail-context-* fixtures, the host's
+# answers): each rule, broken.
+mutate "hasContext is always false" strings.c \
+       's/^    push(CTX(s) ? obj_true : obj_false);$/    push(CTX(s) \&\& 0 ? obj_true : obj_false);/'
+
+mutate "unsafeDiscardStringContext keeps the context" strings.c \
+       's/^    if (CTX(deref(peek()))) vstack\[vsp - 1\] = str_with_ctx(peek(), 0);$//'
+
+mutate "unsafeDiscardOutputDependency keeps the =" strings.c \
+       's/^        if (STRBYTES(deref(e))\[0\] == .=.) ctx_insert(base, ctx_piece(0, 0, e, 1, CTX_REST));$/        if (STRBYTES(deref(e))[0] == 0x3D) ctx_insert(base, ctx_piece(0, 0, e, 0, CTX_REST));/'
+
+mutate "addDrvOutputDependencies takes an output" strings.c \
+       's/^    if (p\[0\] == .!. || !is_drv_name(p, m)) type_err();$/    if (!is_drv_name(p, m)) type_err();/'
+
+mutate "addDrvOutputDependencies takes a plain source" strings.c \
+       's/^    if (p\[0\] == .!. || !is_drv_name(p, m)) type_err();$/    if (p[0] == 0x21) type_err();/'
+
+mutate "addDrvOutputDependencies takes two elements" strings.c \
+       's/^    if (!x || AUX16(deref(x)) != 1) type_err();         \/\* "must have exactly one element" \*\/$/    if (!x) type_err();/'
+
+mutate "getContext drops path = true" strings.c \
+       's/^            else if (STRBYTES(ev)\[0\] != .!.) path = 1;$/            else if (STRBYTES(ev)[0] != 0x21) ;/'
+
+mutate "getContext cuts an output's name" strings.c \
+       's/^            else push(ctx_piece(0, 0, e, 1, ko - 2));$/            else push(ctx_piece(0, 0, e, 1, ko - 3));/'
+
+mutate "appendContext takes a key that is no store path" strings.c \
+       's/^        if (!is_store_path(STRBYTES(nmv), AUX16(nmv))) type_err();   \/\* "is not a store path" \*\/$//'
+
+mutate "a store path's hash may have any letter" strings.c \
+       's/^        if (d == 32) return 0;$//'
+
+mutate "appendContext takes allOutputs of a plain path" strings.c \
+       's/^                if (!is_drv_name(STRBYTES(nmv), AUX16(nmv))) type_err();$//'
+
+mutate "appendContext takes outputs of a plain path" strings.c \
+       's/^            if (m \&\& !is_drv_name(STRBYTES(nmv), AUX16(nmv))) type_err();$//'
+
+mutate "appendContext takes an output name with a context" strings.c \
+       '/^void prim_appendcontext/,/^}/ s/^                if (CTX(v)) type_err();         \/\* forceStringNoCtx \*\/$//'
+
+mutate "appendContext drops the string's own context" strings.c \
+       's/^    x = CTX(deref(vstack\[b0 - 2\]));             \/\* s.s own context joins them \*\/$/    x = 0;/'
+
+mutate "getAttr and hasAttr take a name with a context" prims.c \
+       's/^    if (CTX(v)) type_err();                     \/\* forceStringNoCtx: a name has no context \*\/$//'
+
+mutate "removeAttrs takes a name with a context" prims.c \
+       '/^static void prim_removeattrs/,/^}/ s/^        if (CTX(e)) type_err();                 \/\* forceStringNoCtx \*\/$//'
+
+mutate "listToAttrs takes a name with a context" prims.c \
+       's/^        if (CTX(nm)) type_err();                \/\* forceStringNoCtx \*\/$//'
+
+mutate "hashString takes a type with a context" strings.c \
+       '/^void prim_hashstring/,/^}/ s/^    if (CTX(t)) type_err();                     \/\* forceStringNoCtx \*\/$//'
 
 # Integer overflow (Nix 2.34: an error, never a wrap): each check, broken. The
 # limits fixture catches a check that fires too early; the eval-fail fixtures

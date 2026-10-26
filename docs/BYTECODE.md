@@ -274,6 +274,12 @@ primop would move the most tests.
 | `$2F` | `tryEval` | 1 | see "Catch frames" |
 | `$30` | `hashString` | 2 | `type s`: `"sha256"` only, the card's `HASH_PUSH`+`HASH_FINAL` (a CPU SHA-256 without one); lowercase hex. `md5`, `sha1`, `sha512` are `E_UNSUP`; anything else `E_TYPE` |
 | `$31` | `derivationStrict` | 1 | `attrs` → `{ drvPath; <output> ...; }`: [DERIVATION.md](DERIVATION.md). `derivation` itself is Nix code the generator embeds around it |
+| `$32` | `hasContext` | 1 | `s` must be a string; `true` when its context is not empty |
+| `$33` | `unsafeDiscardStringContext` | 1 | `s` coerced (`"${}"`'s rules), without its context |
+| `$34` | `unsafeDiscardOutputDependency` | 1 | `s` coerced; each `=<drv>` becomes the plain path `<drv>` |
+| `$35` | `addDrvOutputDependencies` | 1 | `s` coerced; its one context element, a plain `.drv` path, becomes `=<drv>` |
+| `$36` | `getContext` | 1 | `{ "<path>" = { allOutputs; outputs; path; }; ... }`, each only when true or non-empty |
+| `$37` | `appendContext` | 2 | `s ctx`: `s` with the elements `ctx` describes added; keys must be store paths |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`
 diffs the primop table too).

@@ -20,6 +20,10 @@ let
     outputHash = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="; };
   onfixed = derivation { name = "onfixed"; system = "s"; builder = "/bin/sh"; x = fixed.drvPath; };
   usesc = derivation { name = "usesc"; system = "s"; builder = "${c}/bin/sh"; };
+  # addDrvOutputDependencies turns a plain .drv path back into "=<drv>", so the
+  # closure returns (eval-okay-context-builtins has the plain one).
+  added = derivation { name = "added"; system = "s"; builder = "/bin/sh";
+    x = builtins.addDrvOutputDependencies (builtins.unsafeDiscardOutputDependency b.drvPath); };
 in [
   leaf.drvPath leaf.outPath
   c.drvPath c.outPath
@@ -27,4 +31,5 @@ in [
   mixed.drvPath
   onfixed.drvPath onfixed.outPath
   usesc.drvPath usesc.outPath
+  added.drvPath
 ]

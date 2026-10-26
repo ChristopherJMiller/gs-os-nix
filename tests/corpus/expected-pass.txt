@@ -1,5 +1,19 @@
 # Tests the 65816 VM passes. scripts/scoreboard.py --update maintains it;
 # checks.scoreboard fails if any of these stops passing.
+fixtures/eval-fail-context-adddrv-output
+fixtures/eval-fail-context-adddrv-source
+fixtures/eval-fail-context-adddrv-two
+fixtures/eval-fail-context-append-alloutputs
+fixtures/eval-fail-context-append-hash
+fixtures/eval-fail-context-append-key
+fixtures/eval-fail-context-append-output-ctx
+fixtures/eval-fail-context-append-outputs
+fixtures/eval-fail-context-getattr
+fixtures/eval-fail-context-hasattr
+fixtures/eval-fail-context-hascontext-path
+fixtures/eval-fail-context-hashstring
+fixtures/eval-fail-context-listtoattrs
+fixtures/eval-fail-context-removeattrs
 fixtures/eval-fail-derivation-duplicate-output
 fixtures/eval-fail-derivation-fixed-bin
 fixtures/eval-fail-derivation-fixed-outputs
@@ -35,6 +49,7 @@ fixtures/eval-okay-bool-ops
 fixtures/eval-okay-carry-chain
 fixtures/eval-okay-closure-capture
 fixtures/eval-okay-coerce-sets
+fixtures/eval-okay-context-builtins
 fixtures/eval-okay-curry
 fixtures/eval-okay-deep-equality
 fixtures/eval-okay-deepseq-cycle
@@ -176,7 +191,9 @@ tvix/tvix_tests/eval-okay-builtins-foldl-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-gen-list-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-genList-function-strictness
 tvix/tvix_tests/eval-okay-builtins-getAttr-catchable
+tvix/tvix_tests/eval-okay-builtins-getContext-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-getattr
+tvix/tvix_tests/eval-okay-builtins-hasContext-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-hasattr
 tvix/tvix_tests/eval-okay-builtins-head
 tvix/tvix_tests/eval-okay-builtins-head-propagate-catchable
@@ -196,6 +213,7 @@ tvix/tvix_tests/eval-okay-builtins-tail
 tvix/tvix_tests/eval-okay-builtins-tail-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-to-string-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-type-of-propagate-catchable
+tvix/tvix_tests/eval-okay-builtins-unsafe-discard-string-context-propagate-catchable
 tvix/tvix_tests/eval-okay-catchable-double-throw
 tvix/tvix_tests/eval-okay-catchable-in-attrNames
 tvix/tvix_tests/eval-okay-catchable-in-inequality

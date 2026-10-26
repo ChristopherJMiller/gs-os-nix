@@ -53,7 +53,7 @@ static obj_t *attr_at(obj_t *set, uint16_t i, obj_t **nm)
 
 /* Nix's checkName: 1..211 bytes of [A-Za-z0-9+-._?=], and not ".", "..", nor
  * starting ".-" or "..-". E_TYPE otherwise. */
-static void check_name(const char *p, uint16_t n)
+void check_name(const char *p, uint16_t n)
 {
     uint16_t i;
     char c;
@@ -355,46 +355,6 @@ static obj_t *drv_hex(const char *p, uint16_t n)
  * no store, but drv_table keeps each derivation's inputs, which are its .drv
  * file's references, so the closure is computed from them. */
 
-/* A fresh STRING: the bytes of the STRING original s from offset off, after
- * "!<o>!" when o (a STRING original) is given. It reserves first, so it may
- * collect: s and o are on the stack across that. The result is young and not
- * yet rooted; the caller inserts it before anything else allocates. */
-static obj_t *elem_new(obj_t *o, obj_t *s, uint16_t off)
-{
-    uint16_t ol, sl, at;
-    obj_t *r;
-    push(s);
-    push(o);
-    ol = o ? AUX16(deref(o)) : 0;
-    sl = AUX16(deref(s)) - off;
-    at = ol ? 2 + ol : 0;
-    nursery_reserve(round4(at + sl) + 8);
-    o = pop();
-    s = pop();
-    r = str_alloc(at + sl);
-    if (ol) {
-        STRBYTES(r)[0] = '!';
-        memcpy(STRBYTES(r) + 1, STRBYTES(deref(o)), ol);
-        STRBYTES(r)[1 + ol] = '!';
-    }
-    memcpy(STRBYTES(r) + at, STRBYTES(deref(s)) + off, sl);
-    return r;
-}
-
-/* Insert the STRING r into the set vstack[base..vsp), sorted by bytes, once:
- * 1 if it was not there. Allocates nothing. */
-static int set_insert(uint16_t base, obj_t *r)
-{
-    uint16_t k, i;
-    uint8_t c = 0;
-    for (k = base; k < vsp && (c = (uint8_t)str_cmp(deref(vstack[k]), deref(r))) == 0; ++k) ;
-    if (k < vsp && c == 1) return 0;
-    push(r);
-    for (i = vsp - 1; i > k; --i) vstack[i] = vstack[i - 1];
-    vstack[k] = r;
-    return 1;
-}
-
 /* The context union x (a LIST original, or 0) with each "=<drv>" element
  * replaced by that .drv's closure: a fresh LIST, sorted, or x itself when it
  * has no "=" element. May collect (x is on the stack across it); turns the
@@ -418,7 +378,7 @@ static obj_t *ctx_deep(obj_t *x)
     for (i = 0; i < n; ++i) {
         windows_maybe();
         e = list_elem(vstack[cb - 1], i, n);
-        if (STRBYTES(deref(e))[0] == '=') set_insert(cb, elem_new(0, e, 1));
+        if (STRBYTES(deref(e))[0] == '=') ctx_insert(cb, ctx_piece(0, 0, e, 1, CTX_REST));
     }
     do {
         grew = 0;
@@ -440,9 +400,9 @@ static obj_t *ctx_deep(obj_t *x)
                 p = STRBYTES(deref(e));
                 if (p[0] == '!') {              /* "!<o>!<drv>": its .drv */
                     for (k = 1; p[k] != '!'; ++k) ;
-                    grew |= (uint8_t)set_insert(cb, elem_new(0, e, k + 1));
+                    grew |= (uint8_t)ctx_insert(cb, ctx_piece(0, 0, e, k + 1, CTX_REST));
                 } else {                        /* a path, plain already */
-                    grew |= (uint8_t)set_insert(cb, e);
+                    grew |= (uint8_t)ctx_insert(cb, e);
                 }
             }
             rpop();
@@ -455,11 +415,11 @@ static obj_t *ctx_deep(obj_t *x)
     for (i = 0; i < n; ++i) {
         windows_maybe();
         e = list_elem(vstack[cb - 1], i, n);
-        if (STRBYTES(deref(e))[0] != '=') set_insert(base, e);
+        if (STRBYTES(deref(e))[0] != '=') ctx_insert(base, e);
     }
     for (i = 0; i < cn; ++i) {
         windows_maybe();
-        set_insert(base, vstack[cb + i]);
+        ctx_insert(base, vstack[cb + i]);
         e = deref(vstack[cb + i]);
         t = drv_entry(STRBYTES(e), AUX16(e));
         rpush(ELEMS(deref(t))[DT_OUTS]);
@@ -467,7 +427,7 @@ static obj_t *ctx_deep(obj_t *x)
         m = AUX16(deref(rstack[rsp - 2]));
         for (j = 0; j < m; ++j) {
             windows_maybe();
-            set_insert(base, elem_new(list_elem(rstack[rsp - 2], j, m), rstack[rsp - 1], 0));
+            ctx_insert(base, ctx_piece(0, list_elem(rstack[rsp - 2], j, m), rstack[rsp - 1], 0, CTX_REST));
         }
         rsp -= 2;
     }

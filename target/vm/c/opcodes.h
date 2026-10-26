@@ -110,6 +110,12 @@
 #define PRIM_TRYEVAL            0x2F /* 1 */
 #define PRIM_HASHSTRING         0x30 /* 2 */
 #define PRIM_DERIVATIONSTRICT   0x31 /* 1 */
+#define PRIM_HASCONTEXT         0x32 /* 1 */
+#define PRIM_UNSAFEDISCARDSTRINGCONTEXT 0x33 /* 1 */
+#define PRIM_UNSAFEDISCARDOUTPUTDEPENDENCY 0x34 /* 1 */
+#define PRIM_ADDDRVOUTPUTDEPENDENCIES 0x35 /* 1 */
+#define PRIM_GETCONTEXT         0x36 /* 1 */
+#define PRIM_APPENDCONTEXT      0x37 /* 2 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */

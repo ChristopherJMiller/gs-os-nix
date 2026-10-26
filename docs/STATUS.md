@@ -120,8 +120,12 @@ the session scratchpad and are adopted only after being read):
 
 **B. L6, what is left before the store** (as listed below): ~~`=<drv>`
 context~~ **done** (DERIVATION.md "A .drv in a string": the closure from
-`drv_table`'s recorded inputs, matching the host on 10 paths); the context
-builtins; `builtins.toFile`; `currentSystem`.
+`drv_table`'s recorded inputs, matching the host on 10 paths); ~~the context
+builtins~~ **done** (DERIVATION.md "Reading and rewriting a context": six
+builtins, primops `$32`-`$37`, and no context in a name where Nix forbids
+one); `builtins.toFile`; `currentSystem`. **Bank 4 is at 42.9 KB of 64:** the
+"prims" segment will need a second segment name before long (omf2bin places
+it in bank 6, skipping the window ring).
 
 **C. Coverage, from the top of the histogram:** floats; dynamic attribute
 names; `toJSON`/`fromJSON`/`toXML`/`fromTOML`; the primop tail (`mapAttrs`,
@@ -158,10 +162,12 @@ the fixture (D7), a regression that provably fails (D14), the gates one at a tim
    computed from the inputs `drv_table` now keeps. Nix itself needs the `.drv`
    in its store for this, so the fixture is generated with
    `--read-write-mode`.
-3. **The context builtins:** `hasContext`, `unsafeDiscardStringContext`,
-   `getContext`, `appendContext`, `unsafeDiscardOutputDependency`. And Nix
-   *rejects* context in attribute names (`listToAttrs`, `getAttr`), which the
-   VM accepts.
+3. ~~**The context builtins**~~ **done** (2026-10-26): `hasContext`,
+   `unsafeDiscardStringContext`, `unsafeDiscardOutputDependency`,
+   `addDrvOutputDependencies`, `getContext`, `appendContext`; and a context
+   is now an error in `getAttr`, `hasAttr`, `listToAttrs`, `removeAttrs` and
+   `hashString`'s type, as in Nix. One fixture, 14 eval-fail fixtures, 18
+   mutations.
 4. **`builtins.toFile`** is computable without file I/O: a text store path of
    the contents, with the contexts as references -- and it is the one way a
    plain source (`/nix/store/...` context) arises before L7.
@@ -231,7 +237,9 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **324 / 453** (2026-10-26, after integer overflow; 0
+The scoreboard reads **342 / 468** (2026-10-26, after the context builtins; 0
+fail, 7 error, 98 unsupported, 21 notyetpassing; three corpus tests pass with
+them). It was 324 / 453 after integer overflow (0
 fail, 7 error, 101 unsupported, 21 notyetpassing). It was 316 / 445 after
 fixed-output derivations -- all 17 new tests then were fixtures, since no
 corpus test has an `outputHash` -- and 299 / 428 after string context. New then: its fixtures, and the corpus

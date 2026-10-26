@@ -192,6 +192,7 @@ void prim_hashstring(void)
     force_slot(2);                              /* the type, first, as Nix forces it */
     t = deref(vstack[vsp - 2]);
     need(t, T_STRING);
+    if (CTX(t)) type_err();                     /* forceStringNoCtx */
     if (!is_lit(t, "sha256", 6)) {
         if (is_lit(t, "md5", 3) || is_lit(t, "sha1", 4) || is_lit(t, "sha512", 6)) err_exit(E_UNSUP);
         type_err();
@@ -286,6 +287,307 @@ void interpolate(uint16_t n)
     STRCTX(o, len) = pop();
     vsp = at;
     push(o);
+}
+
+/* --- building contexts -------------------------------------------------------------------
+ * An element is a STRING in Nix's syntax ("!<o>!<drv>", "=<drv>", or a plain
+ * path), and a context a LIST of them sorted by bytes, no two equal. These
+ * make and collect elements; derivation.c's closure and the context builtins
+ * below share them. */
+
+/* A fresh STRING: `pre` (when not 0), then "!<o>!" when o (a STRING original)
+ * is given, then n bytes of the STRING original s from offset off (CTX_REST:
+ * to its end). It reserves first, so it may collect: s and o are on the stack
+ * across that. The result is young and not yet rooted; the caller roots it
+ * (ctx_insert, push) before anything else allocates. */
+obj_t *ctx_piece(char pre, obj_t *o, obj_t *s, uint16_t off, uint16_t n)
+{
+    uint16_t ol, at;
+    obj_t *r;
+    push(s);
+    push(o);
+    ol = o ? AUX16(deref(o)) : 0;
+    if (n == CTX_REST) n = AUX16(deref(s)) - off;
+    at = (pre ? 1 : 0) + (o ? 2 + ol : 0);
+    nursery_reserve(round4(at + n) + 8);
+    o = pop();
+    s = pop();
+    r = str_alloc(at + n);
+    if (pre) STRBYTES(r)[0] = pre;
+    if (o) {
+        STRBYTES(r)[at - 2 - ol] = '!';
+        memcpy(STRBYTES(r) + at - 1 - ol, STRBYTES(deref(o)), ol);
+        STRBYTES(r)[at - 1] = '!';
+    }
+    memcpy(STRBYTES(r) + at, STRBYTES(deref(s)) + off, n);
+    return r;
+}
+
+/* Insert the STRING r into the set vstack[base..vsp), sorted by bytes, once:
+ * 1 if it was not there. Allocates nothing. */
+int ctx_insert(uint16_t base, obj_t *r)
+{
+    uint16_t k, i;
+    uint8_t c = 0;
+    for (k = base; k < vsp && (c = (uint8_t)str_cmp(deref(vstack[k]), deref(r))) == 0; ++k) ;
+    if (k < vsp && c == 1) return 0;
+    push(r);
+    for (i = vsp - 1; i > k; --i) vstack[i] = vstack[i - 1];
+    vstack[k] = r;
+    return 1;
+}
+
+/* A copy of the STRING original so's bytes with the context x (a LIST
+ * original, or 0). May collect; both are on the stack across it. Young, not
+ * yet rooted. */
+static obj_t *str_with_ctx(obj_t *so, obj_t *x)
+{
+    uint16_t n;
+    obj_t *r;
+    push(so);
+    push(x);
+    n = AUX16(deref(so));
+    nursery_reserve(round4(n) + 8);
+    x = pop();
+    so = pop();
+    r = str_alloc(n);
+    memcpy(STRBYTES(r), STRBYTES(deref(so)), n);
+    STRCTX(r, n) = x;
+    return r;
+}
+
+/* A fresh STRING of n literal bytes (a literal is kept with the code, not in
+ * bank 0). May collect. */
+static obj_t *lit_str(const char *t, uint16_t n)
+{
+    obj_t *r;
+    nursery_reserve(round4(n) + 8);
+    r = str_alloc(n);
+    memcpy(STRBYTES(r), t, n);
+    return r;
+}
+
+/* --- the context builtins (DERIVATION.md "String context") -------------------------------- */
+
+/* Where the store path an element (a view) names begins: after the second "!"
+ * of "!<o>!<drv>", after "=", or 0 for a plain path. */
+static uint16_t elem_path(obj_t *e)
+{
+    const char *p = STRBYTES(e);
+    uint16_t m = AUX16(e), i;
+    if (p[0] == '=') return 1;
+    if (p[0] != '!') return 0;
+    for (i = 1; i < m && p[i] != '!'; ++i) ;
+    return i + 1;
+}
+
+static int is_drv_name(const char *p, uint16_t n)
+{
+    return n >= 4 && memcmp(p + n - 4, ".drv", 4) == 0;
+}
+
+/* Nix's isStorePath: "/nix/store/", 32 nix32 digits, "-", and a store-path
+ * name (check_name, which is E_TYPE itself). */
+static int is_store_path(const char *p, uint16_t n)
+{
+    uint16_t i, d;
+    if (n < 45 || memcmp(p, "/nix/store/", 11) != 0 || p[43] != '-') return 0;
+    for (i = 11; i < 43; ++i) {
+        for (d = 0; d < 32 && "0123456789abcdfghijklmnpqrsvwxyz"[d] != p[i]; ++d) ;
+        if (d == 32) return 0;
+    }
+    check_name(p + 44, n - 44);
+    return 1;
+}
+
+/* hasContext s: s must BE a string (forceString, not a coercion). */
+void prim_hascontext(void)
+{
+    obj_t *so, *s = force_pop_as(T_STRING, &so);
+    push(CTX(s) ? obj_true : obj_false);
+}
+
+/* unsafeDiscardStringContext s: s coerced as "${}" coerces it (a set through
+ * __toString or outPath), and returned without its context. */
+void prim_unsafediscardstringcontext(void)
+{
+    coerce_top(CO_PLAIN);
+    if (CTX(deref(peek()))) vstack[vsp - 1] = str_with_ctx(peek(), 0);
+}
+
+/* unsafeDiscardOutputDependency s: coerced; each "=<drv>" becomes the plain
+ * path <drv> -- an opaque source, which derivationStrict does not expand. */
+void prim_unsafediscardoutputdependency(void)
+{
+    uint16_t n, i, base;
+    obj_t *x, *e;
+    coerce_top(CO_PLAIN);
+    x = CTX(deref(peek()));
+    if (!x) return;
+    n = AUX16(deref(x));
+    for (i = 0; i < n && STRBYTES(deref(list_elem(x, i, n)))[0] != '='; ++i) ;
+    if (i == n) return;
+    push(x);                                    /* base - 1: the old context */
+    base = vsp;
+    for (i = 0; i < n; ++i) {
+        windows_maybe();
+        e = list_elem(vstack[base - 1], i, n);
+        if (STRBYTES(deref(e))[0] == '=') ctx_insert(base, ctx_piece(0, 0, e, 1, CTX_REST));
+        else ctx_insert(base, e);
+    }
+    x = list_from_stack(vsp - base);
+    --vsp;                                      /* the coerced string is on top again */
+    vstack[vsp - 1] = str_with_ctx(peek(), x);
+}
+
+/* addDrvOutputDependencies s: coerced; its context must be one element: a
+ * plain .drv path, which becomes "=<drv>", or "=<drv>" already. An output, or
+ * a path that is not a .drv, is an error. */
+void prim_adddrvoutputdependencies(void)
+{
+    obj_t *x, *e;
+    const char *p;
+    uint16_t m;
+    coerce_top(CO_PLAIN);
+    x = CTX(deref(peek()));
+    if (!x || AUX16(deref(x)) != 1) type_err();         /* "must have exactly one element" */
+    e = list_elem(x, 0, 1);
+    p = STRBYTES(deref(e));
+    m = AUX16(deref(e));
+    if (p[0] == '=') return;
+    if (p[0] == '!' || !is_drv_name(p, m)) type_err();
+    push(ctx_piece('=', 0, e, 0, CTX_REST));
+    x = list_from_stack(1);
+    vstack[vsp - 1] = str_with_ctx(peek(), x);
+}
+
+/* getContext s: s a string. { "<path>" = { allOutputs = true; outputs = [
+ * "<o>" ... ]; path = true; }; ... }: one attribute per store path the context
+ * names; of its three, only those that are true or not empty (Nix's
+ * ContextInfo); its outputs in name order, which is the elements' own. */
+void prim_getcontext(void)
+{
+    uint16_t n, i, j, k, nk, kb, ob, ko, cnt;
+    uint8_t all, path;
+    obj_t *so, *s, *e, *ev, *kv, *r;
+    s = force_pop_as(T_STRING, &so);
+    if (!CTX(s)) { push(attrs_alloc(0)); return; }     /* 8 bytes: inside the boundary's margin */
+    push(CTX(s));                               /* kb - 3: the context */
+    push(lit_str("allOutputs", 10));            /* kb - 2 */
+    push(lit_str("outputs", 7));                /* kb - 1 */
+    kb = vsp;                                   /* the keys: each element's path, sorted, once */
+    n = AUX16(deref(vstack[kb - 3]));
+    for (i = 0; i < n; ++i) {
+        windows_maybe();
+        e = list_elem(vstack[kb - 3], i, n);
+        ctx_insert(kb, ctx_piece(0, 0, e, elem_path(deref(e)), CTX_REST));
+    }
+    nk = vsp - kb;
+    for (k = 0; k < nk; ++k) {                  /* each key's value, after the keys */
+        all = path = 0;
+        ob = vsp;                               /* its outputs' names */
+        for (i = 0; i < n; ++i) {
+            windows_maybe();
+            e = list_elem(vstack[kb - 3], i, n);
+            ev = deref(e);
+            kv = deref(vstack[kb + k]);
+            ko = elem_path(ev);
+            if (AUX16(ev) - ko != AUX16(kv) || memcmp(STRBYTES(ev) + ko, STRBYTES(kv), AUX16(kv)) != 0)
+                continue;
+            if (STRBYTES(ev)[0] == '=') all = 1;
+            else if (STRBYTES(ev)[0] != '!') path = 1;
+            else push(ctx_piece(0, 0, e, 1, ko - 2));
+        }
+        cnt = all + path + (vsp > ob);
+        if (vsp > ob) {
+            r = list_from_stack(vsp - ob);
+            push(r);
+        }
+        nursery_reserve(4 + 12 * cnt);
+        r = attrs_alloc(cnt);
+        j = 0;
+        if (all) attrs_put(r, cnt, j++, vstack[kb - 2], obj_true);
+        if (vsp > ob) attrs_put(r, cnt, j++, vstack[kb - 1], vstack[vsp - 1]);
+        if (path) attrs_put(r, cnt, j++, str_path, obj_true);
+        if (vsp > ob) --vsp;
+        push(r);
+    }
+    nursery_reserve(4 + 12 * nk);
+    r = attrs_alloc(nk);
+    for (k = 0; k < nk; ++k) attrs_put(r, nk, k, vstack[kb + k], vstack[kb + nk + k]);
+    vsp = kb - 3;
+    push(r);
+}
+
+/* appendContext s ctx: s, its own context kept, with for each store path in
+ * ctx a plain path (path = true), "=<drv>" (allOutputs = true) and
+ * "!<o>!<drv>" (each of outputs) -- the last two for a .drv only. A key that is
+ * not a store path is an error. A read-only Nix does not ask its store
+ * whether the path exists, and the VM has no store to ask. */
+#define AC_KEY() ANAMES(deref(vstack[b0 - 1]), n)[i]
+void prim_appendcontext(void)
+{
+    uint16_t n, i, j, m, b0, base, ix;
+    obj_t *s, *v, *x, *f, *nmv;
+    force_slot(2);                              /* s first, as Nix forces it */
+    s = deref(vstack[vsp - 2]);
+    need(s, T_STRING);
+    force_top();
+    need(deref(peek()), T_ATTRS);
+    b0 = vsp;                                   /* b0 - 2: s, b0 - 1: ctx */
+    push(lit_str("allOutputs", 10));            /* b0 */
+    push(lit_str("outputs", 7));                /* b0 + 1 */
+    base = vsp;                                 /* the added elements */
+    n = AUX16(deref(vstack[b0 - 1]));
+    for (i = 0; i < n; ++i) {
+        windows_maybe();
+        nmv = deref(AC_KEY());
+        if (!is_store_path(STRBYTES(nmv), AUX16(nmv))) type_err();   /* "is not a store path" */
+        push(AVALUES(deref(vstack[b0 - 1]), n)[i]);
+        (void)force_pop_as(T_ATTRS, &x);
+        rpush(x);                               /* the key's value */
+        if (find_attr(rstack[rsp - 1], str_path, &ix, &f)) {
+            push(f);
+            if (BOOLVAL(force_pop_as(T_BOOL, &x))) ctx_insert(base, ctx_piece(0, 0, AC_KEY(), 0, CTX_REST));
+        }
+        if (find_attr(rstack[rsp - 1], vstack[b0], &ix, &f)) {
+            push(f);
+            if (BOOLVAL(force_pop_as(T_BOOL, &x))) {
+                nmv = deref(AC_KEY());
+                if (!is_drv_name(STRBYTES(nmv), AUX16(nmv))) type_err();
+                ctx_insert(base, ctx_piece('=', 0, AC_KEY(), 0, CTX_REST));
+            }
+        }
+        if (find_attr(rstack[rsp - 1], vstack[b0 + 1], &ix, &f)) {
+            push(f);
+            v = force_pop_as(T_LIST, &x);       /* not AUX16(force_pop_as(...)): AUX16 reads its argument twice */
+            m = AUX16(v);
+            nmv = deref(AC_KEY());
+            if (m && !is_drv_name(STRBYTES(nmv), AUX16(nmv))) type_err();
+            rpush(x);                           /* the outputs list */
+            for (j = 0; j < m; ++j) {
+                push(RELEM(rsp - 1, j, m));
+                v = force_pop_as(T_STRING, &x);
+                if (CTX(v)) type_err();         /* forceStringNoCtx */
+                ctx_insert(base, ctx_piece(0, x, AC_KEY(), 0, CTX_REST));
+            }
+            rpop();
+        }
+        rpop();
+    }
+    x = CTX(deref(vstack[b0 - 2]));             /* s's own context joins them */
+    if (x) {
+        rpush(x);
+        m = AUX16(deref(x));
+        for (j = 0; j < m; ++j) {
+            windows_maybe();
+            ctx_insert(base, RELEM(rsp - 1, j, m));
+        }
+        rpop();
+    }
+    x = vsp > base ? list_from_stack(vsp - base) : 0;
+    vsp = b0 - 1;                               /* s is on top */
+    if (x) vstack[vsp - 1] = str_with_ctx(peek(), x);
 }
 
 /* concatStringsSep sep list, with the result left on the stack. */

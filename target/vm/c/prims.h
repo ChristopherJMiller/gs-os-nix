@@ -38,6 +38,12 @@ int    is_lit(obj_t *s, const char *lit, uint16_t n);  /* the STRING view s is l
 void   hex_of(const uint8_t *dig, uint16_t n, char *out);  /* n bytes as 2n lowercase hex digits */
 obj_t *ctx_join(uint16_t at, uint16_t n);           /* the union of vstack[at..at+n)'s contexts; may collect */
 
+/* Building contexts: an element STRING of [pre] ["!<o>!"] s[off..off+n)
+ * (n = CTX_REST: to the end), and the sorted set of them on the stack. */
+#define CTX_REST 0xFFFF
+obj_t *ctx_piece(char pre, obj_t *o, obj_t *s, uint16_t off, uint16_t n);   /* may collect */
+int    ctx_insert(uint16_t base, obj_t *r);         /* into vstack[base..vsp), sorted, once */
+
 void prim_stringlength(void);
 void prim_substring(void);
 void prim_tostring(void);
@@ -45,8 +51,15 @@ void prim_hashstring(void);
 void prim_concatstringssep(void);
 void prim_basenameof(void);
 void prim_dirof(void);
+void prim_hascontext(void);
+void prim_unsafediscardstringcontext(void);
+void prim_unsafediscardoutputdependency(void);
+void prim_adddrvoutputdependencies(void);
+void prim_getcontext(void);
+void prim_appendcontext(void);
 
 /* --- derivation.c ---------------------------------------------------------------------- */
 void prim_derivationstrict(void);
+void check_name(const char *p, uint16_t n);         /* a store-path name, else E_TYPE */
 
 #endif

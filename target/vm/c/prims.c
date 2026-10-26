@@ -352,7 +352,9 @@ static void force_name_then_set(obj_t **name, obj_t **set)
     *set = force_pop_view(&v);
     need(v, T_ATTRS);
     *name = pop();
-    need(deref(*name), T_STRING);
+    v = deref(*name);
+    need(v, T_STRING);
+    if (CTX(v)) type_err();                     /* forceStringNoCtx: a name has no context */
 }
 
 static void prim_hasattr(void)
@@ -408,7 +410,7 @@ static int name_in_list(obj_t *name, obj_t *lo)
 static void prim_removeattrs(void)              /* set [ names ]: keep entries not in the list */
 {
     uint16_t b = rsp, ns, nl, i, k = 0;
-    obj_t *s, *l, *so, *lo, *r, *eo;
+    obj_t *s, *l, *so, *lo, *r, *e, *eo;
     force_two_orig(&s, &l, &so, &lo);
     need(s, T_ATTRS); need(l, T_LIST);
     nl = AUX16(l);
@@ -416,7 +418,8 @@ static void prim_removeattrs(void)              /* set [ names ]: keep entries n
     rpush(lo);
     for (i = 0; i < nl; ++i) {                  /* force every name */
         push(RELEM(b + 1, i, nl));
-        (void)force_pop_as(T_STRING, &eo);     /* forced and checked; the view is not needed */
+        e = force_pop_as(T_STRING, &eo);
+        if (CTX(e)) type_err();                 /* forceStringNoCtx */
     }
     so = rstack[b];
     lo = rstack[b + 1];
@@ -463,7 +466,7 @@ void insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, obj_t *v
 static void prim_listtoattrs(void)              /* [ { name; value; } ... ] */
 {
     uint16_t b = rsp, n, i, cnt = 0, ix, at;
-    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *eo, *no, *set, *av;
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *eo, *nm, *no, *set, *av;
     n = AUX16(l);
     rpush(lo);
     /* pass 1, running bytecode: (name, value) pairs onto the value stack */
@@ -473,7 +476,8 @@ static void prim_listtoattrs(void)              /* [ { name; value; } ... ] */
         rpush(eo);                              /* b+1: the element */
         if (!find_attr(eo, str_name, &ix, &av)) err_exit(E_NOATTR);
         push(av);
-        (void)force_pop_as(T_STRING, &no);
+        nm = force_pop_as(T_STRING, &no);
+        if (CTX(nm)) type_err();                /* forceStringNoCtx */
         push(no);                               /* the name */
         if (!find_attr(rstack[b + 1], str_value, &ix, &av)) err_exit(E_NOATTR);
         push(av);                               /* the value, unforced */
@@ -733,6 +737,12 @@ void op_prim(void)
     case PRIM_TRYEVAL:         prim_tryeval(); break;
     case PRIM_HASHSTRING:      prim_hashstring(); break;
     case PRIM_DERIVATIONSTRICT: prim_derivationstrict(); break;
+    case PRIM_HASCONTEXT:      prim_hascontext(); break;
+    case PRIM_UNSAFEDISCARDSTRINGCONTEXT: prim_unsafediscardstringcontext(); break;
+    case PRIM_UNSAFEDISCARDOUTPUTDEPENDENCY: prim_unsafediscardoutputdependency(); break;
+    case PRIM_ADDDRVOUTPUTDEPENDENCIES: prim_adddrvoutputdependencies(); break;
+    case PRIM_GETCONTEXT:      prim_getcontext(); break;
+    case PRIM_APPENDCONTEXT:   prim_appendcontext(); break;
     default:                   err_exit(E_BADOP);
     }
 }
