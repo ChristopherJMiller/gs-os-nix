@@ -349,6 +349,11 @@ search would have found.
 > the CAM to beat. `LOOKUP`'s fixed ~20 accesses cannot be recovered by any
 > change to how the name is confirmed.
 >
+> (2026-10-26) The VM's `MEMCMP` caller, kept after this as the verb's only
+> software user, is deleted: 479 bytes of bank 0 that nothing called. The verb
+> itself stays, tested by `checks.regress`; whether it and `LOOKUP` stay in
+> the RTL is the D5/D8 decision above.
+>
 > That puts two decisions in this document in conflict. D5's gate says a verb
 > that does not pay for its crossing is deleted; D8 names the attribute-set CAM
 > as the one place SIMD earns its gates. Deleting `LOOKUP` also deletes

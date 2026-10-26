@@ -136,9 +136,10 @@ static struct win { obj_t *card; uint16_t off, pad; } wins[NWIN][2];
 static uint8_t win_lru[NWIN];   /* the way each set fills next */
 uint16_t win_ring;              /* the bump pointer; the dispatch loop reads it */
 
-/* Drop every copy and start the ring again. Only ever called at a bytecode
- * boundary (windows_maybe in run()), where no view is live -- which is what
- * makes reusing the bytes safe. */
+/* Drop every copy and start the ring again. Only ever called where no view is
+ * live -- at a bytecode boundary (windows_maybe in run()), or between the
+ * strings a primop reads one at a time (DERIVATION.md "Views") -- which is
+ * what makes reusing the bytes safe. */
 void windows_turnover(void)
 {
     ++ST_TURNOVER;
@@ -332,48 +333,14 @@ static int scan_attr(obj_t *sv, obj_t *nv, uint32_t h, uint16_t *ix, obj_t **val
     return 0;
 }
 
-/* Is the STRING at card address `at` the same text as the search name, without
- * touching the set it came from? Written for the MEMCMP experiment below and
- * kept because it is the only caller of the verb; find_attr does NOT use it,
- * for the reason recorded in CARD-ISA.md: the set is already in a window by the
- * time a lookup happens, so reading fields back across the bus one at a time is
- * strictly more expensive than the copy it was meant to avoid.
- *
- *
- * The point of doing this here rather than in scan_attr is that it never touches
- * the SET: a header read for the length, then either the card's MEMCMP (when the
- * search name is itself mature, which a constant from the .nbc is after the
- * first collection) or a view of just the candidate name. Either way the cost is
- * independent of how many attributes the set has -- which is the whole reason
- * LOOKUP did not pay (docs/CARD-ISA.md). */
-static int card_name_eq(uint32_t at, obj_t *name, obj_t *nv)
-{
-    uint32_t hdr;
-    uint16_t len = AUX16(nv);
-    card_read_at(at, &hdr, 4);
-    if ((uint8_t)hdr != T_STRING) return 0;
-    if (AUX16((obj_t *)&hdr) != len) return 0;                  /* lengths differ */
-    if (len == 0) return 1;
-    if (IS_MATURE(name))
-        return card_memcmp(at + 4, PBITS(name) + 4, len) == 0;
-    /* A young search name cannot be a MEMCMP operand -- the card cannot read CPU
-     * RAM -- so compare against a view of the candidate name alone. */
-    return str_eq(deref((obj_t *)at), nv);
-}
-
-/* `set` is the ORIGINAL pointer, `name` a view or an original. A young set is
- * searched by the CPU (HEAP.md); a mature one by the card's LOOKUP, the 32-lane
- * CAM, which returns a candidate index the name compare confirms. A hash
- * collision on a different name falls back to the scan, so a collision can
+/* `set` is the ORIGINAL pointer, never a view; `name` a view or an original.
+ * On a hit both the index and the VALUE come back. Young: a CPU hash scan
+ * (HEAP.md). Mature: the card's LOOKUP, the 32-lane CAM, hands back a
+ * candidate index and its value pointer, and the candidate's name is confirmed
+ * against a view of the set (the set is copied into a window: confirming over
+ * the bus with MEMCMP was measured dearer, CARD-ISA.md). A hash collision that
+ * misled the CAM falls through to a CPU scan of that copy, so a collision can
  * never lose an attribute. */
-/* The set is the ORIGINAL pointer, never a view. On a hit both the index and
- * the VALUE come back, so callers need not deref the set to read it -- on the
- * card path nothing copies the set at all.
- *
- * Mature: the card's LOOKUP hands back the value pointer and a candidate index,
- * the candidate's name is confirmed without copying the set (card_name_eq), and
- * only a hash collision that misled the CAM falls through to a CPU scan of a
- * copy, so a collision can never lose an attribute. Young: a CPU hash scan. */
 int find_attr(obj_t *set, obj_t *name, uint16_t *ix, obj_t **val)
 {
     obj_t *nv = deref(name), *sv;

@@ -135,8 +135,9 @@ survivors are moved back into the nursery instead.
 
 1. **The card's ports** — 8-bit stores to `$C0nX` with `sep #$20`; a 16-bit C
    store would write the next register too.
-2. **`memcpy`-shaped loops the collector runs** — `mvn` for the copy-back and the
-   staging copy; C would loop a byte at a time.
+2. **`memcpy`-shaped loops the collector runs** — planned as `mvn`; not done:
+   `gc.c` has no assembly and copies with ORCA/C's `memcpy`. Whether `mvn`
+   would pay is unmeasured.
 3. **The dispatch loop's opcode fetch**, if measurement says the C version is
    slower than a `jmp (table,x)`; until measured, it is a `switch`.
 

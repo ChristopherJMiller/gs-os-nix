@@ -1,8 +1,10 @@
 /* gc.c -- the nursery collector (HEAP.md, "The VM and the two spaces").
  *
- * Runs only between two bytecode instructions (run() calls gc_maybe() before
- * every dispatch), when the live pointers are exactly the roots listed below
- * and no C local holds an object. A Cheney copy of the live graph goes into a
+ * Runs where no C local holds an object, so the live pointers are exactly the
+ * roots listed below: at a bytecode boundary (run(), before every dispatch);
+ * in nursery_reserve(), which an operation calls with everything it holds on
+ * the stacks (HEAP.md "When a collection happens"); and in store_field() and a
+ * thunk update when the remembered set is full, with the value pushed. A Cheney copy of the live graph goes into a
  * STAGING bank at the SAME low addresses the survivors will have afterwards,
  * so pointers written during the copy are already the final ones; then
  *
@@ -98,11 +100,6 @@ static int rs_is_ptr(const obj_t *h, uint16_t off)
 }
 
 uint8_t gc_tick;            /* boundaries since the last stress collection */
-
-void gc_maybe(void)
-{
-    if (gc_due()) gc_collect();
-}
 
 /* vm.h explains when this may be called. Under A2MIN_RESERVE_STRESS it
  * collects every time (if anything is young), which is what proves each call

@@ -45,6 +45,62 @@
 M1/M2/M4 are byte-parity assertions against upstream Nix. They are what separate an
 implementation from a tribute.
 
+## Roadmap (2026-10-26): to a complete bytecode compiler
+
+Agreed with Chris (a goal loop, one item per iteration, each by the vm-change
+skill and committed when its gates pass). **Stop condition: `nbc` refuses
+nothing in the vendored corpus** -- the "unsupported" histogram is empty, so
+every construct and builtin the corpus uses compiles and runs on the VM.
+Anything that truly needs GS/OS is refused at run time by name and documented,
+not counted against completion. Decisions taken for it: **floats are
+soft-float in C** (bit-identical to the host, no SANE, no ROM); **
+`builtins.currentSystem` is `"w65-gsos"`** (GNU `config.sub`'s CPU name for
+WDC's 65816 line, and the kernel a nixpkgs port would add; fixtures from
+`nix-instantiate --option system w65-gsos`; D23 when it lands).
+
+Full first-refusal histogram at the start (2026-10-26, corpus incl.
+notyetpassing): float literal 25, dynamic attribute name 13, `toJSON` 5,
+`toXML` 4, `mapAttrs` 4, `fromJSON` 4, then 3 each `unsafeGetAttrPos`,
+`splitVersion`, `pathExists`, `groupBy`, `genericClosure`, `functionArgs`,
+`compareVersions`, `catAttrs`; 2 each search-path literal, a missing
+`notyetpassing/lib.nix`, `unsafeDiscardStringContext`, `split`, `sort`,
+`replaceStrings`, `readFile`, `parseDrvName`, `fromTOML`, `currentSystem`,
+`builtins.builtins`; 1 each URI literal, `scopedImport`, a set bound twice,
+path antiquotation, `import` as a value, `__curPos`, `toPath`,
+`readFileType`, `readDir`, `path`, `match`, `isFloat`, `builtins.import`,
+`hashFile`, `hasContext`, `getEnv`, `getContext`, `builtins.fnord`.
+
+**A. Maintainability first** (the C review of 2026-10-25; its tools are in
+the session scratchpad and are adopted only after being read):
+
+1. Dead code out of bank 0: `card_name_eq`, `card_memcmp`, `gc_maybe`
+   (611 B), and the comments that still describe them.
+2. ORCA/C's own lint (`#pragma lint -1`), `_Noreturn` on the error exits,
+   `_Static_assert`s on the memory map.
+3. A bank-layout gate: bank-0 bytes as a ratchet, the linked ORCA/C runtime
+   routines against an allowlist, no code in banks 1-3 or 5 -- and `omf2bin`
+   refusing those banks itself.
+4. `checks.c-lint`: host clang `-Wall -Wextra -Werror` through a shim, and a
+   GC-safety checker for `obj_t *` locals across collecting calls; both
+   self-tested by planting a violation.
+5. One list of VM sources; `prims.c` split (derivations; strings and
+   context; the rest).
+6. Integer overflow as Nix 2.34 has it: `+`, `-`, `*` (and `/` of the
+   minimum by -1) throw instead of wrapping. Three fixtures from L4 slice 1
+   assert wraparound, which the host no longer does (D7).
+
+**B. L6, what is left before the store** (as listed below): `=<drv>`
+context; the context builtins; `builtins.toFile`; `currentSystem`.
+
+**C. Coverage, from the top of the histogram:** floats; dynamic attribute
+names; `toJSON`/`fromJSON`/`toXML`/`fromTOML`; the primop tail (`mapAttrs`,
+`catAttrs`, `groupBy`, `genericClosure`, `functionArgs`, `splitVersion`,
+`compareVersions`, `parseDrvName`, `replaceStrings`, `sort`, regex `match`/
+`split`, ...); positions (`unsafeGetAttrPos`, `__curPos`); search paths, URI
+literals, path antiquotation, `import` as a value, `scopedImport`; then the
+file builtins, which need GS/OS file calls (a2min implementing the ones
+`orcarun` already does is the likely route, and is L7's own first step).
+
 ## Roadmap (2026-10-25): from here to M4
 
 The order agreed with Chris (the L6 goal loop): paths as values (done), L6

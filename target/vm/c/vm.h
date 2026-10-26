@@ -9,7 +9,9 @@
  * do_call(), values_equal(), deep_force_top() -- may collect, and a collection
  * moves young objects. A C local of type obj_t * must not be held across such a
  * call; keep it on the root stack (rpush/rpop) and the collector rewrites it.
- * Allocation itself never collects: gc_maybe() runs only at run()'s dispatch.
+ * Allocation itself never collects. Collections run at run()'s dispatch, in
+ * nursery_reserve(), and in store_field() or a thunk update with the remembered
+ * set full (gc.c); so those may collect too.
  */
 #ifndef VM_H
 #define VM_H
@@ -276,8 +278,7 @@ uint32_t hash_str(obj_t *s);        /* djb2 */
 int    str_eq(obj_t *a, obj_t *b);  /* 1 if equal */
 int    str_cmp(obj_t *a, obj_t *b); /* 0 less, 1 equal, 2 greater */
 /* set is the ORIGINAL pointer, never a view. On a hit the VALUE comes back too,
- * so no caller has to deref the set to read it -- which is what keeps a mature
- * lookup independent of the set's size (docs/CARD-ISA.md, MEMCMP). */
+ * so no caller has to deref the set to read it (data.c). */
 int    find_attr(obj_t *set, obj_t *name, uint16_t *ix, obj_t **val);
 int    has_attr(obj_t *set, obj_t *name);   /* when only the answer is wanted */
 void   attrs_put(obj_t *set, uint16_t n, uint16_t i, obj_t *name, obj_t *value);
@@ -299,7 +300,6 @@ uint16_t stack_ptr(void);
 void stack_check(void);
 
 /* --- gc.c: the nursery collector --------------------------------------------------- */
-void gc_maybe(void);
 void gc_collect(void);
 /* Collect at this boundary? Normally for nursery pressure. Under GC stress the
  * byte at GC_STRESS_ADDR is a period k: every k-th boundary. k = 1 promotes
@@ -333,7 +333,6 @@ void card_read_more(void *dst, uint16_t n);      /* continue from where the last
 void card_write_at(uint32_t addr, const void *src, uint16_t n);
 uint32_t card_reserve(uint16_t n);
 int  card_lookup(uint32_t set, uint32_t h, uint16_t *ix, uint32_t *value);
-int  card_memcmp(uint32_t a, uint32_t b, uint16_t n);   /* -1/0/1, or 2 if refused */
 /* HASH_PUSH n bytes in RAM, then HASH_FINAL; the 32 bytes of slot psel: P0 the
  * digest, P3 the store-path hash part (the digest folded and in nixbase32). 0 if
  * refused. */

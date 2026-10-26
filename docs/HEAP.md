@@ -98,8 +98,10 @@ Attributes are stored **sorted by name**, as Nix requires, so `builtins.attrName
 a straight walk of the name column and the CAM's match index is directly usable.
 
 A key hash collision is possible, so a CAM match is a *candidate*: the caller must
-still compare the name. `LOOKUP` returns the match index; the 65816 confirms it with
-`MEMCMP`. Getting this wrong would silently return the wrong attribute.
+still compare the name. `LOOKUP` returns the match index; the 65816 confirms it
+against its cached copy of the set (`data.c find_attr`; confirming with `MEMCMP`
+was measured dearer, CARD-ISA.md). Getting this wrong would silently return the
+wrong attribute.
 
 **The key hash is djb2**, computed by the CPU: `h = 5381; for each byte c: h = h*33
 + c`, 32-bit wrapping. The card never computes it — `LOOKUP` takes the search hash

@@ -436,10 +436,12 @@ void run(void)
     uint16_t op, n, i, ix;
     obj_t *a, *b, *o, *ao, *bo, *sv;
     for (;;) {
-        /* the only place a collection can happen (gc_maybe, inlined) */
+        /* A boundary: no C local holds an object or a view, so a collection
+         * (gc.c lists the other places one runs) and a ring turnover (prims.c
+         * also turns it over between strings, holding no view) are safe. */
         if (gc_due())
             gc_collect();
-        windows_maybe();        /* and the only place the window ring may turn over */
+        windows_maybe();
         op = fetch8();
         switch (op) {
         /* --- constants and singletons --- */
