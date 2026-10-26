@@ -81,7 +81,10 @@ The fixtures are the host's own output, never a model's.
 ## 4. Gates, in order, one at a time
 
 1. `just scoreboard`, then `just scoreboard-update` to claim new passes (the
-   ratchet is `tests/corpus/expected-pass.txt`), and `just bank-gate`.
+   ratchet is `tests/corpus/expected-pass.txt`), `just bank-gate`, and `just
+   c-lint` (seconds: host clang `-Werror` and gcsafe, which flags an `obj_t *`
+   or a view read after a call that may collect; mark a deliberate exception
+   `/* gcsafe: <why> */` on the line it names).
 2. `just verb-economics` if hashing or a card verb changed (needs `just
    fixtures` first so the workload is compiled); add the fixture to
    `VERB_WORKLOAD` in both the justfile and flake.nix if it exercises a verb.

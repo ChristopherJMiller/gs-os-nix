@@ -417,7 +417,7 @@ static int name_in_list(obj_t *name, obj_t *lo)
 static void prim_removeattrs(void)              /* set [ names ]: keep entries not in the list */
 {
     uint16_t b = rsp, ns, nl, i, k = 0;
-    obj_t *s, *l, *so, *lo, *r, *e, *eo;
+    obj_t *s, *l, *so, *lo, *r, *eo;
     force_two_orig(&s, &l, &so, &lo);
     need(s, T_ATTRS); need(l, T_LIST);
     nl = AUX16(l);
@@ -425,7 +425,7 @@ static void prim_removeattrs(void)              /* set [ names ]: keep entries n
     rpush(lo);
     for (i = 0; i < nl; ++i) {                  /* force every name */
         push(RELEM(b + 1, i, nl));
-        e = force_pop_as(T_STRING, &eo);
+        (void)force_pop_as(T_STRING, &eo);     /* forced and checked; the view is not needed */
     }
     so = rstack[b];
     lo = rstack[b + 1];
@@ -472,17 +472,17 @@ static void insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, o
 static void prim_listtoattrs(void)              /* [ { name; value; } ... ] */
 {
     uint16_t b = rsp, n, i, cnt = 0, ix, at;
-    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *e, *eo, *nm, *no, *set, *av;
+    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *eo, *no, *set, *av;
     n = AUX16(l);
     rpush(lo);
     /* pass 1, running bytecode: (name, value) pairs onto the value stack */
     for (i = 0; i < n; ++i) {
         push(RELEM(b, i, n));
-        e = force_pop_as(T_ATTRS, &eo);
+        (void)force_pop_as(T_ATTRS, &eo);       /* forced and checked */
         rpush(eo);                              /* b+1: the element */
         if (!find_attr(eo, str_name, &ix, &av)) err_exit(E_NOATTR);
         push(av);
-        nm = force_pop_as(T_STRING, &no);
+        (void)force_pop_as(T_STRING, &no);
         push(no);                               /* the name */
         if (!find_attr(rstack[b + 1], str_value, &ix, &av)) err_exit(E_NOATTR);
         push(av);                               /* the value, unforced */
@@ -1855,8 +1855,8 @@ static void prim_deepseq(void)
 
 static void prim_typeof(void)
 {
-    obj_t *o, *v;
-    o = force_pop_view(&v);
+    obj_t *v;
+    (void)force_pop_view(&v);
     switch (v->tag) {
     case T_INT:    push(str_int); break;
     case T_BOOL:   push(str_bool); break;
@@ -1872,8 +1872,8 @@ static void prim_typeof(void)
 
 static void is_tag(uint8_t tag)
 {
-    obj_t *o, *v;
-    o = force_pop_view(&v);
+    obj_t *v;
+    (void)force_pop_view(&v);
     push_bool(v->tag == tag);
 }
 

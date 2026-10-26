@@ -94,7 +94,7 @@ static void force_thunk(void)
         }
         switch (vv->tag) {
         case T_INT: case T_LAMBDA: case T_THUNK:
-            memcpy(buf, vv, 12); card_write_at(PBITS(th), buf, 12); break;
+            memcpy(buf, vv, 12); card_write_at(PBITS(th), buf, 12); break;   /* gcsafe: mature -- th is on the card */
         case T_BOOL: case T_NULL:
             memcpy(buf, vv, 8); card_write_at(PBITS(th), buf, 8); break;
         default:

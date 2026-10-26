@@ -74,10 +74,13 @@
 
             # --- Python testbenches and vector generation ---
             # Pinned to 3.13: cocotb 2.x does not support the 3.14 default interpreter.
-            (python313.withPackages (ps: with ps; [ cocotb pytest ]))
+            # libclang: scripts/hostlint/gcsafe.py (just c-lint).
+            (python313.withPackages (ps: with ps; [ cocotb pytest libclang ]))
 
             # --- 65816 target ---
             cc65                 # ca65 --cpu 65816; the C compiler is 6502-only
+            llvmPackages.clang-unwrapped   # host lint of the VM's C (just c-lint); unwrapped,
+                                           # so it adds no `cc` to shadow gcc's
 
             # --- Host tools that never touch the Verilated model (D16) ---
             cargo                # tools/nbc, the test-only fixture generator
@@ -438,6 +441,22 @@
               rtl/a2nix_card.v sim/a2min.cpp
             ./scripts/mutation-vm.sh ./build/a2min nbc | tee "$out"
             grep -q "MUTATION PASS" "$out"
+          '';
+
+        # The VM's C linted on the host (scripts/c-lint.sh): clang -Wall
+        # -Wextra -Werror through a shim for ORCA/C's two extensions, and
+        # gcsafe, the GC/view rule as a lint. Self-tested by planting (D14).
+        c-lint = pkgs.runCommand "check-c-lint"
+          { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.libclang ]))
+                                  pkgs.llvmPackages.clang-unwrapped ]; }
+          ''
+            cp -r ${self}/target ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            ./scripts/c-lint.sh > lint.txt || { cat lint.txt; exit 1; }
+            cat lint.txt
+            grep -q "^C LINT OK" lint.txt
+            cp lint.txt "$out"
           '';
 
         # Where the VM's code lands (scripts/bank-gate.py): bank 0's size is

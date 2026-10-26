@@ -182,6 +182,11 @@ quiet-clock: build-a2min cvm nbc-build asm-headless
     ./scripts/quiet-clock.sh ./sim/build_a2min/a2min target/build/cvm.bin \
         target/build/nbc-fixtures target/build/storepath_demo_headless.bin {{VECTORS}}
 
+# The VM's C on the host, in seconds: clang -Wall -Wextra -Werror and gcsafe
+# (no obj_t * local or view read across a collecting call), each self-tested.
+c-lint:
+    ./scripts/c-lint.sh
+
 # Where the VM's code lands: bank 0's size must equal target/vm/bank0.txt
 # exactly (after accounting for a change, `just bank-gate --update`), only the
 # allowlisted runtime routines may be in it, and no symbol in a data bank.

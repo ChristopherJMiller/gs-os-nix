@@ -88,9 +88,16 @@ the session scratchpad and are adopted only after being read):
    now skips bank 5 when bank 4 fills: tested with two 39 KB segments, the
    second landing at `$060000`, where before it would have been the window
    ring.
-4. `checks.c-lint`: host clang `-Wall -Wextra -Werror` through a shim, and a
-   GC-safety checker for `obj_t *` locals across collecting calls; both
-   self-tested by planting a violation.
+4. ~~`checks.c-lint`~~ **done**: `just c-lint` (a few seconds) runs host
+   clang `-Wall -Wextra -Werror` on every file through `scripts/hostlint`
+   (a shim for `segment` and `asm{}`, line numbers kept), then `gcsafe.py`,
+   which computes from the call graph which calls may collect (72 functions)
+   or turn the ring over (7 more) and flags an `obj_t *` or a view read after
+   one. Its first run found `set_a1` dead too (bank 0 -51, 37,744) and five
+   discarded views; gcsafe's two findings are deliberate, mature objects
+   never move, and are marked `/* gcsafe: mature */`. Six plants prove it,
+   three of them `mutation-vm.sh`'s GC mutations, caught here without an
+   ORCA/C build.
 5. One list of VM sources; `prims.c` split (derivations; strings and
    context; the rest).
 6. Integer overflow as Nix 2.34 has it: `+`, `-`, `*` (and `/` of the

@@ -112,28 +112,6 @@ static void set_a0(uint32_t ad)
     }
 }
 
-/* A1 <- a card address. Selecting a register rewinds the port index, so this
- * is symmetric with set_a0. NB: LOOKUP returns its value pointer in A1, so read
- * that before using A1 as an operand again. */
-static void set_a1(uint32_t ad)
-{
-    asm {
-        ldx slot_x
-        sep #0x20
-        lda #1
-        sta 0xC082,x
-        lda ad
-        sta 0xC083,x
-        lda ad+1
-        sta 0xC083,x
-        lda ad+2
-        sta 0xC083,x
-        lda ad+3
-        sta 0xC083,x
-        rep #0x20
-    }
-}
-
 static uint32_t get_a1(void)
 {
     uint32_t a;
