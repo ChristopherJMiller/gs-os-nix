@@ -132,8 +132,9 @@ static void load(void)
             if (cnext >= CTAB_N) nomem();
             switch (q[0]) {
             case K_INT:
+            case K_FLOAT:                       /* the same shape: kind is tag */
                 o = alloc(12);
-                SET_HDR(o, T_INT, 0);
+                SET_HDR(o, q[0], 0);
                 memcpy(PAYLOAD(o), q + 1, 8);
                 q += 9;
                 break;

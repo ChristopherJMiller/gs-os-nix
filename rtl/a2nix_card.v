@@ -121,7 +121,8 @@ module a2nix_card (
                      TAG_THUNK     = 8'h08,
                      TAG_LAMBDA    = 8'h09,
                      TAG_INDIRECT  = 8'h0A,
-                     TAG_FORWARDED = 8'h0C;
+                     TAG_FORWARDED = 8'h0C,
+                     TAG_FLOAT     = 8'h0D;
     localparam integer MAX_FOLLOW = 64;  // chain-length guard; see FOLLOW below
 
     function [31:0] round4(input [31:0] v);
@@ -136,7 +137,7 @@ module a2nix_card (
         begin
             aux = {8'd0, hdr[31:8]};
             case (hdr[7:0])
-                TAG_INT:                s = 32'd12;
+                TAG_INT, TAG_FLOAT:     s = 32'd12;
                 TAG_STRING:             s = 32'd4 + round4(aux) + 32'd4;
                 TAG_PATH:               s = 32'd4 + round4(aux);
                 TAG_LIST:               s = 32'd4 + (aux << 2);

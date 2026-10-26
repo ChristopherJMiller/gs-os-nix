@@ -117,12 +117,16 @@
 #define PRIM_GETCONTEXT         0x36 /* 1 */
 #define PRIM_APPENDCONTEXT      0x37 /* 2 */
 #define PRIM_TOFILE             0x38 /* 2 */
+#define PRIM_ISFLOAT            0x39 /* 1 */
+#define PRIM_FLOOR              0x3A /* 1 */
+#define PRIM_CEIL               0x3B /* 1 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */
 #define K_INT           0x01
 #define K_STRING        0x04
 #define K_PATH          0x05
+#define K_FLOAT         0x0D
 
 /* Error codes reported at $0321 when the status byte is $FF. */
 #define E_BADOP         0x01

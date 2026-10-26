@@ -56,6 +56,9 @@ pub enum BinOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Int(i64),
+    /// A float literal: the IEEE-754 bits Rust's correctly rounded parse gives,
+    /// as Nix's strtod would (docs/FLOAT.md).
+    Float(u64),
     /// An identifier. `true`, `false` and `null` are identifiers in Nix, resolved
     /// by the compiler against the scope chain so that shadowing them works.
     Var(String, Pos),

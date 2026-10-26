@@ -128,6 +128,7 @@ _Static_assert(sizeof(int) == 2 && sizeof(long) == 4 && sizeof(void *) == 4, "OR
 #define T_INDIRECT   0x0A
 #define T_BLACKHOLE  0x0B
 #define T_FORWARDED  0x0C
+#define T_FLOAT      0x0D   /* 8 bytes, IEEE-754 binary64 bits (docs/FLOAT.md) */
 
 /* aux2 marks: bit 7 = visited (deep force), bit 6 = a `with` environment */
 #define AUX_MARK     0x80
@@ -360,6 +361,28 @@ void nix32_fold(const uint8_t *dig, char *out);   /* sha256.c: what P3 holds, on
 #define A_DIV 0x03
 
 void op_arith(uint16_t op);         /* ADD SUB MUL DIV LT, for the primops that share them */
+/* float.c: IEEE-754 binary64 in software, a float being its bit pattern
+ * (docs/FLOAT.md); bit for bit the host's, rounding to nearest, ties to even. */
+#define F_FORMAT_MAX 330                    /* %f of the largest double, and a sign */
+uint64_t f_add(uint64_t a, uint64_t b);
+uint64_t f_sub(uint64_t a, uint64_t b);
+uint64_t f_mul(uint64_t a, uint64_t b);
+uint64_t f_div(uint64_t a, uint64_t b);     /* b != 0 */
+uint64_t f_from_int(int64_t v);
+int      f_eq(uint64_t a, uint64_t b);      /* -0 == +0; a NaN is unequal to all */
+int      f_lt(uint64_t a, uint64_t b);      /* false if either is a NaN */
+int      f_round_int(uint64_t a, int up, int64_t *out);   /* floor/ceil; 0 if out of int64 */
+uint16_t f_format(uint64_t a, char *buf);   /* printf("%f"), exactly: its length */
+/* ...and the VM's floats, on views: */
+obj_t   *new_float(uint64_t bits);          /* 12 bytes, as new_int: inside the boundary's margin */
+void     float_arith(uint16_t op, obj_t *a, obj_t *b);   /* ADD SUB MUL DIV NEG, one a FLOAT: pushes it */
+int      num_cmp(obj_t *a, obj_t *b);       /* one a FLOAT: 0 <, 1 ==, 2 >, 3 unordered; -1 not numbers */
+int      num_order(obj_t *a, obj_t *b);     /* num_cmp, but E_TYPE for -1 (cmp_values) */
+int      num_pair(obj_t *a, obj_t *b);      /* E_TYPE unless both numbers; 1 if either is a FLOAT */
+obj_t   *float_str(obj_t *v);               /* toString's %f, a fresh STRING; may collect */
+void     prim_floor(void);
+void     prim_ceil(void);
+
 /* prims.c: Nix 2.34's checked integer arithmetic -- E_OVERFLOW, never a wrap. */
 int64_t add_checked(int64_t x, int64_t y);
 int64_t sub_checked(int64_t x, int64_t y);

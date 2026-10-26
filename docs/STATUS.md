@@ -8,9 +8,9 @@
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
 | **L2** | Card in a machine: register map, verilate, a2bus device, patched mame | **done — M2 achieved** (gated by the ROM-free harness; MAME glue written, needs a romset) |
 | **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, collector, CPU nursery | **done** — card side (memory engine, `DATA`/`TAG`, `ALLOC`/`RESERVE`, `FOLLOW`, `HASH_STREAM`, `LOOKUP`, `ALU64`, `MARK`/`COMPACT`) and the CPU-side nursery (`target/heap/nursery.s`: bump alloc, Cheney in RAM, one-burst promotion). D6 measured: `just bench-nursery` |
-| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — slices 1-4 done, scoreboard live.** `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
+| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — slices 1-4 done, scoreboard live; now 379 / 485 with floats ([FLOAT.md](FLOAT.md)), and the roadmap below runs to a compiler that refuses nothing.** `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
-| **L6** | SHA-256 of strings, ATerm, `derivation` primop, string context; `NARHASH` with file I/O (D21) | **in progress** — `builtins.hashString "sha256"` on the card (`HASH_PUSH` for a young string, `HASH_STREAM` for a mature one, `sha256.c` without a card), matching Nix on FIPS padding edges. **`derivation`** ([DERIVATION.md](DERIVATION.md)): input-addressed, byte-identical to the host -- ATerm, `hashDerivationModulo`, output and `.drv` paths from the card's `HASH_FINAL` `P3`; `derivation.nix` embedded verbatim. **String context** carries inputs through `+`, `"${}"`, `concatStringsSep`, `toString`, `substring`, `baseNameOf`, `dirOf`, so a chain of derivations matches the host. **Fixed-output derivations** (`outputHash`, every `fetchurl`): the path from the declared hash (base16, nix32, Base64, SRI; md5, sha1, sha256, sha512; flat and NAR), and the modulo hash a dependent sees, as the host computes them. Next: `drvPath` (`=`) context, the context builtins ("Roadmap" below) |
+| **L6** | SHA-256 of strings, ATerm, `derivation` primop, string context; `NARHASH` with file I/O (D21) | **in progress** — `builtins.hashString "sha256"` on the card (`HASH_PUSH` for a young string, `HASH_STREAM` for a mature one, `sha256.c` without a card), matching Nix on FIPS padding edges. **`derivation`** ([DERIVATION.md](DERIVATION.md)): input-addressed, byte-identical to the host -- ATerm, `hashDerivationModulo`, output and `.drv` paths from the card's `HASH_FINAL` `P3`; `derivation.nix` embedded verbatim. **String context** carries inputs through `+`, `"${}"`, `concatStringsSep`, `toString`, `substring`, `baseNameOf`, `dirOf`, so a chain of derivations matches the host. **Fixed-output derivations** (`outputHash`, every `fetchurl`): the path from the declared hash (base16, nix32, Base64, SRI; md5, sha1, sha256, sha512; flat and NAR), and the modulo hash a dependent sees, as the host computes them. `drvPath` (`=`) context, the context builtins, `toFile` and `currentSystem` too (Phase B of the roadmap below, complete 2026-10-26). Next for L6: `NARHASH`, which needs file I/O (L7) |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | not started |
 
 ## Milestones
@@ -131,7 +131,23 @@ emits). **Phase B is complete.** **Bank 4 is at 42.9 KB of 64:** the
 "prims" segment will need a second segment name before long (omf2bin places
 it in bank 6, skipping the window ring).
 
-**C. Coverage, from the top of the histogram:** floats; dynamic attribute
+**C. Coverage, from the top of the histogram:** ~~floats~~ **done**
+(2026-10-26, [FLOAT.md](FLOAT.md)): `FLOAT` objects (tag `$0D`, an `INT`'s
+shape), float literals, mixed arithmetic and comparison, `isFloat`, `floor`,
+`ceil`, `toString`'s `%f` -- soft-float in C, bit for bit the host's.
+`float.c` (the arithmetic, alone) and `numbers.c` (the VM's side) are a
+segment of their own in bank 4, which now holds 57.8 KB of 64.
+`checks.float-vectors` runs float.c built by ORCA/C against 3,360 host
+answers (1,000 arithmetic and 120 `%f` vectors per seed, three seeds) and a
+planted rounding bug. On the way: **two ORCA/C optimizer miscompiles** of
+64-bit `?:` (TOOLCHAIN.md "Known miscompiles"), now refused by
+`scripts/hostlint/orcabugs.py`; and Nix's "invalid float" turned out to be
+glibc's underflow, tininess after rounding, so `2.2250738585072012e-308` is
+invalid though it rounds to the smallest normal (the generator compares
+exactly). 18 corpus tests and 10 fixtures; 16 mutations. **Next in C:** the
+tvix `eval-okay-value-display`, refused for its float until now, fails on the
+printer: a primop is a synthesised lambda, so a2min prints `<LAMBDA>` where
+Nix prints `<PRIMOP>` and `<PRIMOP-APP>`. Then dynamic attribute
 names; `toJSON`/`fromJSON`/`toXML`/`fromTOML`; the primop tail (`mapAttrs`,
 `catAttrs`, `groupBy`, `genericClosure`, `functionArgs`, `splitVersion`,
 `compareVersions`, `parseDrvName`, `replaceStrings`, `sort`, regex `match`/
@@ -190,11 +206,11 @@ a2min.
 
 **Open, independent of M4:**
 
-- **Floats** (23 corpus tests) and **`LOOKUP`**: decisions for Chris (both in
-  "Next actions" below).
+- **`LOOKUP`**: a decision for Chris ("Next actions" below). (Floats, the
+  other, were decided -- soft-float in C -- and are done: [FLOAT.md](FLOAT.md).)
 - **Card-side `MARK`** only when the promoted-bytes counter shows the 512 KB
   ceiling binding on a real program; nothing has yet.
-- **Bank 0** (38,406 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
+- **Bank 0** (38,189 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
   far pointers would buy the md5/sha1/sha512 tables. Watch for ORCA/C library
   routines: a struct copy links `~MOVE`, a variable left shift `~SHIFTLEFT`.
 - **The `eval-fail` corpus**, and **L5** (self-hosting, D7's exit).
@@ -227,7 +243,10 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-**Bank 0: 38,406 of 40,960 bytes** (2026-10-25, after string context, and
+**Bank 0: 38,189 of 40,960 bytes** (2026-10-26, after floats: +419, a tag
+test in each operation that can see a float -- the work is in bank 4 -- and
+`~SHL8`/`~LSHR8`, which ORCA/C links for any 64-bit shift; 37,770 after the
+maintainability phase). It was 38,406 (2026-10-25, after string context, and
 unchanged by fixed-output derivations, whose 3,263 bytes of code are all in
 bank 4; 39,345 after `derivation`, 39,765 before it). String context moved `"${}"` and string
 `+` out of run.c into `prims.c`, since every string they build carries a
@@ -244,7 +263,15 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **351 / 475** (2026-10-26, after Phase B; 0 fail, 7
+The scoreboard reads **379 / 485** (2026-10-26, after floats; 1 fail, 8
+error, 77 unsupported, 20 notyetpassing). Floats brought 18 corpus tests and
+10 fixtures. The fail is tvix's `eval-okay-value-display`, refused for its
+`42.0` until now and wrong on the printer (`<LAMBDA>` for a primop). The new
+error is `eval-okay-types`, which got past its floats to a builtin the VM
+lacks, reached through `with builtins;`: there a missing builtin is
+`E_NOVAR` at run time, not a refusal, so **the unsupported histogram
+undercounts missing builtins** -- `regex-match`, `regex-split` and `sort` are
+errors for the same reason. It was 351 / 475 after Phase B (0 fail, 7
 error, 97 unsupported, 20 notyetpassing -- `currentSystem` passes both
 `delayed-with` tests, one tvix itself does not). It was 342 / 468 after the
 context builtins (0
@@ -433,9 +460,9 @@ number rises by widening the lowering and the VM together, one slice at a time
    object — which means `WINDOW_MAX` (item 4d) has to be lifted by a bigger
    bank-5 ring, not by reading less.
 
-   Also still in this slice: floats (23 tests), which need a decision first —
-   ORCA/C's `double` is SANE-based, and whether to use it or carry software
-   floats changes what a float costs and whether the card ever sees one.
+   ~~Also still in this slice: floats~~ **done** (2026-10-26): decided with
+   Chris, soft-float in C, not ORCA/C's SANE `double`; the card never sees
+   one ([FLOAT.md](FLOAT.md)).
 6. ~~The parser decision~~ **decided: `rnix`** (D16). The generator now parses all
    of Nix and refuses by feature; `just scoreboard` prints a histogram of the
    refused constructs, so pick the next slice from the top of that list.

@@ -29,6 +29,7 @@ Exit 1 if anything is found.
 """
 import re
 import sys
+import ctypes
 import clang.cindex as ci
 
 K = ci.CursorKind
@@ -60,6 +61,38 @@ def callee(call):
 
 def toks(c):
     return [t.spelling for t in c.get_tokens()]
+
+
+_lib = ci.conf.lib
+_lib.clang_Cursor_Evaluate.argtypes = [ci.Cursor]
+_lib.clang_Cursor_Evaluate.restype = ctypes.c_void_p
+_lib.clang_EvalResult_getKind.argtypes = [ctypes.c_void_p]
+_lib.clang_EvalResult_getKind.restype = ctypes.c_int
+_lib.clang_EvalResult_getAsLongLong.argtypes = [ctypes.c_void_p]
+_lib.clang_EvalResult_getAsLongLong.restype = ctypes.c_longlong
+_lib.clang_EvalResult_dispose.argtypes = [ctypes.c_void_p]
+
+
+def constant(c):
+    """c's value if it is an integer constant expression, else None. Evaluated,
+    not read from tokens: a macro's condition spans the macro's file and the
+    use's, and libclang gives no tokens for such an extent."""
+    r = _lib.clang_Cursor_Evaluate(c)
+    if not r:
+        return None
+    try:
+        return _lib.clang_EvalResult_getAsLongLong(r) if _lib.clang_EvalResult_getKind(r) == 1 else None
+    finally:
+        _lib.clang_EvalResult_dispose(r)
+
+
+def is_loop(c):
+    """A loop -- but not a do { } while (0), which runs its body once: vm.h's
+    statement macros (push, rpush, ...) are written so, and a call inside one,
+    push(f()), is not repeated."""
+    if c.kind == K.DO_STMT:
+        return constant(list(c.get_children())[-1]) != 0
+    return c.kind in LOOPS
 
 
 def strip(par, i):
@@ -112,7 +145,7 @@ def returns_between(call, cpar, use_off):
     with no break/continue/goto on the way."""
     at = call.extent.end.offset
     for blk in reversed(cpar):
-        if blk.kind in LOOPS:
+        if is_loop(blk):
             return False
         if blk.kind != K.COMPOUND_STMT:
             continue
@@ -235,7 +268,7 @@ def analyse(tus):
                     if not defs or not defs[-1][5]:
                         continue
                 after = [e for e in ev[k + 1:] if e[2] == v and e[1] != "call"]
-                loops = [p for p in cpar if p.kind in LOOPS]
+                loops = [p for p in cpar if is_loop(p)]
                 hit = None
                 if before and after and after[0][1] == "use":
                     u = after[0]

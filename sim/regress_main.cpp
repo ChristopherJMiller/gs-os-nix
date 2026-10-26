@@ -746,7 +746,8 @@ void l3_gc() {
     // --- (a) live copied, garbage not; roots rewritten in place ---
     const std::uint32_t A = lay(0x1000, TAG_INT, 0, { 0x11111111, 0x22222222 });
     /* dead: */          lay(0x1010, TAG_INT, 0, { 0xDEADDEAD, 0xDEADDEAD });
-    std::uint8_t st = mark({ A });
+    const std::uint32_t F = lay(0x1020, TAG_FLOAT, 0, { 0x33333333, 0x44444444 });
+    std::uint8_t st = mark({ A, F });
     check((st & ST_ERR) == 0, "MARK completes", "the collector erroring on a live INT");
     const std::uint32_t A2 = root(0);
     check(A2 >= SPACE_B && A2 < SPACE_B + SPACE_SIZE,
@@ -758,12 +759,15 @@ void l3_gc() {
     check(heap.peek(A) == TAG_FORWARDED && heap.peek32(A + 4) == A2,
           "the original is left as a forwarding pointer",
           "a shared object being copied once per reference");
+    const std::uint32_t F2 = root(1);
+    check(heap.peek(F2) == TAG_FLOAT && heap.peek32(F2 + 4) == 0x33333333 && heap.peek32(F2 + 8) == 0x44444444,
+          "a copied FLOAT carries all 8 bytes of its double",
+          "FLOAT sized by the 8-byte default: the double's high half left behind");
     bus->wr(R_CMD, V_COMPACT);
     bus->wait_verb();
-    check(watermark() == SPACE_B + 12,
-          "after COMPACT exactly one 12-byte INT survived; the dead one was never touched",
-          "garbage being copied along with live data -- it still 'works', it just fills "
-          "to-space with corpses");
+    check(watermark() == SPACE_B + 12 + 12,
+          "after COMPACT an INT and a FLOAT survived, 12 bytes each; the dead INT never touched",
+          "garbage being copied along with live data, or a FLOAT sized by the 8-byte default");
     // Now allocating in B; A is the empty to-space.
 
     // --- (b) a DAG: two references to one object -> copied once, both updated ---

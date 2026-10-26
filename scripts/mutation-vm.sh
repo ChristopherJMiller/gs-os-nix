@@ -42,7 +42,7 @@ NBC="$2"
 # The derivation fixtures first: they are cheap, and run_suite stops at the
 # first wrong answer, so a mutation they catch costs seconds. The refusal is a
 # fixture too -- its .exp is the error line (scripts/scoreboard.py).
-FIXTURES="eval-okay-tofile eval-fail-tofile-contents eval-fail-tofile-name eval-fail-tofile-name-context eval-fail-tofile-output eval-fail-tofile-whole eval-okay-context-builtins eval-fail-context-adddrv-output eval-fail-context-adddrv-source eval-fail-context-adddrv-two eval-fail-context-append-alloutputs eval-fail-context-append-hash eval-fail-context-append-key eval-fail-context-append-output-ctx eval-fail-context-append-outputs eval-fail-context-getattr eval-fail-context-hasattr eval-fail-context-hascontext-path eval-fail-context-hashstring eval-fail-context-listtoattrs eval-fail-context-removeattrs eval-okay-int-limits eval-fail-int-overflow-add eval-fail-int-overflow-sub eval-fail-int-overflow-neg eval-fail-int-overflow-mul eval-fail-int-overflow-mul-min eval-fail-int-overflow-square eval-fail-int-overflow-div eval-fail-int-overflow-uncaught eval-okay-derivation eval-okay-derivation-fixed-output eval-fail-derivation-fixed-bin eval-fail-derivation-fixed-outputs eval-fail-derivation-hash-base16-digit eval-fail-derivation-hash-base64-digit eval-fail-derivation-hash-empty eval-fail-derivation-hash-length eval-fail-derivation-hash-mode eval-fail-derivation-hash-nix32-digit eval-fail-derivation-hash-nix32 eval-fail-derivation-hash-prefix eval-fail-derivation-hash-sri-long eval-fail-derivation-hash-sri-short eval-fail-derivation-hash-type eval-fail-derivation-hash-untyped refuse-derivation-hash-blake3 refuse-derivation-hash-git refuse-derivation-hash-text eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists eval-okay-derivation-deep eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
+FIXTURES="eval-okay-floats eval-okay-float-identity eval-fail-float-add-string eval-fail-float-ceil-range eval-fail-float-compare eval-fail-float-concat eval-fail-float-div-zero eval-fail-float-floor-nan eval-fail-float-floor-precision eval-fail-float-interp eval-okay-tofile eval-fail-tofile-contents eval-fail-tofile-name eval-fail-tofile-name-context eval-fail-tofile-output eval-fail-tofile-whole eval-okay-context-builtins eval-fail-context-adddrv-output eval-fail-context-adddrv-source eval-fail-context-adddrv-two eval-fail-context-append-alloutputs eval-fail-context-append-hash eval-fail-context-append-key eval-fail-context-append-output-ctx eval-fail-context-append-outputs eval-fail-context-getattr eval-fail-context-hasattr eval-fail-context-hascontext-path eval-fail-context-hashstring eval-fail-context-listtoattrs eval-fail-context-removeattrs eval-okay-int-limits eval-fail-int-overflow-add eval-fail-int-overflow-sub eval-fail-int-overflow-neg eval-fail-int-overflow-mul eval-fail-int-overflow-mul-min eval-fail-int-overflow-square eval-fail-int-overflow-div eval-fail-int-overflow-uncaught eval-okay-derivation eval-okay-derivation-fixed-output eval-fail-derivation-fixed-bin eval-fail-derivation-fixed-outputs eval-fail-derivation-hash-base16-digit eval-fail-derivation-hash-base64-digit eval-fail-derivation-hash-empty eval-fail-derivation-hash-length eval-fail-derivation-hash-mode eval-fail-derivation-hash-nix32-digit eval-fail-derivation-hash-nix32 eval-fail-derivation-hash-prefix eval-fail-derivation-hash-sri-long eval-fail-derivation-hash-sri-short eval-fail-derivation-hash-type eval-fail-derivation-hash-untyped refuse-derivation-hash-blake3 refuse-derivation-hash-git refuse-derivation-hash-text eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists eval-okay-derivation-deep eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
 MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1 mask:4"
 SRCS=$(grep -v '^#' target/vm/c/SOURCES)           # link order: main.c first
 WORK=$(mktemp -d)
@@ -471,7 +471,55 @@ mutate "an overflow is a throw tryEval catches" prims.c \
 mutate "MUL and DIV are not checked at all" run.c \
        's/^    alu_overflow(op, PAYLOAD(a), PAYLOAD(b));$//'
 
+mutate "a float divided by zero is not an error" numbers.c \
+       's/^        if (f_eq(y, 0)) err_exit(E_DIVZERO);$//'
+
+mutate "a float zero divisor is tested by its bits" numbers.c \
+       's/^        if (f_eq(y, 0)) err_exit(E_DIVZERO);$/        if (y == 0) err_exit(E_DIVZERO);/'
+
+mutate "unary minus of a float flips its sign" numbers.c \
+       's/^    default:     r = f_sub(0, x);$/    default:     r = x ^ 0x8000000000000000ULL;/'
+
+mutate "a NaN equals everything" numbers.c \
+       's/^    return 3;$/    return 1;/'
+
+mutate "a top-level float compares by pointer" run.c \
+       's/^            if (a->tag == T_FLOAT || b->tag == T_FLOAT) { push_bool(num_cmp(a, b) == 1); break; }$//'
+
+mutate "an INT never equals a FLOAT inside a value" data.c \
+       's/^    if (av->tag == T_FLOAT || bv->tag == T_FLOAT) return num_cmp(av, bv) == 1;   \/\* 1 == 1.0 \*\/$//'
+
+mutate "lists of floats are not ordered" data.c \
+       's/^    if (a->tag == T_FLOAT || b->tag == T_FLOAT) return num_order(a, b);   \/\* as doubles; 3 unordered \*\/$//'
+
+mutate "INT + FLOAT is integer arithmetic" numbers.c \
+       's/^    return a->tag == T_FLOAT || b->tag == T_FLOAT;$/    return a->tag == T_FLOAT;/'
+
+mutate "floor's INT round trip is not checked" numbers.c \
+       's/^    if (v->tag == T_INT \&\& r != INTVAL(v)) type_err();$//'
+
+mutate "floor and ceil take any double" numbers.c \
+       's/^    if (!f_round_int(num_bits(v), up, \&r)) type_err();$/    (void)f_round_int(num_bits(v), up, \&r);/'
+
+mutate "floor rounds up" numbers.c \
+       's/^void prim_floor(void) { round_prim(0); }$/void prim_floor(void) { round_prim(1); }/'
+
+mutate "typeOf a float is int" prims.c \
+       's/^    case T_FLOAT:  push(str_float); break;$/    case T_FLOAT:  push(str_int); break;/'
+
+mutate "toString refuses a float" strings.c \
+       's/^    case T_FLOAT:  push(float_str(v)); return;     \/\* %f: "4.200000" (docs\/FLOAT.md) \*\/$//'
+
+mutate "toString reads its float after the reserve" numbers.c \
+       's/^    uint16_t n = f_format(num_bits(v), buf);$/    uint16_t n = (nursery_reserve(340), f_format(num_bits(v), buf));/'
+
+mutate "the loader does not know K_FLOAT" main.c \
+       's/^            case K_FLOAT:                       \/\* the same shape: kind is tag \*\/$//'
+
+mutate "a FLOAT has no size" gc.c \
+       's/case T_INT: case T_FLOAT: case T_THUNK:/case T_INT: case T_THUNK:/'
+
 echo
 echo "$pass mutations caught, $fail not caught"
 [ "$fail" -eq 0 ] || exit 1
-echo "MUTATION PASS: every broken collector and derivation rule is caught by the fixtures"
+echo "MUTATION PASS: every broken collector, derivation and float rule is caught by the fixtures"

@@ -182,6 +182,11 @@ quiet-clock: build-a2min cvm nbc-build asm-headless
     ./scripts/quiet-clock.sh ./sim/build_a2min/a2min target/build/cvm.bin \
         target/build/nbc-fixtures target/build/storepath_demo_headless.bin {{VECTORS}}
 
+# float.c, built by ORCA/C, against the host's own IEEE-754 and printf, bit for
+# bit (docs/FLOAT.md): three seeds of 1,120 vectors and a planted rounding bug.
+float-vectors *seeds: build-a2min
+    ./scripts/float-vectors.sh ./sim/build_a2min/a2min {{seeds}}
+
 # The VM's C on the host, in seconds: clang -Wall -Wextra -Werror and gcsafe
 # (no obj_t * local or view read across a collecting call), each self-tested.
 c-lint:

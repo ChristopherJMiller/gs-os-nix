@@ -129,6 +129,7 @@ void coerce_top(uint8_t how)
     if (!(how & CO_MORE)) type_err();
     switch (v->tag) {
     case T_INT:    push(int_to_str(INTVAL(v))); return;
+    case T_FLOAT:  push(float_str(v)); return;     /* %f: "4.200000" (docs/FLOAT.md) */
     case T_BOOL:   if (BOOLVAL(v)) push(str_one); else push(str_alloc(0)); return;
     case T_NULL:   push(str_alloc(0)); return;
     case T_LIST:   break;

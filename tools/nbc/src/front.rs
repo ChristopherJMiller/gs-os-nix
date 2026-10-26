@@ -281,7 +281,11 @@ impl<'a> Lower<'a> {
                     Ok(v) => Ok(Expr::Int(v)),
                     Err(_) => self.refuse(lit, "integer literal out of range"),
                 },
-                LiteralKind::Float(_) => self.refuse(lit, "float literal"),
+                LiteralKind::Float(f) => match float_literal(&f.to_string()) {
+                    Some(v) => Ok(Expr::Float(v.to_bits())),
+                    // Nix's parse error, for the whole file: refused like one.
+                    None => self.refuse(lit, "invalid float"),
+                },
                 LiteralKind::Uri(_) => self.refuse(lit, "URI literal"),
             },
             ast::Expr::Ident(id) => match id.ident_token() {
@@ -495,6 +499,66 @@ impl<'a> Lower<'a> {
     }
 }
 
+/// A float literal's value, or None where Nix says "invalid float": Nix
+/// parses with strtod and rejects the literal when errno is set, on overflow
+/// and on underflow, which glibc reports when the result rounded to 53 bits
+/// with an unbounded exponent is below the smallest normal 2^-1022. That is
+/// every nonzero literal below 2^-1022 - 2^-1076, the midpoint under it, even
+/// one that rounds to 2^-1022 itself (docs/FLOAT.md, measured: the midpoint
+/// is valid, one unit in its last digit below is not). A zero is any zero:
+/// 0.0e-400 is 0.
+fn float_literal(text: &str) -> Option<f64> {
+    let v: f64 = text.parse().ok()?;
+    let (mant, exp) = match text.find(['e', 'E']) {
+        Some(i) => (&text[..i], &text[i + 1..]),
+        None => (text, "0"),
+    };
+    let (int, frac) = mant.split_once('.').unwrap_or((mant, ""));
+    let all = format!("{int}{frac}");
+    let digits = all.trim_start_matches('0');
+    if digits.is_empty() {
+        return Some(0.0);
+    }
+    if !v.is_finite() || v < f64::MIN_POSITIVE {
+        return None;
+    }
+    if v > f64::MIN_POSITIVE {
+        return Some(v);
+    }
+    // v is 2^-1022, so the literal lies within half a subnormal step of it:
+    // compare it exactly with (2^54 - 1) * 5^1076 * 10^-1076, the midpoint.
+    let mut limbs: Vec<u64> = vec![(1u64 << 54) - 1];          // base 10^9, little-endian
+    let normal = |limbs: &mut Vec<u64>| {
+        let mut c = 0;
+        for l in limbs.iter_mut() {
+            *l += c;
+            c = *l / 1_000_000_000;
+            *l %= 1_000_000_000;
+        }
+        while c > 0 {
+            limbs.push(c % 1_000_000_000);
+            c /= 1_000_000_000;
+        }
+    };
+    normal(&mut limbs);
+    for _ in 0..1076 {
+        limbs.iter_mut().for_each(|l| *l *= 5);
+        normal(&mut limbs);
+    }
+    let mut mid = limbs.last().unwrap().to_string();
+    for l in limbs.iter().rev().skip(1) {
+        mid.push_str(&format!("{l:09}"));
+    }
+    // Both are digits * 10^e; the number of digits plus e orders them, then
+    // the digits themselves.
+    let e: i64 = exp.parse().ok()?;
+    let order = (digits.len() as i64 + e - frac.len() as i64).cmp(&(mid.len() as i64 - 1076));
+    let n = digits.len().max(mid.len());
+    let below = order.is_lt()
+        || (order.is_eq() && format!("{digits:0<n$}") < format!("{mid:0<n$}"));
+    if below { None } else { Some(v) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -622,13 +686,40 @@ mod tests {
     }
 
     #[test]
+    fn float_literals_are_strtods() {
+        // Each answer measured with nix-instantiate --eval (Nix 2.34.9).
+        let below = "0.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000222507385850720125957382125702";
+        let above = "0.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000222507385850720125957382125703";
+        let cases: [(&str, Option<u64>); 11] = [
+            ("1.5", Some(0x3FF8000000000000)),
+            ("0.0e-400", Some(0)),
+            ("0.000e999", Some(0)),
+            ("1.0e-400", None),
+            ("4.9e-324", None),
+            ("2.2250738585072011e-308", None),
+            ("2.2250738585072012e-308", None),     // rounds to 2^-1022, still invalid
+            ("2.2250738585072013e-308", Some(0x0010000000000000)),
+            ("1.7976931348623158e308", Some(0x7FEFFFFFFFFFFFFF)),
+            ("1.7976931348623159e308", None),
+            (".5", Some(0x3FE0000000000000)),
+        ];
+        for (text, want) in cases {
+            assert_eq!(float_literal(text).map(f64::to_bits), want, "{text}");
+        }
+        // The midpoint under 2^-1022, to 30 digits either side of it.
+        assert_eq!(float_literal(below), None);
+        assert_eq!(float_literal(above).map(f64::to_bits), Some(0x0010000000000000));
+    }
+
+    #[test]
     fn refuses_by_feature_name() {
         let cases = [
             ("{ ${a} = 1; }", "dynamic attribute name"),
             ("{ \"${a}\" = 1; }", "dynamic attribute name"),
             ("./p/${a}", "path antiquotation"),
             ("<nixpkgs>", "search path literal"),
-            ("1.5", "float literal"),
+            ("1.0e309", "invalid float"),
+            ("2.2250738585072011e-308", "invalid float"),
             ("let x = 1; x = 2; in x", "`x` bound twice in one let"),
             ("{ a = 1; inherit a; }", "`a` bound twice in one attribute set"),
             // Imports the generator will not guess at (docs/BYTECODE.md).

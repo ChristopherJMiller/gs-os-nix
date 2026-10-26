@@ -11,6 +11,8 @@
 #      The collecting set is computed from the call graph. It is a lint, not
 #      a proof: the stress modes (GC periods, reserve stress) stay the
 #      authority, and a deliberate exception is marked `/* gcsafe: <why> */`.
+#   3. scripts/hostlint/orcabugs.py: constructs ORCA/C 2.3.0 b1 is known to
+#      miscompile (TOOLCHAIN.md "Known miscompiles"), each found on a2min first.
 #
 # Then the self-test (DECISIONS.md D14): each rule broken in a COPY, and the
 # lint must refuse it. Three of the GC plants are scripts/mutation-vm.sh's,
@@ -28,7 +30,7 @@ CF=(--target=i686-linux-gnu -ffreestanding -nostdlibinc -isystem "$RES/include" 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# lint DIR: 0 clean, 1 clang refused it, 2 gcsafe did. The findings are in $WORK/out.
+# lint DIR: 0 clean, 1 clang refused it, 2 gcsafe did, 3 orcabugs did. Findings in $WORK/out.
 lint() {
     local f rc=0
     rm -rf "$WORK/host"; mkdir -p "$WORK/host"
@@ -40,10 +42,12 @@ lint() {
     [ $rc -eq 0 ] || return 1
     # shellcheck disable=SC2086
     (cd "$WORK/host" && python3 -I "$H/gcsafe.py" $SRCS -- "${CF[@]}") >> "$WORK/out" 2>&1 || return 2
+    # shellcheck disable=SC2086
+    (cd "$WORK/host" && python3 -I "$H/orcabugs.py" $SRCS -- "${CF[@]}") >> "$WORK/out" 2>&1 || return 3
     return 0
 }
 
-echo "=== C lint: host clang and gcsafe ==="
+echo "=== C lint: host clang, gcsafe and orcabugs ==="
 lint target/vm/c
 case $? in
     0) echo "  the VM is clean" ;;
@@ -51,7 +55,7 @@ case $? in
 esac
 
 fail=0
-# plant <name> <file> <sed-expression> <expected status: 1 clang, 2 gcsafe>
+# plant <name> <file> <sed-expression> <expected status: 1 clang, 2 gcsafe, 3 orcabugs>
 plant() {
     rm -rf "$WORK/src"; cp -r target/vm/c "$WORK/src"
     sed -i "$3" "$WORK/src/$2"
@@ -76,6 +80,12 @@ plant "gcsafe: string + reads a part it did not view" strings.c \
       '/^    o = str_alloc(len);$/,/^    STRCTX(o, len) = pop();$/ s/^        s = deref(vstack\[at + i\]);$/        s = vstack[at + i];/' 2
 plant "gcsafe: removeAttrs keeps the set it forced past" prims.c \
       '/^static void prim_removeattrs(void)/,/^}/ s/^    so = rstack\[b\];$/    \/\* planted \*\//' 2
+plant "gcsafe: a collecting call inside push(), then a read" strings.c \
+      's/^    case T_FLOAT:  push(float_str(v)); return;/    case T_FLOAT:  push(float_str(v));/' 2
+plant "orcabugs: a cast of an unsigned 64-bit difference in ?:" float.c \
+      '$a int64_t lint_plant(uint64_t m, int c) { return c ? (int64_t)m : (int64_t)(m - 1); }' 3
+plant "orcabugs: a 64-bit ?: with a call in an arm" float.c \
+      '$a uint64_t lint_plant(uint64_t m) { return m ? f_from_int(1) : m; }' 3
 
 echo
 [ "$fail" -eq 0 ] || exit 1

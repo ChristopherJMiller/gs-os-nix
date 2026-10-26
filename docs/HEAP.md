@@ -67,6 +67,7 @@ null pointer, so address 0 is never allocated.
 | `$0A` | `INDIRECT` | — | 4-byte pointer. What `FOLLOW` chases |
 | `$0B` | `BLACKHOLE` | — | —. Under evaluation; re-entry is an infinite recursion |
 | `$0C` | `FORWARDED` | — | 4-byte pointer to the object's copy in to-space. **Only ever in from-space, only during a collection** |
+| `$0D` | `FLOAT` | — | 8 bytes, IEEE-754 binary64 bits, little-endian ([FLOAT.md](FLOAT.md)); 12 bytes in all, no pointers |
 
 `STRING` carries a context pointer because Nix tracks which store paths a string value
 depends on, and that must propagate at runtime (see ARCHITECTURE.md). The pointer is

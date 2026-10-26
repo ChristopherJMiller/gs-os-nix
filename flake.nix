@@ -446,6 +446,26 @@
             grep -q "MUTATION PASS" "$out"
           '';
 
+        # float.c, built by ORCA/C and run on a2min, against the host's own
+        # IEEE-754 arithmetic and printf (scripts/float-vectors.sh): three
+        # seeds of 1,120 vectors, then a planted rounding bug (D14).
+        float-vectors = pkgs.runCommandCC "check-float-vectors"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/target ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            ./scripts/float-vectors.sh ./build/a2min > fv.txt || { cat fv.txt; exit 1; }
+            cat fv.txt
+            grep -q "^FLOAT VECTORS OK" fv.txt
+            cp fv.txt "$out"
+          '';
+
         # The VM's C linted on the host (scripts/c-lint.sh): clang -Wall
         # -Wextra -Werror through a shim for ORCA/C's two extensions, and
         # gcsafe, the GC/view rule as a lint. Self-tested by planting (D14).

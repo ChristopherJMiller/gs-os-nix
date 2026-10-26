@@ -44,7 +44,7 @@ void stack_check(void)
 static obj_t *update_ptr(obj_t *vv, obj_t *v, uint16_t *off)
 {
     switch (vv->tag) {
-    case T_INT: case T_BOOL: case T_NULL: return 0;
+    case T_INT: case T_FLOAT: case T_BOOL: case T_NULL: return 0;
     case T_LAMBDA: case T_THUNK: *off = 8; return CL_ENV(vv);
     default: *off = 4; return v;
     }
@@ -93,7 +93,7 @@ static void force_thunk(void)
             y = update_ptr(vv, v, &yoff);
         }
         switch (vv->tag) {
-        case T_INT: case T_LAMBDA: case T_THUNK:
+        case T_INT: case T_FLOAT: case T_LAMBDA: case T_THUNK:
             memcpy(buf, vv, 12); card_write_at(PBITS(th), buf, 12); break;   /* gcsafe: mature -- th is on the card */
         case T_BOOL: case T_NULL:
             memcpy(buf, vv, 8); card_write_at(PBITS(th), buf, 8); break;
@@ -106,7 +106,7 @@ static void force_thunk(void)
     } else {
         vv = deref(v);
         switch (vv->tag) {
-        case T_INT: case T_LAMBDA: case T_THUNK:
+        case T_INT: case T_FLOAT: case T_LAMBDA: case T_THUNK:
             ((uint32_t *)th)[2] = ((uint32_t *)vv)[2];
             /* fall through */
         case T_BOOL: case T_NULL:
@@ -303,11 +303,12 @@ static void with_get(int strict)
 }
 
 /* --- arithmetic ---------------------------------------------------------------------------- */
-static void binary_ints(obj_t **a, obj_t **b)
+/* Both forced, as views: INTs or FLOATs, else E_TYPE. 1 when either is a
+ * FLOAT, which makes the operation a float one (docs/FLOAT.md). */
+static int binary_nums(obj_t **a, obj_t **b)
 {
     force_two(a, b);
-    need(*a, T_INT);
-    need(*b, T_INT);
+    return num_pair(*a, *b);                    /* float.c: the tests are bank 4's */
 }
 
 /* The CPU's own 64-bit multiply and divide, for a machine with no card and for
@@ -344,7 +345,7 @@ static void alu(uint8_t op)
 {
     obj_t *a, *b, *r;
     uint8_t out[8];
-    binary_ints(&a, &b);
+    if (binary_nums(&a, &b)) { float_arith(op == A_MUL ? OP_MUL : OP_DIV, a, b); return; }
     if (slot_x == 0 || verb_off(VERB_NO_ALU64))
         alu_cpu(op, PAYLOAD(a), PAYLOAD(b), out);
     else if (card_alu64(op, PAYLOAD(a), PAYLOAD(b), out))
@@ -409,10 +410,10 @@ void op_arith(uint16_t op)
             if (nursery_reserve_n(1, round4(AUX16(a) + AUX16(b) + 1), 4)) view_two(&a, &b);
             vsp -= 2;
             push(path_join(STRBYTES(a), AUX16(a), STRBYTES(b), AUX16(b)));
-        } else if (a->tag == T_INT) {
+        } else if (a->tag == T_INT || a->tag == T_FLOAT) {
             vsp -= 2;
-            need(b, T_INT);
-            push(new_int(add_checked(INTVAL(a), INTVAL(b))));
+            if (num_pair(a, b)) float_arith(OP_ADD, a, b);
+            else push(new_int(add_checked(INTVAL(a), INTVAL(b))));
         } else {
             /* String concatenation: the first operand decides what `+` is (a
              * path, an int, else a string), and a string `+` is "${a}${b}" --
@@ -420,11 +421,16 @@ void op_arith(uint16_t op)
             interpolate(2);
         }
         break;
-    case OP_SUB: binary_ints(&a, &b); push(new_int(sub_checked(INTVAL(a), INTVAL(b)))); break;
+    case OP_SUB:
+        if (binary_nums(&a, &b)) float_arith(OP_SUB, a, b);
+        else push(new_int(sub_checked(INTVAL(a), INTVAL(b))));
+        break;
     case OP_MUL: alu(A_MUL); break;
     case OP_DIV: alu(A_DIV); break;
     case OP_NEG:
-        force_top(); a = deref_pop(); need(a, T_INT);
+        force_top(); a = deref_pop();
+        if (a->tag == T_FLOAT) { float_arith(OP_NEG, a, a); break; }
+        need(a, T_INT);
         push(new_int(sub_checked(0, INTVAL(a))));   /* -x is 0 - x, as in Nix */
         break;
     case OP_LT: push_bool(cmp_values() == 0); break;
@@ -465,6 +471,9 @@ void run(void)
              * or set the pointer shortcut in values_equal applies. */
             force_two_orig(&a, &b, &ao, &bo);
             if (a->tag == T_LAMBDA && b->tag == T_LAMBDA) { push(obj_false); break; }
+            /* Nor is a NaN, even itself: at the top level Nix compares two
+             * fresh values, so no pointer shortcut (docs/FLOAT.md). */
+            if (a->tag == T_FLOAT || b->tag == T_FLOAT) { push_bool(num_cmp(a, b) == 1); break; }
             push_bool(values_equal(ao, bo));
             break;
         case OP_LT: op_arith(OP_LT); break;

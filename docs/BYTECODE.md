@@ -85,6 +85,7 @@ copying the tag straight into the header:
 | `$01` | `INT` | 8 bytes, signed |
 | `$04` | `STRING` | `u16` length, then the bytes (no terminator) |
 | `$05` | `PATH` | `u16` length, then the bytes: absolute and already canonical |
+| `$0D` | `FLOAT` | 8 bytes, the IEEE-754 binary64 bits ([FLOAT.md](FLOAT.md)) |
 
 A path literal is resolved by the generator, never by the VM: made absolute,
 then canonicalised as Nix's `canonPath` does (no `.` or empty components, `..`
@@ -206,7 +207,10 @@ them so the VM and the compiler never see them:
 | `{ a, b ? d, ... } @ s: body` | `s: let a = s.a; b = s.b or d; in body` — formals are lazy, defaults may refer to other formals, `@` names the whole set. (The "unexpected argument" check on closed formals is **not** yet performed.) |
 
 `ADD` is polymorphic at runtime: two `INT`s add, two `STRING`s concatenate (context
-union), anything else is `E_TYPE`. `EQ` compares `STRING`s by bytes, `LIST`s
+union), anything else is `E_TYPE`. **A `FLOAT` with an `INT` or a `FLOAT`** makes
+`ADD`, `SUB`, `MUL`, `DIV` and the `LT` family float operations, `NEG` of a
+`FLOAT` is `0 − x`, and `EQ` compares numbers as doubles, a NaN equal to
+nothing ([FLOAT.md](FLOAT.md)). `EQ` compares `STRING`s by bytes, `LIST`s
 element-wise and `ATTRS` by name and value (both **deep-forcing**, as Nix does),
 and different types compare unequal.
 
@@ -282,6 +286,9 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$35` | `addDrvOutputDependencies` | 1 | `s` coerced; its one context element, a plain `.drv` path, becomes `=<drv>` |
 | `$36` | `getContext` | 1 | `{ "<path>" = { allOutputs; outputs; path; }; ... }`, each only when true or non-empty |
 | `$37` | `appendContext` | 2 | `s ctx`: `s` with the elements `ctx` describes added; keys must be store paths |
+| `$39` | `isFloat` | 1 | `true` for a `FLOAT` |
+| `$3A` | `floor` | 1 | a `FLOAT` or `INT` to an `INT` in [-2^63, 2^63), else `E_TYPE` ([FLOAT.md](FLOAT.md)) |
+| `$3B` | `ceil` | 1 | likewise, rounding up |
 | `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`

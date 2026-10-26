@@ -11,3 +11,5 @@ derivation.c
 gc.c
 card.c
 sha256.c
+float.c
+numbers.c

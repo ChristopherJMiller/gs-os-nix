@@ -60,6 +60,7 @@ pub const OP_CLOSED_THUNK: u8 = 0x44;
 pub const K_INT: u8 = 0x01;
 pub const K_STRING: u8 = 0x04;
 pub const K_PATH: u8 = 0x05;
+pub const K_FLOAT: u8 = 0x0D;
 
 /// Primops: (Nix name, id, arity). BYTECODE.md "Primops" is normative and
 /// target/vm/opcodes.inc must agree; checks.nbc-opcodes diffs all three.
@@ -122,6 +123,9 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("getContext", 0x36, 1),
     ("appendContext", 0x37, 2),
     ("toFile", 0x38, 2),
+    ("isFloat", 0x39, 1),
+    ("floor", 0x3A, 1),
+    ("ceil", 0x3B, 1),
 ];
 
 /// The builtins Nix also exposes unqualified.

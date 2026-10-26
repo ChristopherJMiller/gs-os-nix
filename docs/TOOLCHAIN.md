@@ -93,6 +93,27 @@ moves per call. The VM's heap layout (HEAP.md) is unchanged; the C is written
 against it as `struct`s with explicit little-endian fields. The dispatch loop,
 `FORCE`, and the card I/O may stay as inline `asm { }`.
 
+## Known miscompiles
+
+ORCA/C 2.3.0 b1's optimiser bit 1 (the intermediate-code peephole; the VM is
+built with `#pragma optimize 15`) turns two shapes into a stack imbalance, so
+the function returns into data. Both found while writing `float.c`
+(docs/FLOAT.md), bisected on a2min to one line each, and both refused by
+`scripts/hostlint/orcabugs.py` in `just c-lint`, with a plant each:
+
+1. **An explicit cast of an unsigned 64-bit difference inside an arm of
+   `?:`**: `neg ? (int64_t)((uint64_t)0 - m) : (int64_t)m`, and even
+   `up ? m : (uint64_t)(m - 1)`. The difference uncast (`neg ? 0 - m : m`), a
+   signed difference, a sum, or the same at optimize 14 is compiled correctly.
+2. **A 64-bit `?:` with a call in an arm, as a return value**: `return s ?
+   propagate_nan(a, b) : a;` crashed whichever arm held the call; assigning it
+   first, or calls in both arms, happened to work. The lint refuses every
+   64-bit `?:` with a call in an arm -- the shape, not the luck.
+
+The rewrite is an `if`. Nothing else in the VM had either shape. Measured
+for the first: optimize levels 2, 4, 8 and 14 compile it correctly, 1, 7, 11,
+13 and 15 do not; the second was seen at 1 and 15.
+
 ## Gates
 
 - **`checks.orcac-smoke`** — compile, link, convert, run; assert the result bytes.

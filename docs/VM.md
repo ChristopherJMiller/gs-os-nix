@@ -167,6 +167,10 @@ target/vm/c/
               (copy-back into the nursery when no card is present)
   card.c      the driver: ALU64, RESERVE, DATA, LOOKUP, the SHA-256 verbs
   sha256.c    SHA-256 and the store-path fold on the CPU, for no card -- bank 4
+  float.c     IEEE-754 binary64 on bit patterns, and %f: no VM in it, so
+              checks.float-vectors tests it alone (FLOAT.md) -- bank 4, segment "float"
+  numbers.c   the VM's floats: FLOAT objects, mixed INT/float arithmetic and
+              comparison, floor, ceil, toString -- bank 4, segment "float"
 ```
 
 `target/vm/c/SOURCES` is the one list of sources, in link order: the flake's

@@ -14,7 +14,7 @@
 /* The VM's static strings: immutable STRINGs it hands out instead of allocating. */
 extern obj_t *str_int, *str_bool, *str_null, *str_string, *str_list, *str_set, *str_lambda,
              *str_one, *str_dot, *str_slash, *str_name, *str_right, *str_wrong, *str_space,
-             *str_path, *str_tostring, *str_outpath, *str_type;
+             *str_path, *str_tostring, *str_outpath, *str_type, *str_float;
 
 /* A STRING's context (DERIVATION.md "String context"): 0, or a LIST of STRINGs
  * sorted by bytes, no two equal, in Nix's element syntax -- "!<output>!<drv>",

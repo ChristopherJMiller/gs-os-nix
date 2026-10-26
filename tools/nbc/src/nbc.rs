@@ -43,6 +43,10 @@ fn write_chunk(ch: &Chunk) -> Vec<u8> {
                 out.push(K_INT);
                 out.extend_from_slice(&v.to_le_bytes());
             }
+            Const::Float(v) => {
+                out.push(K_FLOAT);
+                out.extend_from_slice(&v.to_le_bytes());
+            }
             Const::Str(s) => {
                 out.push(K_STRING);
                 out.extend_from_slice(&(s.len() as u16).to_le_bytes());
@@ -103,6 +107,11 @@ pub fn read(b: &[u8]) -> Result<Image, String> {
                     consts.push(Const::Int(i64::from_le_bytes(s.try_into().unwrap())));
                     p += 9;
                 }
+                Some(&K_FLOAT) => {
+                    let s = b.get(p + 1..p + 9).ok_or("truncated constant")?;
+                    consts.push(Const::Float(u64::from_le_bytes(s.try_into().unwrap())));
+                    p += 9;
+                }
                 Some(&K_STRING) => {
                     let len = u16_at(b, p + 1)? as usize;
                     let s = b.get(p + 3..p + 3 + len).ok_or("truncated string constant")?;
@@ -133,6 +142,7 @@ pub fn disassemble(img: &Image) -> String {
         for (ki, k) in ch.consts.iter().enumerate() {
             match k {
                 Const::Int(v) => s.push_str(&format!("  k{ki} = INT {v}\n")),
+                Const::Float(v) => s.push_str(&format!("  k{ki} = FLOAT {}\n", f64::from_bits(*v))),
                 Const::Str(v) => s.push_str(&format!("  k{ki} = STRING {v:?}\n")),
                 Const::Path(v) => s.push_str(&format!("  k{ki} = PATH {v}\n")),
             }

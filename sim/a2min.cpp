@@ -597,6 +597,15 @@ std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &see
             for (int i = 0; i < 8; ++i) u |= static_cast<uint64_t>(mem8(ptr, 4 + i)) << (8 * i);
             return std::to_string(static_cast<long long>(static_cast<int64_t>(u)));
         }
+        case TAG_FLOAT: {                       // Nix's printer: ostream << double (docs/FLOAT.md)
+            uint64_t u = 0;
+            for (int i = 0; i < 8; ++i) u |= static_cast<uint64_t>(mem8(ptr, 4 + i)) << (8 * i);
+            double d;
+            std::memcpy(&d, &u, 8);
+            std::ostringstream o;
+            o << d;
+            return o.str();
+        }
         case TAG_BOOL: return mem8(ptr, 4) ? "true" : "false";
         case TAG_NULL: return "null";
         case TAG_STRING: return quote_nix(nix_string_bytes(ptr));

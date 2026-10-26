@@ -53,7 +53,7 @@ enum : std::uint8_t {
     TAG_FREE = 0x00, TAG_INT = 0x01, TAG_BOOL = 0x02, TAG_NULL = 0x03,
     TAG_STRING = 0x04, TAG_PATH = 0x05, TAG_LIST = 0x06, TAG_ATTRS = 0x07,
     TAG_THUNK = 0x08, TAG_LAMBDA = 0x09, TAG_INDIRECT = 0x0A,
-    TAG_BLACKHOLE = 0x0B, TAG_FORWARDED = 0x0C,
+    TAG_BLACKHOLE = 0x0B, TAG_FORWARDED = 0x0C, TAG_FLOAT = 0x0D,
 };
 
 // Semispace geometry (docs/DECISIONS.md D15); must match rtl/a2nix_card.v.

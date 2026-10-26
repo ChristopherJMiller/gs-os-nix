@@ -46,10 +46,11 @@ SSTR(str_right, "right");
 SSTR(str_wrong, "wrong");
 SSTR(str_space, " ");
 SSTR(str_type, "type");
+SSTR(str_float, "float");
 
 obj_t *str_int, *str_bool, *str_null, *str_string, *str_list, *str_set, *str_lambda,
              *str_one, *str_dot, *str_slash, *str_name, *str_right, *str_wrong, *str_space, *str_path,
-             *str_tostring, *str_outpath, *str_type;
+             *str_tostring, *str_outpath, *str_type, *str_float;
 
 void prims_init(void)
 {
@@ -71,6 +72,7 @@ void prims_init(void)
     str_wrong  = STATIC_PTR(&str_wrong_s);
     str_space  = STATIC_PTR(&str_space_s);
     str_type   = STATIC_PTR(&str_type_s);
+    str_float  = STATIC_PTR(&str_float_s);
     drv_table  = 0;
 }
 
@@ -560,6 +562,7 @@ static void prim_typeof(void)
     (void)force_pop_view(&v);
     switch (v->tag) {
     case T_INT:    push(str_int); break;
+    case T_FLOAT:  push(str_float); break;
     case T_BOOL:   push(str_bool); break;
     case T_NULL:   push(str_null); break;
     case T_STRING: push(str_string); break;
@@ -744,6 +747,9 @@ void op_prim(void)
     case PRIM_GETCONTEXT:      prim_getcontext(); break;
     case PRIM_APPENDCONTEXT:   prim_appendcontext(); break;
     case PRIM_TOFILE:          prim_tofile(); break;
+    case PRIM_ISFLOAT:         is_tag(T_FLOAT); break;
+    case PRIM_FLOOR:           prim_floor(); break;
+    case PRIM_CEIL:            prim_ceil(); break;
     default:                   err_exit(E_BADOP);
     }
 }

@@ -13,6 +13,8 @@ use crate::opcodes::*;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Const {
     Int(i64),
+    /// IEEE-754 binary64 bits (docs/FLOAT.md).
+    Float(u64),
     Str(String),
     /// An absolute, canonical path (front.rs canon_path).
     Path(String),
@@ -294,6 +296,7 @@ impl Compiler {
     fn strict(&mut self, e: &Expr, chunk: usize) -> Result<(), Unsupported> {
         match e {
             Expr::Int(v) => self.emit_const(chunk, Const::Int(*v))?,
+            Expr::Float(v) => self.emit_const(chunk, Const::Float(*v))?,
             Expr::Path(p) => self.emit_const(chunk, Const::Path(p.clone()))?,
             Expr::Var(name, pos) => match self.resolve(name, *pos)? {
                 Binding::Literal(op) => self.emit(chunk, op),

@@ -407,6 +407,7 @@ int cmp_values(void)
 {
     obj_t *a, *b, *ao, *bo;
     force_two_orig(&a, &b, &ao, &bo);
+    if (a->tag == T_FLOAT || b->tag == T_FLOAT) return num_order(a, b);   /* as doubles; 3 unordered */
     if (a->tag != b->tag) type_err();
     switch (a->tag) {
     case T_INT:    return cmp64(a, b);
@@ -433,6 +434,7 @@ int values_equal(obj_t *a, obj_t *b)
     rsp = base;
     if (a == b) return 1;           /* the same object (originals, not views) */
     av = deref(a); bv = deref(b);
+    if (av->tag == T_FLOAT || bv->tag == T_FLOAT) return num_cmp(av, bv) == 1;   /* 1 == 1.0 */
     if (av->tag != bv->tag) return 0;
     switch (av->tag) {
     case T_INT:    return INTVAL(av) == INTVAL(bv);
