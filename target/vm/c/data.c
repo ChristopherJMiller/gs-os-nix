@@ -310,17 +310,6 @@ int str_cmp(obj_t *a, obj_t *b)
     return 1;
 }
 
-obj_t *str_concat(obj_t *a, obj_t *b)
-{
-    uint16_t na = AUX16(a), nb = AUX16(b);
-    obj_t *o;
-    if ((uint16_t)(na + nb) < na) nomem();
-    o = str_alloc(na + nb);
-    memcpy(STRBYTES(o), STRBYTES(a), na);
-    memcpy(STRBYTES(o) + na, STRBYTES(b), nb);
-    return o;
-}
-
 /* --- attribute sets ----------------------------------------------------------------------- */
 /* Entry i of a fresh ATTRS of n entries: hash, name, value (originals). */
 void attrs_put(obj_t *set, uint16_t n, uint16_t i, obj_t *name, obj_t *value)

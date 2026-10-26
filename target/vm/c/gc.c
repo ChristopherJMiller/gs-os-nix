@@ -255,6 +255,7 @@ void gc_collect(void)
     for (i = 0; i < catch_n; ++i) EVAC(catches[i].env);
     for (i = 0; i < cnext; ++i) EVAC(ctab_pool[i]);
     for (i = 0; i < nchunks; ++i) EVAC(imports[i]);
+    EVAC(drv_table);
     for (i = 0; i < rs_n; ++i) {                /* the remembered fields, read back */
         struct rs_entry *e = &RSET[i];
         obj_t hdr, *p = 0;
@@ -292,6 +293,7 @@ void gc_collect(void)
     for (i = 0; i < catch_n; ++i) XLATE(catches[i].env);
     for (i = 0; i < cnext; ++i) XLATE(ctab_pool[i]);
     for (i = 0; i < nchunks; ++i) XLATE(imports[i]);
+    XLATE(drv_table);
     for (i = 0; i < rs_n; ++i) {                /* and the remembered fields, on the card */
         struct rs_entry *e = &RSET[i];
         obj_t *t;

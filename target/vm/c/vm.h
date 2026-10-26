@@ -275,7 +275,6 @@ obj_t *force_pop_view(obj_t **view);        /* returns the original; *view = der
 uint32_t hash_str(obj_t *s);        /* djb2 */
 int    str_eq(obj_t *a, obj_t *b);  /* 1 if equal */
 int    str_cmp(obj_t *a, obj_t *b); /* 0 less, 1 equal, 2 greater */
-obj_t *str_concat(obj_t *a, obj_t *b);
 /* set is the ORIGINAL pointer, never a view. On a hit the VALUE comes back too,
  * so no caller has to deref the set to read it -- which is what keeps a mature
  * lookup independent of the set's size (docs/CARD-ISA.md, MEMCMP). */
@@ -360,5 +359,12 @@ void op_prim(void);
 #define CO_STRING (CO_MORE | CO_PATH)    /* builtins.toString */
 #define CO_DRV    CO_MORE               /* derivation attributes (DERIVATION.md) */
 void coerce_top(uint8_t how);
+/* INTERPOLATE n, and a string `+` (n = 2): the n parts on the stack coerced as
+ * "${}" does, concatenated, their contexts united (DERIVATION.md "String
+ * context"). Runs bytecode. */
+void interpolate(uint16_t n);
+/* Every derivation the program has made, for its dependents' hashes: a chain
+ * of [drvPath, modulo hash in hex, next] LISTs, or 0. A root (gc.c). */
+extern obj_t *drv_table;
 
 #endif

@@ -588,3 +588,8 @@ well-formed, wrong path. One derivation per program cannot consume another.
 every string operation and refused by `derivationStrict`. It touches every
 site that real context propagation will touch, to be rewritten there
 immediately after; the guard is three lines and goes when context lands.
+
+**Superseded the next step (string context):** the guard is gone. A second
+derivation now reads the first's output as an input, and the one context it
+cannot honour -- a `drvPath` in a string, which needs the `.drv`'s closure --
+is `E_UNSUP` instead.

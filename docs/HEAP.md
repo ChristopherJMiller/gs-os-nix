@@ -69,7 +69,9 @@ null pointer, so address 0 is never allocated.
 | `$0C` | `FORWARDED` | — | 4-byte pointer to the object's copy in to-space. **Only ever in from-space, only during a collection** |
 
 `STRING` carries a context pointer because Nix tracks which store paths a string value
-depends on, and that must propagate at runtime (see ARCHITECTURE.md).
+depends on, and that must propagate at runtime (see ARCHITECTURE.md). The pointer is
+`0` or a `LIST` of `STRING`s in Nix's element syntax, sorted and unique
+([DERIVATION.md](DERIVATION.md) "String context").
 
 `INDIRECT` exists because forcing a thunk overwrites it in place. When the result is
 larger than the thunk, the thunk becomes an `INDIRECT` to the new object rather than

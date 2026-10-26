@@ -3,6 +3,7 @@
 fixtures/eval-fail-derivation-duplicate-output
 fixtures/eval-fail-derivation-name
 fixtures/eval-fail-derivation-no-builder
+fixtures/eval-fail-path-plus-context
 fixtures/eval-okay-assert
 fixtures/eval-okay-attr-builtins
 fixtures/eval-okay-attrs
@@ -15,6 +16,8 @@ fixtures/eval-okay-curry
 fixtures/eval-okay-deep-equality
 fixtures/eval-okay-deepseq-cycle
 fixtures/eval-okay-derivation
+fixtures/eval-okay-derivation-context
+fixtures/eval-okay-derivation-dependent
 fixtures/eval-okay-derivation-equality
 fixtures/eval-okay-derivation-escapes
 fixtures/eval-okay-derivation-nulls
@@ -55,7 +58,7 @@ fixtures/eval-okay-tryeval
 fixtures/eval-okay-tryeval-restore
 fixtures/eval-okay-with
 fixtures/eval-okay-with-captured
-fixtures/refuse-derivation-dependent
+fixtures/refuse-derivation-drvpath
 fixtures/refuse-derivation-fixed-output
 fixtures/refuse-derivation-path
 fixtures/refuse-hashstring-md5
@@ -109,6 +112,7 @@ tvix/nix_tests/eval-okay-strings-as-attrs-names
 tvix/nix_tests/eval-okay-substring
 tvix/nix_tests/eval-okay-tryeval
 tvix/nix_tests/eval-okay-with
+tvix/nix_tests/notyetpassing/eval-okay-eq-derivations
 tvix/tvix_tests/eval-okay-abort-throw-can-be-caught
 tvix/tvix_tests/eval-okay-access-strange-identifier
 tvix/tvix_tests/eval-okay-add-paths

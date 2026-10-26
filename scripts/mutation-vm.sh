@@ -42,7 +42,7 @@ NBC="$2"
 # The derivation fixtures first: they are cheap, and run_suite stops at the
 # first wrong answer, so a mutation they catch costs seconds. The refusal is a
 # fixture too -- its .exp is the error line (scripts/scoreboard.py).
-FIXTURES="eval-okay-derivation eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists refuse-derivation-dependent eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
+FIXTURES="eval-okay-derivation eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists refuse-derivation-drvpath eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
 MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1 mask:4"
 SRCS="main.c run.c data.c prims.c gc.c card.c sha256.c"   # link order: main.c first
 WORK=$(mktemp -d)
@@ -155,8 +155,11 @@ mutate "genList does not reserve" prims.c \
 mutate "++ keeps its views across a collecting reserve" run.c \
        's/            if (nursery_reserve_n(n + i, 4, 4)) view_two(\&a, \&b);/            nursery_reserve_n(n + i, 4, 4);/'
 
-mutate "string + keeps its views across a collecting reserve" run.c \
-       's/            if (nursery_reserve_n(1, round4(AUX16(a) + AUX16(b)), 8)) view_two(\&a, \&b);/            nursery_reserve_n(1, round4(AUX16(a) + AUX16(b)), 8);/'
+# String + is interpolate(2) (prims.c), which copies each part through a view
+# taken AFTER its reserve; a part read without one is a promoted string read
+# as if it were in RAM.
+mutate "string + copies parts it did not view after its reserve" prims.c \
+       '/^    o = str_alloc(len);$/,/^    STRCTX(o, len) = pop();$/ s/^        s = deref(vstack\[at + i\]);$/        s = vstack[at + i];/'
 
 mutate "map keeps its view across a collecting reserve" prims.c \
        's/    if (nursery_reserve_n(n, 32, 4)) l = view_top_as(T_LIST);/    nursery_reserve_n(n, 32, 4);/'
@@ -174,7 +177,7 @@ mutate "outPath does not coerce" prims.c \
        's/^        } else if (find_attr(vo, str_outpath, \&ix, \&f)) {$/        } else if (0) {/'
 
 mutate "concatStringsSep copies the set, not its coercion" prims.c \
-       's/^        if (coerce) e = deref(vstack\[at + i\]);$/        if (0) e = deref(vstack[at + i]);/'
+       's/^        if (coerce) e = deref_follow(vstack\[at + i\]);$/        if (0) e = deref_follow(vstack[at + i]);/'
 
 # SHA-256 (prims.c prim_hashstring): three paths, each reached by some mode --
 # HASH_STREAM only for a mature string (the period modes), sha256.c only with
@@ -227,8 +230,42 @@ mutate "the CPU does not fold the store-path hash" sha256.c \
 mutate "two derivations compare as sets" prims.c \
        's/    if (is_drv(rstack\[base\]) \&\& is_drv(rstack\[base + 1\]) \&\&/    if (0 \&\&/'
 
-mutate "a second derivation is not refused" prims.c \
-       's/^    if (drv_made) err_exit(E_UNSUP);$//'
+# String context (DERIVATION.md "String context"): every operation that builds
+# a string from strings carries their contexts, or a dependent derivation loses
+# an input and gets a well-formed, wrong path. eval-okay-derivation-context
+# reaches its input through each operation; each mutation drops one.
+mutate "interpolation drops the parts' contexts" prims.c \
+       's/^    push(ctx_join(at, n));                      \/\* a root while the result is reserved \*\/$/    push(0);/'
+
+mutate "a union keeps only the first context" prims.c \
+       's/^        if (x) break;                           \/\* a second list: merge \*\/$/        if (x) continue;/'
+
+mutate "concatStringsSep drops the separator's context" prims.c \
+       's/    if (!coerce \&\& (hasctx || CTX(deref(rstack\[b\])))) {/    if (!coerce \&\& hasctx) {/'
+
+mutate "substring drops the context" prims.c \
+       's/^    STRCTX(r, end - start) = CTX(s);$//'
+
+mutate "baseNameOf drops the context" prims.c \
+       's/^    if (s->tag == T_STRING) STRCTX(r, last - start + 1) = CTX(s);   \/\* a string.s context stays \*\/$//'
+
+mutate "dirOf's \".\" and \"/\" drop the context" prims.c \
+       's/^    if (!x) { push(st); return; }$/    { push(st); return; }/'
+
+mutate "inputs are hashed by path, not modulo hash" prims.c \
+       's/d->replaced ? KEY_HEX : KEY_DRV/d->replaced ? KEY_DRV : KEY_DRV/'
+
+mutate "an input's modulo hash ignores its own inputs" prims.c \
+       's/^    if (hasdrv) {                               \/\* the modulo hash for dependents: \*\/$/    if (0) {/'
+
+mutate "the .drv's path names no references" prims.c \
+       's/^    put_refs(\&k, \&d);                           \/\* "text:<every input .drv and source>" \*\/$//'
+
+mutate "a drvPath in a string is taken as a source" prims.c \
+       's/^        } else if (p\[0\] != .\/.) {$/        } else if (0) {/'
+
+mutate "path + a string with context is allowed" run.c \
+       's/^            if (b->tag == T_STRING \&\& STRCTX(b, AUX16(b))) type_err();.*$//'
 
 echo
 echo "$pass mutations caught, $fail not caught"

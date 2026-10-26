@@ -168,7 +168,7 @@ instruction even if it was a thunk before (in-place update, see below).
 | `$29` | `JMP_IF_NOTFOUND` | `i16 rel` | `x → x` | peeks; jumps if the top is ∅. The compiler emits `POP` on the taken path |
 | `$2A` | `HAS_ATTR` | | `s k → bool` | forces `s`; `false` if it is not an `ATTRS` |
 | `$2B` | `UPDATE` | | `a b → a//b` | forces both; merges by name, `b` wins |
-| `$2C` | `INTERPOLATE` | `u16 n` | `p1 … pn → str` | forces the `n` parts; each must be a `STRING` in this slice (Nix coerces paths and `__toString` sets too — later); concatenates. String context is the union — carried from day one as the context pointer, currently always null |
+| `$2C` | `INTERPOLATE` | `u16 n` | `p1 … pn → str` | forces the `n` parts and coerces each as `"${}"` does (a set through `__toString` or `outPath`; a path is `E_UNSUP`, a store copy); concatenates. The result's context is the union of the parts' ([DERIVATION.md](DERIVATION.md) "String context"). A string `ADD` is the same with two parts |
 | `$43` | `PRIM` | `u8 id` | `a1 … ak → v` | run primop `id` (table below) on its `k` arguments, which are on the stack unforced; the primop forces what it needs |
 | `$44` | `CLOSED_THUNK` | `u16 chunk` | `→ t` | allocate `THUNK { code = chunk, env = 0 }` — see "Imports" |
 | `$36` | `WITH_PUSH` | | `s →` | `env ← LIST(2)` with `[0] = old env`, `[1] = s` (unforced), and the **with mark** (bit 22 of `aux`) set. A `with` scope is an environment like any other, so thunks capture it and `ENV_GET` depths count it |

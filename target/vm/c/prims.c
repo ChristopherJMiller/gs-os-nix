@@ -71,10 +71,16 @@ void prims_init(void)
     str_wrong  = STATIC_PTR(&str_wrong_s);
     str_space  = STATIC_PTR(&str_space_s);
     str_type   = STATIC_PTR(&str_type_s);
+    drv_table  = 0;
 }
 
 /* --- shared ---------------------------------------------------------------------------- */
 static void push_bool(int v) { push(v ? obj_true : obj_false); }
+
+/* A STRING's context (DERIVATION.md "String context"): 0, or a LIST of STRINGs
+ * sorted by bytes, no two equal, in Nix's element syntax -- "!<output>!<drv>",
+ * "=<drv>", "/nix/store/...". s is a STRING view. */
+#define CTX(s) STRCTX((s), AUX16(s))
 
 /* Force and pop; the original in *orig, the view returned, type-checked. */
 static obj_t *force_pop_as(uint8_t tag, obj_t **orig)
@@ -554,7 +560,13 @@ static void prim_substring(void)                /* start len s */
     if (x < 0) err_exit(E_INDEX);
     s = deref(rstack[rsp - 1]);                 /* still rooted, for the reserve */
     slen = AUX16(s);
-    if (x > 0xFFFF || (uint16_t)x >= slen) { --rsp; push(str_alloc(0)); return; }
+    if (x > 0xFFFF || (uint16_t)x >= slen) {   /* "", with the string's context, as Nix keeps it */
+        r = str_alloc(0);
+        STRCTX(r, 0) = CTX(s);
+        --rsp;
+        push(r);
+        return;
+    }
     start = (uint16_t)x;
     if (to_end || (uint16_t)(start + len) < start || start + len > slen) end = slen;
     else end = start + len;
@@ -562,6 +574,7 @@ static void prim_substring(void)                /* start len s */
     s = deref_rpop();
     r = str_alloc(end - start);
     memcpy(STRBYTES(r), STRBYTES(s) + start, end - start);
+    STRCTX(r, end - start) = CTX(s);
     push(r);
 }
 
@@ -726,15 +739,85 @@ static void prim_hashstring(void)
     push(r);
 }
 
+/* --- string context (docs/DERIVATION.md "String context") --------------------------- */
+obj_t *drv_table;
+
+/* The union of the contexts of the n values at vstack[at..at+n) (anything but
+ * a STRING has none): 0; the one list, when a single distinct list is involved
+ * -- the usual case, no allocation; else a fresh merged LIST. The merge may
+ * collect (every value is on the stack) and turns the ring over between parts,
+ * so the caller holds no view across it. */
+static obj_t *ctx_join(uint16_t at, uint16_t n)
+{
+    uint16_t i, j, k, m, i2, base = vsp;
+    uint8_t c = 0;
+    obj_t *x = 0, *l, *s, *e;
+    for (i = 0; i < n; ++i) {
+        s = deref_follow(vstack[at + i]);
+        if (s->tag != T_STRING || !CTX(s) || CTX(s) == x) continue;
+        if (x) break;                           /* a second list: merge */
+        x = CTX(s);
+    }
+    if (i == n) return x;
+    for (i = 0; i < n; ++i) {
+        windows_maybe();
+        s = deref_follow(vstack[at + i]);
+        if (s->tag != T_STRING || !(l = CTX(s))) continue;
+        m = AUX16(deref(l));
+        for (j = 0; j < m; ++j) {               /* insertion into vstack[base..vsp), sorted, once */
+            e = list_elem(l, j, m);
+            for (k = base; k < vsp && (c = (uint8_t)str_cmp(deref(vstack[k]), deref(e))) == 0; ++k) ;
+            if (k < vsp && c == 1) continue;
+            push(e);
+            for (i2 = vsp - 1; i2 > k; --i2) vstack[i2] = vstack[i2 - 1];
+            vstack[k] = e;
+        }
+    }
+    return list_from_stack(vsp - base);
+}
+
+/* INTERPOLATE n, and a string `+`, which is the same thing with two parts.
+ * Each part is forced and coerced in order, as "${}" coerces -- a set through
+ * __toString or outPath, which is how "${drv}" becomes its store path -- then
+ * they are concatenated, their contexts united. It was run.c's; it is here
+ * because bank 0 is full and every string it builds must carry a context. */
+void interpolate(uint16_t n)
+{
+    uint16_t i, len = 0, at = vsp - n;
+    obj_t *o, *s;
+    for (i = 0; i < n; ++i) {
+        force_slot(n - i);
+        if (deref(vstack[at + i])->tag != T_STRING) {
+            push(vstack[at + i]);
+            coerce_top(CO_PLAIN);
+            vstack[at + i] = pop();
+        }
+    }
+    push(ctx_join(at, n));                      /* a root while the result is reserved */
+    for (i = 0; i < n; ++i) {
+        s = deref(vstack[at + i]);
+        need(s, T_STRING);
+        if ((uint16_t)(len + AUX16(s)) < len) nomem();
+        len += AUX16(s);
+    }
+    nursery_reserve_n(1, round4(len), 8);       /* the parts are on the stack; the copy loop re-derefs */
+    o = str_alloc(len);
+    len = 0;
+    for (i = 0; i < n; ++i) {
+        s = deref(vstack[at + i]);
+        memcpy(STRBYTES(o) + len, STRBYTES(s), AUX16(s));
+        len += AUX16(s);
+    }
+    STRCTX(o, len) = pop();
+    vsp = at;
+    push(o);
+}
+
 /* --- derivations (docs/DERIVATION.md) ----------------------------------------------- */
 #define DRV_OUT_MAX 8
-#define FP_MAX      512         /* the longest fingerprint: 7 + 209 + 8 + 64 + 12 + 211 */
+#define FP_MAX      512         /* the longest output fingerprint: 7 + 209 + 8 + 64 + 12 + 211 */
 #define NAME_MAX    211         /* StorePath::MaxPathLen */
 #define IS_LIT(s, lit) is_lit((s), (lit), sizeof(lit) - 1)
-
-/* The one derivation a program may make until string context exists
- * (DERIVATION.md "Refused"). A static is bank 0: one byte. */
-static uint8_t drv_made;
 
 enum { K_OTHER, K_NAME, K_IGNORE, K_STRUCT, K_CA, K_IMPURE, K_ARGS, K_BUILDER, K_SYSTEM,
        K_OUTPUTS, K_FIXED };
@@ -802,10 +885,13 @@ static uint16_t path_name(char *pn, obj_t *nmv, obj_t *ov)
  * reserves, and a collection moves what they point at. */
 struct drv {
     uint16_t at, np;            /* the (attribute, coerced string) pairs, vstack[at + 2i] */
+    uint16_t ctx;               /* vstack index of the inputs: the union of every context */
     uint16_t on, no;            /* the output names, sorted, vstack[on + i] */
     uint16_t args;              /* rstack index of the coerced args LIST */
     uint16_t name, bld, sys;    /* pair indices */
-    uint8_t masked;
+    uint16_t nin;               /* elements in the inputs list */
+    uint8_t masked;             /* output paths as "" (hashDerivationModulo) */
+    uint8_t replaced;           /* input .drv paths as their modulo hashes */
     obj_t *path[DRV_OUT_MAX];   /* phase 2: the output paths, young, and nothing collects */
 };
 #define PAIR_KEY(d, i) vstack[(d)->at + 2 * (i)]
@@ -850,7 +936,135 @@ static void put_str(struct sink *k, obj_t *o, uint8_t esc)
     put(k, "\"", 1);
 }
 
-/* Derive([outputs],[],[],system,builder,[args],[env]), masked or final. */
+/* --- the inputs: the elements of the context union ---
+ * Sorted by bytes, the "!<o>!<drv>" elements come first ('!' < '/'), then the
+ * "/<path>" sources; "=<drv>" was refused. Each input is read through a KEY:
+ * the .drv path, its modulo hash from drv_table, or the store path an element
+ * refers to (the .drv, or the source). Keys are views, valid until the ring
+ * turns over, which only happens where no key is held. */
+#define KEY_DRV 0
+#define KEY_HEX 1
+#define KEY_REF 2
+
+static int bytes_cmp(const char *a, uint16_t na, const char *b, uint16_t nb)
+{
+    int c = memcmp(a, b, na < nb ? na : nb);
+    return c ? c : (int)na - (int)nb;
+}
+
+/* The derivation this program made whose .drv path is p[0..n): its modulo
+ * hash, a view of a 64-character STRING. E_UNSUP if there is none -- a
+ * context the program did not make. */
+static obj_t *drv_hex(const char *p, uint16_t n)
+{
+    obj_t *t = drv_table, *tv, *pv;
+    while (t) {
+        tv = deref(t);                          /* [drvPath, hex, next] */
+        pv = deref(ELEMS(tv)[0]);
+        if (AUX16(pv) == n && memcmp(STRBYTES(pv), p, n) == 0) return deref(ELEMS(tv)[1]);
+        t = ELEMS(tv)[2];
+    }
+    err_exit(E_UNSUP);
+    return 0;
+}
+
+static obj_t *in_elem(struct drv *d, uint16_t j)       /* element j, a view */
+{
+    return deref(list_elem(vstack[d->ctx], j, d->nin));
+}
+
+static const char *in_key(struct drv *d, uint16_t j, uint8_t kind, uint16_t *len)
+{
+    obj_t *e = in_elem(d, j);
+    const char *p = STRBYTES(e);
+    uint16_t m = AUX16(e), i;
+    if (p[0] != '!') { *len = m; return p; }            /* a source is itself */
+    for (i = 1; p[i] != '!'; ++i) ;                     /* checked in phase 1 */
+    if (kind == KEY_HEX) { e = drv_hex(p + i + 1, m - i - 1); *len = 64; return STRBYTES(e); }
+    *len = m - i - 1;
+    return p + i + 1;
+}
+
+/* The element whose key is the smallest greater than last's (-1: the
+ * smallest of all): a selection sort, one step. Derivation inputs only, unless
+ * the key is KEY_REF. Duplicate keys -- two outputs of one input -- come out
+ * once. */
+static int16_t in_next(struct drv *d, uint8_t kind, int16_t last)
+{
+    uint16_t j, lj, lb, ll;
+    int16_t best = -1;
+    const char *pj, *pb, *pl;
+    windows_maybe();
+    for (j = 0; j < d->nin; ++j) {
+        if (kind != KEY_REF && STRBYTES(in_elem(d, j))[0] != '!') continue;
+        pj = in_key(d, j, kind, &lj);
+        if (last >= 0) { pl = in_key(d, (uint16_t)last, kind, &ll); if (bytes_cmp(pj, lj, pl, ll) <= 0) continue; }
+        if (best >= 0) { pb = in_key(d, (uint16_t)best, kind, &lb); if (bytes_cmp(pj, lj, pb, lb) >= 0) continue; }
+        best = (int16_t)j;
+    }
+    return best;
+}
+
+/* [("<drv>",["<o>",...]),...] by .drv path, or with each .drv replaced by its
+ * modulo hash and ordered by that (hashDerivationModulo). */
+static void put_input_drvs(struct sink *k, struct drv *d)
+{
+    uint8_t kind = d->replaced ? KEY_HEX : KEY_DRV, fo, first = 1;
+    int16_t e = -1;
+    uint16_t j, i, lk, lj;
+    const char *pk, *pj, *o;
+    while ((e = in_next(d, kind, e)) >= 0) {
+        if (!first) put(k, ",", 1);
+        first = 0;
+        pk = in_key(d, (uint16_t)e, kind, &lk);
+        put(k, "(\"", 2);
+        put(k, pk, lk);
+        put(k, "\",[", 3);
+        for (j = 0, fo = 1; j < d->nin; ++j) {
+            o = STRBYTES(in_elem(d, j));
+            if (o[0] != '!') continue;
+            pk = in_key(d, (uint16_t)e, kind, &lk);
+            pj = in_key(d, j, kind, &lj);
+            if (bytes_cmp(pk, lk, pj, lj) != 0) continue;
+            o = STRBYTES(in_elem(d, j));        /* "!<o>!..." */
+            for (i = 1; o[i] != '!'; ++i) ;
+            if (!fo) put(k, ",", 1);
+            fo = 0;
+            put(k, "\"", 1);
+            put(k, o + 1, i - 1);
+            put(k, "\"", 1);
+        }
+        put(k, "])", 2);
+    }
+}
+
+/* ["<src>",...]: the plain paths, already in order. */
+static void put_input_srcs(struct sink *k, struct drv *d)
+{
+    uint16_t j, first = 1;
+    for (j = 0; j < d->nin; ++j) {
+        if (STRBYTES(in_elem(d, j))[0] == '!') continue;
+        if (!first) put(k, ",", 1);
+        first = 0;
+        put_str(k, list_elem(vstack[d->ctx], j, d->nin), 0);
+    }
+}
+
+/* ":<ref>" for every store path the .drv refers to, sorted, once each: the
+ * type of its fingerprint is "text" followed by these. */
+static void put_refs(struct sink *k, struct drv *d)
+{
+    int16_t e = -1;
+    uint16_t l;
+    const char *p;
+    while ((e = in_next(d, KEY_REF, e)) >= 0) {
+        p = in_key(d, (uint16_t)e, KEY_REF, &l);
+        put(k, ":", 1);
+        put(k, p, l);
+    }
+}
+
+/* Derive([outputs],[inputs],[sources],system,builder,[args],[env]). */
 static void aterm(struct sink *k, struct drv *d)
 {
     uint16_t i, o, n, c;
@@ -863,7 +1077,11 @@ static void aterm(struct sink *k, struct drv *d)
         if (d->masked) put(k, "\"\"", 2); else put_str(k, d->path[o], 0);
         put(k, ",\"\",\"\")", 7);
     }
-    put(k, "],[],[],", 8);
+    put(k, "],[", 3);
+    put_input_drvs(k, d);
+    put(k, "],[", 3);
+    put_input_srcs(k, d);
+    put(k, "],", 2);
     put_str(k, PAIR_VAL(d, d->sys), 0);         /* unescaped: measured (DERIVATION.md) */
     put(k, ",", 1);
     put_str(k, PAIR_VAL(d, d->bld), 1);
@@ -904,29 +1122,24 @@ static void sha256_any(const uint8_t *p, uint16_t n, uint8_t *dig)
     if (!card_sha256(p, n, dig)) sha256_cpu(p, n, dig);
 }
 
-/* makeStorePath(t1 t2, dig, pn): the fingerprint "<type>:sha256:<hex>:
- * /nix/store:<pn>" is written into fp and hashed; the card's P3 is the hash
- * part (nix32_fold without a card). A young STRING "/nix/store/<32>-<pn>".
- * Nothing collects: the caller reserved. */
-static obj_t *store_path(uint8_t *fp, const char *t1, uint16_t n1, const char *t2, uint16_t n2,
-                         const uint8_t *dig, const char *pn, uint16_t pl)
+/* makeStorePath: k holds the fingerprint's type ("output:<o>", "text:<refs>");
+ * ":sha256:<hex>:/nix/store:<pn>" is appended and the whole hashed, the card's
+ * P3 being the hash part (nix32_fold without a card). A young STRING
+ * "/nix/store/<32>-<pn>". Nothing collects: the caller reserved. */
+static obj_t *store_path(struct sink *k, const uint8_t *dig, const char *pn, uint16_t pl)
 {
-    struct sink k;
     char hx[64];
     uint8_t h[32];
     obj_t *r;
-    k.p = fp; k.n = 0; k.cap = FP_MAX;
-    put(&k, t1, n1);
-    put(&k, t2, n2);
-    put(&k, ":sha256:", 8);
+    put(k, ":sha256:", 8);
     hex64(dig, hx);
-    put(&k, hx, 64);
-    put(&k, ":/nix/store:", 12);
-    put(&k, pn, pl);
+    put(k, hx, 64);
+    put(k, ":/nix/store:", 12);
+    put(k, pn, pl);
     r = str_alloc(44 + pl);
     memcpy(STRBYTES(r), "/nix/store/", 11);
-    if (!card_storepath(fp, k.n, (uint8_t *)STRBYTES(r) + 11)) {
-        sha256_cpu(fp, k.n, h);
+    if (!card_storepath(k->p, k->n, (uint8_t *)STRBYTES(r) + 11)) {
+        sha256_cpu(k->p, k->n, h);
         nix32_fold(h, STRBYTES(r) + 11);
     }
     STRBYTES(r)[43] = '-';
@@ -934,11 +1147,21 @@ static obj_t *store_path(uint8_t *fp, const char *t1, uint16_t n1, const char *t
     return r;
 }
 
+/* A young one-element context, a LIST holding the STRING a ++ b: the results'
+ * "=<drv>" and "!<o>!<drv>". Nothing collects: the caller reserved. */
+static obj_t *ctx_one(const char *a, uint16_t na, const char *b, uint16_t nb)
+{
+    obj_t *e = str_alloc(na + nb), *l = list_alloc(1);
+    memcpy(STRBYTES(e), a, na);
+    memcpy(STRBYTES(e) + na, b, nb);
+    ELEMS(l)[0] = e;
+    return l;
+}
+
 /* Output names compare as byte strings. */
 static int tok_cmp(const char *p, uint16_t a, uint16_t an, uint16_t b, uint16_t bn)
 {
-    int c = memcmp(p + a, p + b, an < bn ? an : bn);
-    return c ? c : (int)an - (int)bn;
+    return bytes_cmp(p + a, an, p + b, bn);
 }
 
 static int is_ws(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
@@ -949,16 +1172,14 @@ static void prim_derivationstrict(void)
     struct drv d;
     struct sink k;
     struct { uint16_t off, len; } tok[DRV_OUT_MAX];
-    uint16_t b = rsp, n, i, j, m, key, pl, nl, cnt = 0;
+    uint16_t b = rsp, n, i, j, m, key, pl, nl, dl, cnt = 0;
     uint16_t ixn = 0xFFFF, ixs = 0xFFFF, ixi = 0xFFFF, outs = 0xFFFF;
-    uint8_t ignore = 0, dig[32];
-    uint32_t need;
+    uint8_t ignore = 0, hasdrv = 0, dig[32];
+    uint32_t need, cap, grow = 0;
     char pn[NAME_MAX + 1];
-    obj_t *so, *s, *v, *vo, *nm, *r;
+    obj_t *so, *s, *v, *vo, *nm, *r, *e;
     const char *p;
 
-    if (drv_made) err_exit(E_UNSUP);
-    drv_made = 1;
     s = force_pop_as(T_ATTRS, &so);
     n = AUX16(s);
     rpush(so);                                  /* b: the set */
@@ -975,7 +1196,8 @@ static void prim_derivationstrict(void)
     }
     if (ixn == 0xFFFF) err_exit(E_NOATTR);
     push(attr_at(rstack[b], ixn, &nm));
-    force_pop_as(T_STRING, &vo);                /* forced, not coerced */
+    v = force_pop_as(T_STRING, &vo);            /* forced, not coerced */
+    if (CTX(v)) type_err();                     /* and without a context: forceStringNoCtx */
     if (ixs != 0xFFFF) {
         push(attr_at(rstack[b], ixs, &nm));
         v = force_pop_as(T_BOOL, &vo);
@@ -1029,6 +1251,30 @@ static void prim_derivationstrict(void)
     if (d.bld == 0xFFFF || AUX16(deref(PAIR_VAL(&d, d.bld))) == 0) err_exit(E_NOATTR);
     if (d.sys == 0xFFFF || AUX16(deref(PAIR_VAL(&d, d.sys))) == 0) err_exit(E_NOATTR);
 
+    /* The inputs: the union of every coerced string's context -- the pairs
+     * (whose names have none) and the arguments, pushed for the moment. */
+    m = AUX16(deref(rstack[b + 1]));
+    for (i = 0; i < m; ++i) push(list_elem(rstack[b + 1], i, m));
+    v = ctx_join(d.at, 2 * d.np + m);
+    vsp -= m;
+    d.ctx = vsp;
+    push(v);
+    d.nin = v ? AUX16(deref(v)) : 0;
+    for (i = 0; i < d.nin; ++i) {
+        windows_maybe();
+        e = in_elem(&d, i);
+        p = STRBYTES(e);
+        m = AUX16(e);
+        if (p[0] == '!') {                      /* "!<o>!<drv>": an output of a derivation */
+            for (j = 1; j < m && p[j] != '!'; ++j) ;
+            if (j == 1 || j + 1 >= m) err_exit(E_UNSUP);
+            drv_hex(p + j + 1, m - j - 1);      /* one this program made, or E_UNSUP */
+            hasdrv = 1;
+        } else if (p[0] != '/') {
+            err_exit(E_UNSUP);                  /* "=<drv>": its closure (DERIVATION.md) */
+        }
+    }
+
     /* The outputs: `outputs` split on whitespace, sorted, or just "out". */
     d.on = vsp;
     if (outs == 0xFFFF) {
@@ -1079,48 +1325,95 @@ static void prim_derivationstrict(void)
     check_name(STRBYTES(s), nl);                /* first: it bounds nl */
     if (nl + 4 > NAME_MAX) type_err();          /* name.drv */
     if (nl >= 4 && memcmp(STRBYTES(s) + nl - 4, ".drv", 4) == 0) type_err();
-    /* The reserve: a scratch buffer for the final ATerm (the masked one is
-     * shorter by two copies of each output path) or a fingerprint, the paths,
-     * "drvPath" and the result set. */
+    dl = 44 + nl + 4;                           /* the .drv's path */
+    /* The reserve. The scratch buffer takes, in turn, the masked ATerm (inputs
+     * replaced), each output's fingerprint, the final ATerm (real inputs), the
+     * .drv's fingerprint and, with inputs, the final ATerm with them replaced
+     * again: as long as the longest. Two measuring passes give the masked
+     * lengths both ways; the outputs add two copies of each path. */
     d.masked = 1;
+    d.replaced = 1;
     k.p = 0; k.n = 0; k.cap = 0xFFFF;
     aterm(&k, &d);
+    cap = k.n;
+    d.replaced = 0;
+    k.n = 0;
+    aterm(&k, &d);
+    if (k.n > cap) cap = k.n;
+    k.n = 0;
+    put_refs(&k, &d);
     need = (round4(7) + 8)                      /* "drvPath" */
-         + (round4(44 + nl + 4) + 8)            /* the .drv's path */
+         + (round4(dl) + 8)                     /* the .drv's path */
+         + (round4(1 + dl) + 8 + 8)             /* its context, "=<drv>" in a LIST */
+         + (16 + 72)                            /* its drv_table entry and modulo hash */
          + (4 + 12 * (d.no + 1));               /* the result set */
     for (i = 0; i < d.no; ++i) {
         pl = path_name(pn, deref(PAIR_VAL(&d, d.name)), deref(OUT_NAME(&d, i)));
         check_name(pn, pl);
-        if ((uint16_t)(k.n + 2 * (44 + pl)) < k.n) nomem();
-        k.n += 2 * (44 + pl);                   /* the path, in the outputs and the environment */
-        need += round4(44 + pl) + 8;
+        grow += 2 * (44 + pl);                  /* the path, in the outputs and the environment */
+        need += round4(44 + pl) + 8;            /* the path */
+        need += round4(2 + AUX16(deref(OUT_NAME(&d, i))) + dl) + 8 + 8;   /* its "!<o>!<drv>" */
     }
-    if (k.n < FP_MAX) k.n = FP_MAX;             /* k.n: the scratch buffer's size */
-    if (k.n > NURSERY_END - 16) nomem();        /* round4 is 16 bits */
-    need += round4(k.n) + 8;
+    cap += grow;
+    if (cap < FP_MAX) cap = FP_MAX;
+    if (cap < (uint32_t)k.n + 4 + 8 + 64 + 12 + nl + 4) cap = (uint32_t)k.n + 4 + 8 + 64 + 12 + nl + 4;
+    if (cap > NURSERY_END - 16) nomem();        /* round4 is 16 bits */
+    need += round4((uint16_t)cap) + 8;
     if (need > NURSERY_END) nomem();
     nursery_reserve((uint16_t)need);
 
     /* --- phase 2: serialise and hash. No bytecode; nothing moves. */
-    r = str_alloc(k.n);
+    r = str_alloc((uint16_t)cap);
     k.p = (uint8_t *)STRBYTES(r);
-    k.cap = k.n;
+    k.cap = (uint16_t)cap;
+    d.masked = 1;
+    d.replaced = 1;
     k.n = 0;
-    aterm(&k, &d);                              /* masked */
-    sha256_any(k.p, k.n, dig);                  /* hashDerivationModulo, with no inputs */
+    aterm(&k, &d);
+    sha256_any(k.p, k.n, dig);                  /* hashDerivationModulo */
     for (i = 0; i < d.no; ++i) {
         pl = path_name(pn, deref(PAIR_VAL(&d, d.name)), deref(OUT_NAME(&d, i)));
         s = deref(OUT_NAME(&d, i));
-        d.path[i] = store_path(k.p, "output:", 7, STRBYTES(s), AUX16(s), dig, pn, pl);
+        k.n = 0;
+        put(&k, "output:", 7);
+        put(&k, STRBYTES(s), AUX16(s));
+        d.path[i] = store_path(&k, dig, pn, pl);
     }
     d.masked = 0;
+    d.replaced = 0;
     k.n = 0;
     aterm(&k, &d);                              /* final */
     sha256_any(k.p, k.n, dig);
     s = deref(PAIR_VAL(&d, d.name));
     memcpy(pn, STRBYTES(s), nl);
     memcpy(pn + nl, ".drv", 4);
-    v = store_path(k.p, "text", 4, "", 0, dig, pn, nl + 4);
+    k.n = 0;
+    put(&k, "text", 4);
+    put_refs(&k, &d);                           /* "text:<every input .drv and source>" */
+    v = store_path(&k, dig, pn, nl + 4);
+    if (hasdrv) {                               /* the modulo hash for dependents: */
+        d.replaced = 1;                         /* final, but with the inputs replaced */
+        k.n = 0;
+        aterm(&k, &d);
+        sha256_any(k.p, k.n, dig);
+    }                                           /* (with none, the final ATerm's) */
+    nm = str_alloc(64);
+    hex64(dig, STRBYTES(nm));
+    e = list_alloc(3);
+    ELEMS(e)[0] = v;
+    ELEMS(e)[1] = nm;
+    ELEMS(e)[2] = drv_table;
+    drv_table = e;
+    /* The results' contexts: the .drv as a whole, and each output of it. */
+    STRCTX(v, dl) = ctx_one("=", 1, STRBYTES(v), dl);
+    for (i = 0; i < d.no; ++i) {
+        s = deref(OUT_NAME(&d, i));
+        pn[0] = '!';
+        memcpy(pn + 1, STRBYTES(s), AUX16(s));  /* an output name is at most 209 bytes */
+        pn[1 + AUX16(s)] = '!';
+        e = d.path[i];
+        STRCTX(e, AUX16(e)) = ctx_one(pn, 2 + AUX16(s), STRBYTES(v), dl);
+    }
     r = attrs_alloc(d.no + 1);
     nm = str_alloc(7);
     memcpy(STRBYTES(nm), "drvPath", 7);
@@ -1178,7 +1471,7 @@ int attrs_equal(obj_t *a, obj_t *b)
 static void concat_strings_sep_top(void)
 {
     uint16_t b = rsp, n, i, total = 0, nsep, w = 0, at = 0;
-    uint8_t coerce = 0;
+    uint8_t coerce = 0, hasctx = 0;
     obj_t *sep, *l, *sepo, *lo, *e, *r;
     force_two_orig(&sep, &l, &sepo, &lo);
     need(sep, T_STRING); need(l, T_LIST);
@@ -1195,10 +1488,17 @@ static void concat_strings_sep_top(void)
         force_top();
         e = deref(pop());
         if (e->tag != T_STRING) { coerce = 1; break; }
+        if (CTX(e)) hasctx = 1;
         if ((uint16_t)(total + AUX16(e)) < total) nomem();
         total += AUX16(e);
     }
-    if (coerce) {
+    if (!coerce && (hasctx || CTX(deref(rstack[b])))) {
+        /* A context to unite: the elements go on the stack, as coerced ones
+         * would, for ctx_join to see and the copy to read. */
+        at = vsp;
+        for (i = 0; i < n; ++i) push(RELEM(b + 1, i, n));
+        coerce = 2;
+    } else if (coerce) {
         total = 0;
         /* Some element coerces (a set via __toString / outPath), so the text
          * to copy is the COERCED value, not the element: keep every coerced
@@ -1222,6 +1522,14 @@ static void concat_strings_sep_top(void)
         if ((uint16_t)(total + nsep) < total) nomem();
         total += nsep;
     }
+    if (coerce) {                               /* the elements' contexts and the separator's */
+        push(rstack[b]);
+        e = ctx_join(at, n + 1);
+        --vsp;
+    } else {
+        e = 0;
+    }
+    push(e);                                    /* a root across the reserve */
     nursery_reserve_n(1, round4(total), 8);     /* sep, the list, any coerced strings: all rooted */
     sepo = rstack[b];
     lo = rstack[b + 1];
@@ -1229,11 +1537,12 @@ static void concat_strings_sep_top(void)
     r = str_alloc(total);
     for (i = 0; i < n; ++i) {
         if (i) { sep = deref(sepo); memcpy(STRBYTES(r) + w, STRBYTES(sep), nsep); w += nsep; }
-        if (coerce) e = deref(vstack[at + i]);
+        if (coerce) e = deref_follow(vstack[at + i]);
         else e = deref_follow(list_elem(lo, i, n));   /* not deref(lo): a long mature list re-copied per element overran the window ring */
         memcpy(STRBYTES(r) + w, STRBYTES(e), AUX16(e));
         w += AUX16(e);
     }
+    STRCTX(r, total) = pop();
     if (coerce) vsp = at;
     push(r);
 }
@@ -1246,7 +1555,13 @@ static void prim_basenameof(void)
     obj_t *s = view_top_text(), *r;       /* stays rooted until the reserve */
     uint16_t n = AUX16(s), last, start;
     const char *p = STRBYTES(s);
-    if (n == 0) { --vsp; push(str_alloc(0)); return; }
+    if (n == 0) {
+        r = str_alloc(0);
+        if (s->tag == T_STRING) STRCTX(r, 0) = CTX(s);
+        --vsp;
+        push(r);
+        return;
+    }
     last = n - 1;
     if (last && p[last] == '/') --last;        /* a trailing slash is ignored */
     start = last;
@@ -1259,19 +1574,33 @@ static void prim_basenameof(void)
     --vsp;
     r = str_alloc(last - start + 1);
     memcpy(STRBYTES(r), p + start, last - start + 1);
+    if (s->tag == T_STRING) STRCTX(r, last - start + 1) = CTX(s);   /* a string's context stays */
+    push(r);
+}
+
+/* The static STRING st, or with context x a young copy of it that has it. */
+static void push_text(obj_t *st, obj_t *x)
+{
+    obj_t *v, *r;
+    if (!x) { push(st); return; }
+    v = deref(st);
+    r = str_alloc(AUX16(v));                    /* a byte or two: inside the margin */
+    memcpy(STRBYTES(r), STRBYTES(v), AUX16(v));
+    STRCTX(r, AUX16(v)) = x;
     push(r);
 }
 
 static void prim_dirof(void)
 {
-    obj_t *s = view_top_text(), *r;       /* stays rooted until the reserve */
+    obj_t *s = view_top_text(), *r, *x;   /* stays rooted until the reserve */
     uint16_t n = AUX16(s), j;
     const char *p = STRBYTES(s);
-    if (n == 0) { --vsp; push(str_dot); return; }
+    x = s->tag == T_STRING ? CTX(s) : 0;  /* a string's context stays; a path has none */
+    if (n == 0) { --vsp; push_text(str_dot, x); return; }
     j = n - 1;
     for (;;) {
         if (p[j] == '/') break;
-        if (j == 0) { --vsp; push(str_dot); return; }
+        if (j == 0) { --vsp; push_text(str_dot, x); return; }
         --j;
     }
     /* A path's directory is a path; a string's is a string. A path always has
@@ -1279,13 +1608,18 @@ static void prim_dirof(void)
     if (j == 0) {
         --vsp;
         if (s->tag == T_PATH) { r = path_alloc(1); STRBYTES(r)[0] = '/'; push(r); }
-        else push(str_slash);
+        else push_text(str_slash, x);
         return;
     }
-    if (nursery_reserve_n(1, round4(j), 8)) { s = view_top_text(); p = STRBYTES(s); }
+    if (nursery_reserve_n(1, round4(j), 8)) {
+        s = view_top_text();
+        p = STRBYTES(s);
+        x = s->tag == T_STRING ? CTX(s) : 0;    /* the collection may have moved it */
+    }
     --vsp;
     r = s->tag == T_PATH ? path_alloc(j) : str_alloc(j);
     memcpy(STRBYTES(r), p, j);
+    if (x) STRCTX(r, j) = x;
     push(r);
 }
 
