@@ -58,7 +58,7 @@ Header (16 bytes)
   +4   chunk_count    u16
   +6   entry_chunk    u16  index of the chunk to evaluate (always 0 today)
   +8   total_size     u32  bytes in the file, header included
-  +12  reserved       u32  = 0
+  +12  kinds          u32  0, or the offset of the chunk kinds (below)
 
 Chunk table
   chunk_count x u32   byte offset of each chunk from the start of the file
@@ -73,6 +73,15 @@ Chunks, in index order
 The chunk table is what lets `THUNK idx` find its body without walking the file. A
 fixture must fit in one 64 KB bank; the VM refuses a `total_size` it cannot load
 rather than truncating.
+
+**Chunk kinds**, after the chunks and inside `total_size`: `chunk_count` bytes,
+one per chunk -- `0` code, `1` a primop's outermost lambda, `2` one of its inner
+lambdas, so a primop given some but not all of its arguments. `kinds` is 0 when
+every chunk is code. **The VM never reads them**: they are for the printer,
+which shows a function as Nix does, `<PRIMOP>` and `<PRIMOP-APP>` where a
+lambda is `<LAMBDA>` ("Deep force and the printer"). A primop is a synthesised
+lambda here, and its code is the same as a user's `a: b: builtins.add a b`,
+which Nix prints `<LAMBDA>`, so only the generator can say which is which.
 
 ### Constants
 
@@ -302,7 +311,10 @@ is what tvix's test runner does, and why the `.exp` files contain no `<CODE>`.
 The harness (`a2min --run-nbc`) then walks the object graph in the nursery and
 prints it the way `nix-instantiate --eval --strict` would: `[ 1 2 ]`, `{ a = 1;
 b = "x"; }` (names sorted, quoted when not identifiers), strings with Nix's
-escapes (`\"`, `\\`, `\n`, `\r`, `\t`, `\${`), `<LAMBDA>` for functions.
+escapes (`\"`, `\\`, `\n`, `\r`, `\t`, `\${`), and a function as `<LAMBDA>`, or as
+`<PRIMOP>` / `<PRIMOP-APP>` when its code is a chunk the kinds call a primop's:
+the harness maps a `LAMBDA`'s code pointer, an offset in the image, back to its
+chunk.
 
 Every gap in the numbering is deliberate room for the next slice (`$06`–`$0F`
 constants, `$15` string ops, `$2D`–`$2F` more attrs/list ops, `$3A`–`$3F`, `$44`+).

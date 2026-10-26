@@ -2,7 +2,7 @@
 //! disassembler. The reader exists for `nbc --dump` and for the round-trip test;
 //! the VM has its own loader in 65816 assembly.
 
-use crate::compiler::{Chunk, Const};
+use crate::compiler::{Chunk, Const, KIND_CODE, KIND_PRIMOP, KIND_PRIMOP_APP};
 use crate::opcodes::*;
 
 pub const MAGIC: &[u8; 3] = b"NBC";
@@ -18,9 +18,11 @@ pub fn write(chunks: &[Chunk]) -> Vec<u8> {
     out.push(VERSION);
     out.extend_from_slice(&(chunks.len() as u16).to_le_bytes());
     out.extend_from_slice(&0u16.to_le_bytes()); // entry chunk
-    let total: usize = HEADER_LEN + table_len + bodies.iter().map(Vec::len).sum::<usize>();
+    let body: usize = HEADER_LEN + table_len + bodies.iter().map(Vec::len).sum::<usize>();
+    let kinded = chunks.iter().any(|c| c.kind != KIND_CODE);
+    let total = if kinded { body + chunks.len() } else { body };
     out.extend_from_slice(&(total as u32).to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // reserved
+    out.extend_from_slice(&(if kinded { body as u32 } else { 0 }).to_le_bytes()); // kinds
     let mut off = HEADER_LEN + table_len;
     for b in &bodies {
         out.extend_from_slice(&(off as u32).to_le_bytes());
@@ -28,6 +30,9 @@ pub fn write(chunks: &[Chunk]) -> Vec<u8> {
     }
     for b in bodies {
         out.extend_from_slice(&b);
+    }
+    if kinded {
+        out.extend(chunks.iter().map(|c| c.kind));
     }
     debug_assert_eq!(out.len(), total);
     out
@@ -129,7 +134,9 @@ pub fn read(b: &[u8]) -> Result<Image, String> {
             }
         }
         let code = b.get(p..p + code_len).ok_or("truncated code")?.to_vec();
-        chunks.push(Chunk { consts, code });
+        let kinds = u32_at(b, 12)? as usize;
+        let kind = if kinds == 0 { KIND_CODE } else { *b.get(kinds + i).ok_or("truncated chunk kinds")? };
+        chunks.push(Chunk { consts, code, kind });
     }
     Ok(Image { entry, chunks })
 }
@@ -138,7 +145,8 @@ pub fn disassemble(img: &Image) -> String {
     let mut s = String::new();
     s.push_str(&format!("entry chunk {}\n", img.entry));
     for (ci, ch) in img.chunks.iter().enumerate() {
-        s.push_str(&format!("chunk {ci}: {} constants, {} bytes\n", ch.consts.len(), ch.code.len()));
+        let kind = match ch.kind { KIND_PRIMOP => ", a primop", KIND_PRIMOP_APP => ", a primop's inner lambda", _ => "" };
+        s.push_str(&format!("chunk {ci}: {} constants, {} bytes{kind}\n", ch.consts.len(), ch.code.len()));
         for (ki, k) in ch.consts.iter().enumerate() {
             match k {
                 Const::Int(v) => s.push_str(&format!("  k{ki} = INT {v}\n")),

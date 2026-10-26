@@ -144,10 +144,13 @@ planted rounding bug. On the way: **two ORCA/C optimizer miscompiles** of
 `scripts/hostlint/orcabugs.py`; and Nix's "invalid float" turned out to be
 glibc's underflow, tininess after rounding, so `2.2250738585072012e-308` is
 invalid though it rounds to the smallest normal (the generator compares
-exactly). 18 corpus tests and 10 fixtures; 16 mutations. **Next in C:** the
-tvix `eval-okay-value-display`, refused for its float until now, fails on the
-printer: a primop is a synthesised lambda, so a2min prints `<LAMBDA>` where
-Nix prints `<PRIMOP>` and `<PRIMOP-APP>`. Then dynamic attribute
+exactly). 18 corpus tests and 10 fixtures; 16 mutations. ~~A primop
+printed as a primop~~ **done**: tvix's `eval-okay-value-display`, refused
+for its float until then, printed one as `<LAMBDA>`. A primop is a
+synthesised lambda, whose code can be the same as a user's, so the
+generator marks a primop's chunks (BYTECODE.md "Chunk kinds", in the
+header's reserved word) and the printer shows `<PRIMOP>` and
+`<PRIMOP-APP>`; the VM never reads them. Then dynamic attribute
 names; `toJSON`/`fromJSON`/`toXML`/`fromTOML`; the primop tail (`mapAttrs`,
 `catAttrs`, `groupBy`, `genericClosure`, `functionArgs`, `splitVersion`,
 `compareVersions`, `parseDrvName`, `replaceStrings`, `sort`, regex `match`/
@@ -263,8 +266,9 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **379 / 485** (2026-10-26, after floats; 1 fail, 8
-error, 77 unsupported, 20 notyetpassing). Floats brought 18 corpus tests and
+The scoreboard reads **381 / 486** (2026-10-26, after the primop printer;
+0 fail, 8 error, 77 unsupported, 20 notyetpassing). It was 379 / 485 after
+floats (1 fail, 8 error, 77 unsupported, 20 notyetpassing). Floats brought 18 corpus tests and
 10 fixtures. The fail is tvix's `eval-okay-value-display`, refused for its
 `42.0` until now and wrong on the printer (`<LAMBDA>` for a primop). The new
 error is `eval-okay-types`, which got past its floats to a builtin the VM

@@ -580,6 +580,31 @@ std::string nix_string_bytes(uint32_t ptr) {
 // a set with two self-references is a walk of 2^64 calls: the depth limit
 // bounds its depth, not its breadth, and eval-okay-cycle-display-cppnix-2.13
 // held the scoreboard for its whole 600 s timeout -- 99% of a 10-minute run.
+// A function prints as Nix prints it: <PRIMOP> for a primop, <PRIMOP-APP> for
+// one given some of its arguments, <LAMBDA> otherwise. A primop is a lambda
+// here, so the generator says which chunks are a primop's (BYTECODE.md "Chunk
+// kinds"); this maps each such chunk's code offset in the image -- what a
+// LAMBDA's code pointer holds -- to its kind. Empty when the image has none.
+std::map<uint16_t, uint8_t> chunk_kind;
+
+void read_chunk_kinds(const std::vector<uint8_t> &nbc) {
+    auto u16 = [&](size_t o) { return o + 2 <= nbc.size() ? nbc[o] | (nbc[o + 1] << 8) : 0; };
+    auto u32 = [&](size_t o) { return static_cast<uint32_t>(u16(o)) | (static_cast<uint32_t>(u16(o + 2)) << 16); };
+    chunk_kind.clear();
+    const uint32_t kinds = u32(12);
+    const unsigned n = u16(4);
+    if (kinds == 0 || kinds + n > nbc.size()) return;
+    for (unsigned i = 0; i < n; ++i) {
+        if (nbc[kinds + i] == 0) continue;
+        size_t q = u32(16 + 4 * i);
+        const unsigned consts = u16(q);
+        q += 4;
+        for (unsigned k = 0; k < consts && q < nbc.size(); ++k)
+            q += (nbc[q] == 0x01 || nbc[q] == 0x0D) ? 9 : 3 + u16(q + 1);   // K_INT, K_FLOAT; K_STRING, K_PATH
+        chunk_kind[static_cast<uint16_t>(q)] = nbc[kinds + i];
+    }
+}
+
 std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &seen);
 std::string fmt_value(uint32_t ptr, int depth) {
     std::unordered_set<uint32_t> seen;
@@ -630,7 +655,11 @@ std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &see
             return s + " }";
         }
         case TAG_THUNK: return "<CODE>";
-        case TAG_LAMBDA: return "<LAMBDA>";
+        case TAG_LAMBDA: {
+            const auto k = chunk_kind.find(static_cast<uint16_t>(mem32(ptr, 4)));   // CL_CODE
+            if (k == chunk_kind.end()) return "<LAMBDA>";
+            return k->second == 1 ? "<PRIMOP>" : "<PRIMOP-APP>";
+        }
         case TAG_INDIRECT: return fmt_value(mem32(ptr, 4), depth + 1, seen);
         case TAG_BLACKHOLE: return "<CYCLE>";
         default: { char b[16]; std::snprintf(b, sizeof b, "<?%02X>", tag); return b; }
@@ -688,6 +717,7 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
             return 2;
         }
         for (size_t i = 0; i < nbc.size(); ++i) ram[NBC_BASE + i] = nbc[i];
+        read_chunk_kinds(nbc);
     }
     bring_up_card();
     const bool halted = run_to_halt();

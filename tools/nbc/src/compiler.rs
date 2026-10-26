@@ -24,7 +24,14 @@ pub enum Const {
 pub struct Chunk {
     pub consts: Vec<Const>,
     pub code: Vec<u8>,
+    /// For the printer only (BYTECODE.md "Chunk kinds"): KIND_CODE, or a
+    /// primop's lambda, outermost (KIND_PRIMOP) or inner (KIND_PRIMOP_APP).
+    pub kind: u8,
 }
+
+pub const KIND_CODE: u8 = 0;
+pub const KIND_PRIMOP: u8 = 1;
+pub const KIND_PRIMOP_APP: u8 = 2;
 
 /// One environment object at runtime: a let's bindings, a lambda's parameter,
 /// or a `with` (no names; identifiers fall through to it at runtime).
@@ -250,7 +257,7 @@ impl Compiler {
                 // One lambda per argument, nested; the innermost pushes every
                 // argument outermost-first and runs the primop.
                 let mut inner = self.chunks.len();
-                self.chunks.push(Chunk::default());
+                self.chunks.push(Chunk { kind: KIND_PRIMOP_APP, ..Chunk::default() });
                 for d in (0..arity).rev() {
                     self.emit(inner, OP_ENV_GET);
                     self.emit_u16(inner, d as u16);
@@ -261,12 +268,13 @@ impl Compiler {
                 self.emit_return(inner);
                 for _ in 1..arity {
                     let outer = self.chunks.len();
-                    self.chunks.push(Chunk::default());
+                    self.chunks.push(Chunk { kind: KIND_PRIMOP_APP, ..Chunk::default() });
                     self.emit(outer, OP_LAMBDA);
                     self.emit_u16(outer, inner as u16);
                     self.emit_return(outer);
                     inner = outer;
                 }
+                self.chunks[inner].kind = KIND_PRIMOP;   // the one a name gives
                 self.builtins.insert(name.to_string(), inner);
                 inner
             }
@@ -757,6 +765,20 @@ mod tests {
         );
         assert_eq!(ch[1].code, vec![OP_CONST, 0, 0, OP_CONST, 1, 0, OP_ADD, OP_RETURN]);
         assert_eq!(ch[2].code, vec![OP_ENV_GET, 0, 0, 4, 0, OP_FORCE, OP_RETURN]);
+    }
+
+    #[test]
+    fn a_primops_lambdas_say_so_for_the_printer() {
+        // foldl' has arity 3: its name gives the outermost lambda, <PRIMOP>;
+        // the two it returns are <PRIMOP-APP>. A user's lambda that calls a
+        // primop is code, though its inner chunk is the same bytecode.
+        let ch = c("[ builtins.foldl' (a: b: builtins.add a b) ]");
+        let kinds: Vec<u8> = ch.iter().map(|k| k.kind).collect();
+        assert_eq!(kinds.iter().filter(|&&k| k == KIND_PRIMOP).count(), 2, "foldl' and add: {kinds:?}");
+        assert_eq!(kinds.iter().filter(|&&k| k == KIND_PRIMOP_APP).count(), 3, "two of foldl's, one of add's: {kinds:?}");
+        assert_eq!(ch[0].kind, KIND_CODE);
+        let user = ch.iter().filter(|k| k.kind == KIND_CODE).count();
+        assert_eq!(user, ch.len() - 5, "the program and the user's two lambdas are code: {kinds:?}");
     }
 
     #[test]
