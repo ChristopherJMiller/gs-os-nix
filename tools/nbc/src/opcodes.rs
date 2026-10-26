@@ -130,6 +130,15 @@ pub const GLOBALS: &[&str] = &[
     "derivation", "derivationStrict",
 ];
 
+/// Builtins that are values rather than functions: a string constant each,
+/// emitted where `builtins.NAME` is and included in `builtins` as a set.
+/// `currentSystem` is what an IIgs reports (DECISIONS.md D23).
+pub const BUILTIN_VALUES: &[(&str, &str)] = &[("currentSystem", "w65-gsos")];
+
+pub fn builtin_value(name: &str) -> Option<&'static str> {
+    BUILTIN_VALUES.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
+}
+
 pub fn primop(name: &str) -> Option<(u8, u8)> {
     PRIMOPS.iter().find(|(n, _, _)| *n == name).map(|(_, id, arity)| (*id, *arity))
 }

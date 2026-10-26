@@ -593,3 +593,32 @@ immediately after; the guard is three lines and goes when context lands.
 derivation now reads the first's output as an input, and the one context it
 cannot honour -- a `drvPath` in a string, which needs the `.drv`'s closure --
 is `E_UNSUP` instead.
+
+## D23 — `builtins.currentSystem` is `"w65-gsos"`
+
+**Chosen on the trajectory Chris set (2026-10-26)** -- asked what fits it best,
+rather than given a value: the aim is a nixpkgs that supports this machine as
+a platform, and a nixpkgs hosted for it. So the IIgs reports what it is. Easy
+to revisit (below).
+
+- **`w65`** is GNU `config.sub`'s CPU name for WDC's 65xx line (it maps `w65`
+  to vendor `wdc`), so a nixpkgs `hostPlatform.config` of `w65-unknown-gsos`
+  is half-understood by GNU tools already. nixpkgs has no 65xx CPU today;
+  adding one to `lib/systems/parse.nix` is five lines, like its `msp430` and
+  `avr` entries, and **`gsos`** a kernel, like its `ghcjs` or `mmixware`.
+- **Honest semantics:** a derivation with `system = builtins.currentSystem`
+  asks for a builder of the current system. Reporting `x86_64-linux` would
+  make every derivation the IIgs instantiates claim to need a Linux machine
+  to build it.
+- **Host parity is kept:** `nix-instantiate --option system w65-gsos` makes
+  the host report the same value, so fixtures that use it are still the
+  host's own answers (D7). The corpus tests that wait on `currentSystem` use
+  it only as a derivation's `system`, never print it.
+
+**Rejected:** `x86_64-linux` (parity with no flag, at the price of every
+`.drv` lying about its builder); a new CPU name such as `w65816` (no tool
+knows it; `w65` is already GNU's). Where it lives: the generator emits it as
+a string constant, because a primop is a curried lambda and this is a value;
+at L5 the on-target compiler does the same. It is one constant
+(`tools/nbc/src/opcodes.rs BUILTIN_VALUES`) and a regenerated fixture to
+change.

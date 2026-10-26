@@ -218,9 +218,11 @@ and different types compare unequal.
 synthesises once per program: `ENV_GET` for each argument (outermost first), `PRIM
 id`, `RETURN`, nested one lambda per argument. So a primop **is** a function value:
 it curries, partially applies, and is passed lazily-thunked arguments like any
-other — and the VM needs no primop object type. `builtins.NAME` for a `NAME` not
-in this table is refused by the generator, by name, so the scoreboard shows which
-primop would move the most tests.
+other — and the VM needs no primop object type. A builtin that is a value, not a
+function, is a constant instead (`opcodes.rs BUILTIN_VALUES`: `currentSystem` is
+the string `"w65-gsos"`, DECISIONS.md D23), in `builtins` as a set too.
+`builtins.NAME` for a `NAME` in neither table is refused by the generator, by
+name, so the scoreboard shows which primop would move the most tests.
 
 | Id | Name | Arity | Semantics (this slice) |
 |---|---|---:|---|

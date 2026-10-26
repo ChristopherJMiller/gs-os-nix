@@ -53,10 +53,11 @@ nothing in the vendored corpus** -- the "unsupported" histogram is empty, so
 every construct and builtin the corpus uses compiles and runs on the VM.
 Anything that truly needs GS/OS is refused at run time by name and documented,
 not counted against completion. Decisions taken for it: **floats are
-soft-float in C** (bit-identical to the host, no SANE, no ROM); **
-`builtins.currentSystem` is `"w65-gsos"`** (GNU `config.sub`'s CPU name for
-WDC's 65816 line, and the kernel a nixpkgs port would add; fixtures from
-`nix-instantiate --option system w65-gsos`; D23 when it lands).
+soft-float in C** (Chris's choice: bit-identical to the host, no SANE, no
+ROM); **`builtins.currentSystem` is `"w65-gsos"`** (chosen on the trajectory
+Chris set, a nixpkgs for this platform: GNU `config.sub`'s CPU name for WDC's
+65816 line and the kernel a nixpkgs port would add; fixtures from
+`nix-instantiate --option system w65-gsos`; DECISIONS.md D23).
 
 Full first-refusal histogram at the start (2026-10-26, corpus incl.
 notyetpassing): float literal 25, dynamic attribute name 13, `toJSON` 5,
@@ -124,7 +125,9 @@ context~~ **done** (DERIVATION.md "A .drv in a string": the closure from
 builtins~~ **done** (DERIVATION.md "Reading and rewriting a context": six
 builtins, primops `$32`-`$37`, and no context in a name where Nix forbids
 one); ~~`builtins.toFile`~~ **done** (DERIVATION.md "builtins.toFile": the
-text store path, and closures that follow its references); `currentSystem`. **Bank 4 is at 42.9 KB of 64:** the
+text store path, and closures that follow its references);
+~~`currentSystem`~~ **done** (D23: `"w65-gsos"`, a constant the generator
+emits). **Phase B is complete.** **Bank 4 is at 42.9 KB of 64:** the
 "prims" segment will need a second segment name before long (omf2bin places
 it in bank 6, skipping the window ring).
 
@@ -174,9 +177,10 @@ the fixture (D7), a regression that provably fails (D14), the gates one at a tim
    entry in `drv_table` so a closure that reaches it follows those references.
    One fixture (11 host answers, read-write), five eval-fail fixtures, five
    mutations.
-5. **`builtins.currentSystem`: a decision for Chris.** What does an IIgs
-   report? It goes into every `.drv` that uses it, so it decides whether those
-   match a host's. Two corpus tests (`delayed-with*`) wait on it.
+5. ~~**`builtins.currentSystem`**~~ **done** (2026-10-26, D23): `"w65-gsos"`,
+   what an IIgs is; fixtures generated with `--option system w65-gsos`, so the
+   host reports the same. The corpus tests that wait on it use it only as a
+   derivation's `system`.
 
 **L7, the store (M4 proper):** GS/OS file I/O, so the `.drv` is written to disk
 and `readFile`/`pathExists`/`readDir` work; a path in a derivation copied into
@@ -240,7 +244,10 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **342 / 468** (2026-10-26, after the context builtins; 0
+The scoreboard reads **351 / 475** (2026-10-26, after Phase B; 0 fail, 7
+error, 97 unsupported, 20 notyetpassing -- `currentSystem` passes both
+`delayed-with` tests, one tvix itself does not). It was 342 / 468 after the
+context builtins (0
 fail, 7 error, 98 unsupported, 21 notyetpassing; three corpus tests pass with
 them). It was 324 / 453 after integer overflow (0
 fail, 7 error, 101 unsupported, 21 notyetpassing). It was 316 / 445 after

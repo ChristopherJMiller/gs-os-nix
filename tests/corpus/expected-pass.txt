@@ -55,6 +55,7 @@ fixtures/eval-okay-carry-chain
 fixtures/eval-okay-closure-capture
 fixtures/eval-okay-coerce-sets
 fixtures/eval-okay-context-builtins
+fixtures/eval-okay-current-system
 fixtures/eval-okay-curry
 fixtures/eval-okay-deep-equality
 fixtures/eval-okay-deepseq-cycle
@@ -124,6 +125,7 @@ tvix/nix_tests/eval-okay-concat
 tvix/nix_tests/eval-okay-concatmap
 tvix/nix_tests/eval-okay-concatstringssep
 tvix/nix_tests/eval-okay-deepseq
+tvix/nix_tests/eval-okay-delayed-with-inherit
 tvix/nix_tests/eval-okay-elem
 tvix/nix_tests/eval-okay-empty-args
 tvix/nix_tests/eval-okay-eq
@@ -158,6 +160,7 @@ tvix/nix_tests/eval-okay-strings-as-attrs-names
 tvix/nix_tests/eval-okay-substring
 tvix/nix_tests/eval-okay-tryeval
 tvix/nix_tests/eval-okay-with
+tvix/nix_tests/notyetpassing/eval-okay-delayed-with
 tvix/nix_tests/notyetpassing/eval-okay-eq-derivations
 tvix/tvix_tests/eval-okay-abort-throw-can-be-caught
 tvix/tvix_tests/eval-okay-access-strange-identifier

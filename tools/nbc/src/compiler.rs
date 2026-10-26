@@ -216,7 +216,8 @@ impl Compiler {
     /// how the corpus uses it. Every primop is eagerly built, because the set is
     /// a value: something may iterate it with `attrNames`.
     fn emit_builtins_set(&mut self, pos: Pos, chunk: usize) -> Result<(), Unsupported> {
-        let mut names: Vec<&'static str> = PRIMOPS.iter().map(|(n, _, _)| *n).collect();
+        let mut names: Vec<&'static str> = PRIMOPS.iter().map(|(n, _, _)| *n)
+            .chain(BUILTIN_VALUES.iter().map(|(n, _)| *n)).collect();
         names.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
         for name in &names {
             self.emit_const(chunk, Const::Str((*name).to_string()))?;
@@ -234,6 +235,9 @@ impl Compiler {
     fn emit_builtin(&mut self, name: &str, pos: Pos, chunk: usize) -> Result<(), Unsupported> {
         if name == "derivation" {
             return self.emit_derivation(pos, chunk);
+        }
+        if let Some(v) = builtin_value(name) {
+            return self.emit_const(chunk, Const::Str(v.to_string()));
         }
         let Some((id, arity)) = primop(name) else {
             return unsupported(pos, format!("builtins.{name}"));
@@ -883,6 +887,8 @@ mod tests {
         // shadowed builtins is an ordinary variable; unknown primops are refused by name
         assert!(c("let builtins = { length = 1; }; in builtins.length").iter().all(|k| !k.code.contains(&OP_PRIM)));
         assert_eq!(compile(&parse("builtins.nope").unwrap()).unwrap_err().what, "builtins.nope");
+        // A value builtin is a constant, not a primop lambda (D23).
+        assert!(c("builtins.currentSystem").iter().all(|k| !k.code.contains(&OP_LAMBDA)));
     }
 
     #[test]
