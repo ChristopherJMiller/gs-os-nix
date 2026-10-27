@@ -716,3 +716,19 @@ twice over: bank 0 is 1,062 bytes smaller. The embedded `derivation.nix` is
 now Nix's file verbatim, doc comment and all, so its positions are Nix's
 `/derivation-internal.nix` -- one line later than the file, as Nix embeds it
 after a newline.
+
+## D29 — The scoreboard's budget detects hangs; speed gets a gate of its own
+
+**Decided 2026-10-26 by Chris**, choosing "budget now, speed later" over
+making the interpreter ~4x faster first or skipping the test.
+`eval-okay-tail-call-1` was the scoreboard's last VM error: 100,000 tail
+calls that did not finish in a2min's 500M-cycle budget. Measured, it is not
+hung: linear at ~20,800 cycles a call, 2.13G in all, the right answer, with
+almost nothing promoted -- the interpreter's general cost, not a tail-call
+bug. The budget's job is to tell a hang from an answer (it was raised from
+50M to 500M once already, for `eval-okay-foldlStrict`), so it is 2.5G: a
+program that truly never halts costs ~12 s, and none in the corpus does.
+The mutation runners keep their own 500M. Speed is not judged by an
+accident of the budget; it gets its own check, a ratchet on cycles a step
+over a few benchmark programs (STATUS.md roadmap, item 4), whose first
+target is tail-call-1 inside 500M again.

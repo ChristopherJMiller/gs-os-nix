@@ -40,6 +40,12 @@ void   hex_of(const uint8_t *dig, uint16_t n, char *out);  /* n bytes as 2n lowe
 obj_t *ctx_join(uint16_t at, uint16_t n);           /* the union of vstack[at..at+n)'s contexts; may collect */
 void   str_sha256(obj_t *so, uint8_t *dig);         /* of a forced STRING original, on the card if it can */
 
+/* --- hashes.c ---------------------------------------------------------------------------- */
+#define HS_MD5      1                       /* 16-byte digest */
+#define HS_SHA1     2                       /* 20 */
+#define HS_SHA512   3                       /* 64 */
+void   str_hash(obj_t *so, uint8_t algo, uint8_t *dig);   /* of a forced STRING original, on the CPU */
+
 /* Building contexts: an element STRING of [pre] ["!<o>!"] s[off..off+n)
  * (n = CTX_REST: to the end), and the sorted set of them on the stack. */
 #define CTX_REST 0xFFFF

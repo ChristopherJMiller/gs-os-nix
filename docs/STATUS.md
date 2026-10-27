@@ -8,9 +8,9 @@
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
 | **L2** | Card in a machine: register map, verilate, a2bus device, patched mame | **done — M2 achieved** (gated by the ROM-free harness; MAME glue written, needs a romset) |
 | **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, collector, CPU nursery | **done** — card side (memory engine, `DATA`/`TAG`, `ALLOC`/`RESERVE`, `FOLLOW`, `HASH_STREAM`, `LOOKUP`, `ALU64`, `MARK`/`COMPACT`) and the CPU-side nursery (`target/heap/nursery.s`: bump alloc, Cheney in RAM, one-burst promotion). D6 measured: `just bench-nursery` |
-| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — the bytecode compiler is complete (2026-10-26): `nbc` refuses nothing in the vendored corpus, tvix's own notyetpassing tests included. Scoreboard 601 / 624: 0 fail, 0 unsupported, 3 errors (the VM's), 9 that need GS/OS (refused at run time by name, D26). What is left is the VM's: the roadmap below.** The history: `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
+| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — the bytecode compiler is complete (2026-10-26): `nbc` refuses nothing in the vendored corpus, tvix's own notyetpassing tests included. Scoreboard 607 / 627: 0 fail, 0 error, 0 unsupported; the 9 left need GS/OS (refused at run time by name, D26), which is the roadmap below.** The history: `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
-| **L6** | SHA-256 of strings, ATerm, `derivation` primop, string context; `NARHASH` with file I/O (D21) | **in progress** — `builtins.hashString "sha256"` on the card (`HASH_PUSH` for a young string, `HASH_STREAM` for a mature one, `sha256.c` without a card), matching Nix on FIPS padding edges. **`derivation`** ([DERIVATION.md](DERIVATION.md)): input-addressed, byte-identical to the host -- ATerm, `hashDerivationModulo`, output and `.drv` paths from the card's `HASH_FINAL` `P3`; `derivation.nix` embedded verbatim. **String context** carries inputs through `+`, `"${}"`, `concatStringsSep`, `toString`, `substring`, `baseNameOf`, `dirOf`, so a chain of derivations matches the host. **Fixed-output derivations** (`outputHash`, every `fetchurl`): the path from the declared hash (base16, nix32, Base64, SRI; md5, sha1, sha256, sha512; flat and NAR), and the modulo hash a dependent sees, as the host computes them. `drvPath` (`=`) context, the context builtins, `toFile` and `currentSystem` too (Phase B of the roadmap below, complete 2026-10-26). Next for L6: `NARHASH`, which needs file I/O (L7) |
+| **L6** | SHA-256 of strings, ATerm, `derivation` primop, string context; `NARHASH` with file I/O (D21) | **in progress** — `builtins.hashString "sha256"` on the card (`HASH_PUSH` for a young string, `HASH_STREAM` for a mature one, `sha256.c` without a card), matching Nix on FIPS padding edges; `md5`, `sha1` and `sha512` on the CPU (`hashes.c`). **`derivation`** ([DERIVATION.md](DERIVATION.md)): input-addressed, byte-identical to the host -- ATerm, `hashDerivationModulo`, output and `.drv` paths from the card's `HASH_FINAL` `P3`; `derivation.nix` embedded verbatim. **String context** carries inputs through `+`, `"${}"`, `concatStringsSep`, `toString`, `substring`, `baseNameOf`, `dirOf`, so a chain of derivations matches the host. **Fixed-output derivations** (`outputHash`, every `fetchurl`): the path from the declared hash (base16, nix32, Base64, SRI; md5, sha1, sha256, sha512; flat and NAR), and the modulo hash a dependent sees, as the host computes them. `drvPath` (`=`) context, the context builtins, `toFile` and `currentSystem` too (Phase B of the roadmap below, complete 2026-10-26). Next for L6: `NARHASH`, which needs file I/O (L7) |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | not started |
 
 ## Milestones
@@ -50,17 +50,28 @@ implementation from a tribute.
 Agreed with Chris once the compiler was complete. Each item goes by the
 vm-change skill and is committed when its gates pass. **Stop condition: the
 scoreboard's `error` and `need GS/OS` buckets are empty** -- every corpus test
-passes, or is one of tvix's own notyetpassing.
+passes, or is one of tvix's own notyetpassing. `error` is empty since
+2026-10-26 (items 1 and 2); item 4 runs past the stop.
 
-1. **`hashString` with `md5`, `sha1` and `sha512`** (2 corpus tests, `E_UNSUP`
-   today), on the CPU, held to the host on the standards' vectors and every
-   padding edge as SHA-256 was. Their constant tables were said to need bank
-   0, which is full. They do not: a string literal stays with its code
-   (checked in `cvm.bin`), which is how `regex.c` and `toml.c` keep their
-   tables in load segments. A card verb for them only if one measures (D5).
-2. **`eval-okay-tail-call-1`** (1 corpus test): 100,000 tail calls that do
-   not halt in 2 billion cycles. Measure first (`A2MIN_PROFILE`): whether it
-   is linear at all, and where the cycles go.
+1. ~~**`hashString` with `md5`, `sha1` and `sha512`**~~ **done** (`hashes.c`,
+   segment `hashes`, 6.6 KB in bank 8; bank 0 +1, its `~GLOBALS` byte): RFC
+   1321 and FIPS 180-4 on the CPU, every table a string literal read through
+   a cast -- a literal stays with its code, so bank 0 was never needed -- and
+   a promoted string read a block at a time across the bus, so any length
+   is hashed. Checked natively against Python's `hashlib` on 1,306 messages
+   (every length to 1,300, and 65,535), then on the VM against the host: 84
+   digests at each padding edge, bytes >= 0x80, a 9,000-byte message whose
+   bit count needs three bytes, context dropped. Measured, cycles a byte:
+   md5 1,572, sha1 4,205, sha512 7,301 (57% of it ORCA/C's 64-bit shifts;
+   rotating 16-bit halves would be the lever), sha256 on the CPU 10,399.
+   2 corpus tests, 4 fixtures, 9 mutations.
+2. ~~**`eval-okay-tail-call-1`**~~ **done, by the budget** (D29): not hung but
+   slow -- measured linear, ~20,800 cycles a call (2.13G for 100,000; 12.7
+   minutes on a 2.8 MHz IIgs), and almost nothing promoted. The profile is
+   the interpreter's general cost, not tail calls: 26 `deref` calls an
+   iteration (~5,100 cycles, mostly ORCA/C's call overhead), the dispatch
+   loop (~4,800), 5.6 views of promoted constants and the lambda. a2min's
+   hang budget is 2.5G now, Chris's call; speed is item 4.
 3. **The GS/OS file builtins in a2min** (the 9 `need GS/OS` tests:
    `pathExists` 3, `readFile` 2, `getEnv`, `hashFile`, `readDir`,
    `readFileType`) -- L7's first step, in simulation. The VM calls GS/OS as an
@@ -72,6 +83,12 @@ passes, or is one of tvix's own notyetpassing.
    `linked`); what `getEnv` reads (tvix's runner sets `TEST_VAR`); and
    `pathExists "/dev/null/."`. `hashFile` asks for all four algorithms, so it
    comes after item 1.
+4. **Interpreter speed, with its own gate** (D29): a benchmark check over a
+   few programs -- tail-call-1's loop, foldlStrict, an attribute-heavy one
+   -- holding cycles a step to a ratchet, as the scoreboard holds passes.
+   Then the measured levers, each priced in bank-0 bytes: an inline fast
+   path for a young `deref` and an already-forced `FORCE`; young copies of
+   promoted constants. The target: tail-call-1 inside 500M again.
 
 ## Roadmap (2026-10-26): to a complete bytecode compiler
 
@@ -356,7 +373,7 @@ a2min.
   other, were decided -- soft-float in C -- and are done: [FLOAT.md](FLOAT.md).)
 - **Card-side `MARK`** only when the promoted-bytes counter shows the 512 KB
   ceiling binding on a real program; nothing has yet.
-- **Bank 0** (37,152 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
+- **Bank 0** (37,153 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
   far pointers are the big lever left. (The md5/sha1/sha512 tables do not need
   it: string literals, roadmap item 1.) Watch for ORCA/C library routines: a
   struct copy links `~MOVE`, a variable left shift `~SHIFTLEFT`, a 32-bit
@@ -395,7 +412,8 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-**Bank 0: 37,152 of 40,960 bytes** (2026-10-26, after `unsafeGetAttrPos`,
+**Bank 0: 37,153 of 40,960 bytes** (2026-10-26, after md5, sha1 and sha512,
++1, the `~GLOBALS` byte of `hashes.c`; 37,152 after `unsafeGetAttrPos`,
 -1,062: `//` moved into `prims.c` to carry the position column, and a
 32-bit multiply that brought `~UMUL4` back into bank 0 was rewritten as
 additions; 38,214 after `fromTOML`, +1, the
@@ -423,9 +441,10 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **601 / 624** (2026-10-26, after `unsafeGetAttrPos`;
-0 fail, 3 error, 9 need GS/OS, 0 unsupported, 11 notyetpassing -- tvix's
-own 3 getattrpos tests pass now). It was 592 / 618 after `__curPos` and
+The scoreboard reads **607 / 627** (2026-10-26, after md5/sha1/sha512 and
+the 2.5G budget; **0 fail, 0 error**, 9 need GS/OS, 0 unsupported, 11
+notyetpassing). It was 601 / 624 after `unsafeGetAttrPos` (3 error; tvix's
+own 3 getattrpos tests passed). It was 592 / 618 after `__curPos` and
 path interpolation (tvix's own curpos and path-antiquotation passed). It was
 586 / 614 after `fromTOML`, the first with **0 unsupported**. It was 564 / 593
 after search paths and `import` as a value (1 unsupported; one of tvix's own
@@ -465,7 +484,8 @@ after `derivation` and 283 / 413 after paths, string coercion and `hashString`. 
 of the errors are `hashString` with md5, sha1 or sha512, which the card does not
 compute (`E_UNSUP`, valid Nix the VM declines): CPU versions are easy, but their
 constant tables would have to live in bank 0 (sha512's alone is 640 bytes), so
-they wait for bank 0 to be relieved.
+they wait for bank 0 to be relieved. (They did not: string literals stay
+with their code, and all three are done, 2026-10-26.)
 Neither is on M4's path. The scoreboard takes about **12 seconds**: `scoreboard.py`
 runs tests in parallel and prints the errors and the slowest tests every time.
 It was 10 minutes, and 601 s of that was one test,

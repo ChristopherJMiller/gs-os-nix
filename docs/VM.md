@@ -185,9 +185,11 @@ target/vm/c/
   match.c     builtins.match and builtins.split on it -- segment "regex"
   toml.c      toml11's TOML 1.0 parser, ported, on bank 7; no VM in it
               (TOML.md) -- segment "toml", which landed in bank 8
+  hashes.c    hashString's md5, sha1 and sha512 on the CPU, their tables
+              string literals -- segment "hashes", in bank 8 after toml
 ```
 
-`float`, `json` and `regex` are in bank 6, and `toml` in bank 8: `prims` fills
+`float`, `json` and `regex` are in bank 6, and `toml` and `hashes` in bank 8: `prims` fills
 bank 4, and omf2bin skips bank 5, the window ring, and bank 7, the regex
 engine's (and fromTOML's).
 

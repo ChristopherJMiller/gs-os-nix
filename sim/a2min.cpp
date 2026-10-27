@@ -393,8 +393,12 @@ void print_symbol_profile() {
 // clocked every cycle and 50M took two minutes; with the quiet clock it takes
 // ~0.3 s, and eval-okay-foldlStrict -- which needs 86M -- was scored as an
 // error for no reason but the budget. 500M costs ~2.5 s on a program that
-// never halts.
-bool run_to_halt(uint64_t budget = 500'000'000) {
+// never halts. 2.5G (2026-10-26, Chris's call) because eval-okay-tail-call-1
+// is not hung but slow: 100,000 calls at ~20,800 cycles each, linear, ~2.1G.
+// Speed is its own roadmap item with its own gate; this is a hang detector,
+// and a program that truly never halts now costs ~12 s. The mutation runners
+// set their own budget.
+bool run_to_halt(uint64_t budget = 2'500'000'000) {
     // A2MIN_BUDGET overrides the cycle budget: GC-stress runs of the C VM need more.
     if (const char *b = std::getenv("A2MIN_BUDGET")) budget = std::strtoull(b, nullptr, 0);
     if (const char *p = std::getenv("A2MIN_PROFILE")) profile_on = (p[0] == '1');

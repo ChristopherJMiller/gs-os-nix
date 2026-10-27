@@ -327,7 +327,7 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$2D` | `baseNameOf` | 1 | last path component of a `STRING` |
 | `$2E` | `dirOf` | 1 | everything before it; `"."` if none |
 | `$2F` | `tryEval` | 1 | see "Catch frames" |
-| `$30` | `hashString` | 2 | `type s`: `"sha256"` only, the card's `HASH_PUSH`+`HASH_FINAL` (a CPU SHA-256 without one); lowercase hex. `md5`, `sha1`, `sha512` are `E_UNSUP`; anything else `E_TYPE` |
+| `$30` | `hashString` | 2 | `type s`: `"sha256"` on the card's `HASH_PUSH`+`HASH_FINAL` (a CPU SHA-256 without one); `"md5"`, `"sha1"`, `"sha512"` on the CPU (`hashes.c`, a promoted string read a block at a time across the bus); lowercase hex, no context. Anything else `E_TYPE`, as Nix's unknown algorithm (`blake3` needs an experimental feature) |
 | `$31` | `derivationStrict` | 1 | `attrs` → `{ drvPath; <output> ...; }`: [DERIVATION.md](DERIVATION.md). `derivation` itself is Nix code the generator embeds around it |
 | `$32` | `hasContext` | 1 | `s` must be a string; `true` when its context is not empty |
 | `$33` | `unsafeDiscardStringContext` | 1 | `s` coerced (`"${}"`'s rules), without its context |

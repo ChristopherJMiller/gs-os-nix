@@ -197,28 +197,31 @@ void str_sha256(obj_t *so, uint8_t *dig)
     }
 }
 
-/* hashString type s -> lowercase hex (BYTECODE.md). Only "sha256" -- it is
- * what the card hashes, and what store paths need; md5, sha1 and sha512 are
- * E_UNSUP until something needs them, anything else E_TYPE. Nix forces the
- * type first, then the string, which must BE a string (forceString, not a
- * coercion). */
+/* hashString type s -> lowercase hex (BYTECODE.md): "sha256" on the card
+ * (sha256.c without one), "md5", "sha1" and "sha512" on the CPU (hashes.c),
+ * anything else E_TYPE -- Nix's other algorithms need experimental features.
+ * Nix forces the type first, then the string, which must BE a string
+ * (forceString, not a coercion). */
 void prim_hashstring(void)
 {
-    uint8_t dig[32];
+    uint8_t dig[64], algo = 0;
+    uint16_t n;
     obj_t *t, *r;
     force_slot(2);                              /* the type, first, as Nix forces it */
     t = deref(vstack[vsp - 2]);
     need(t, T_STRING);
     if (CTX(t)) type_err();                     /* forceStringNoCtx */
-    if (!is_lit(t, "sha256", 6)) {
-        if (is_lit(t, "md5", 3) || is_lit(t, "sha1", 4) || is_lit(t, "sha512", 6)) err_exit(E_UNSUP);
-        type_err();
-    }
+    if (is_lit(t, "md5", 3)) algo = HS_MD5;
+    else if (is_lit(t, "sha1", 4)) algo = HS_SHA1;
+    else if (is_lit(t, "sha512", 6)) algo = HS_SHA512;
+    else if (!is_lit(t, "sha256", 6)) type_err();
     force_top();
-    str_sha256(peek(), dig);
+    if (algo) str_hash(peek(), algo, dig);
+    else str_sha256(peek(), dig);
+    n = algo == HS_MD5 ? 16 : algo == HS_SHA1 ? 20 : algo == HS_SHA512 ? 64 : 32;
     vsp -= 2;
-    r = str_alloc(64);                          /* 72 bytes: inside the boundary's margin */
-    hex_of(dig, 32, STRBYTES(r));
+    r = str_alloc(n + n);                       /* at most 136 bytes: inside the boundary's margin */
+    hex_of(dig, n, STRBYTES(r));
     push(r);
 }
 

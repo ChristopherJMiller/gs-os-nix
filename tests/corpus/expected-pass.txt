@@ -114,6 +114,8 @@ fixtures/eval-fail-functionargs-int
 fixtures/eval-fail-groupby-context
 fixtures/eval-fail-groupby-function
 fixtures/eval-fail-groupby-name
+fixtures/eval-fail-hashstring-algo-case
+fixtures/eval-fail-hashstring-md5-int
 fixtures/eval-fail-int-overflow-add
 fixtures/eval-fail-int-overflow-builtin
 fixtures/eval-fail-int-overflow-div
@@ -206,6 +208,8 @@ fixtures/eval-okay-functor
 fixtures/eval-okay-gsos-builtins
 fixtures/eval-okay-hash-collision
 fixtures/eval-okay-hashstring
+fixtures/eval-okay-hashstring-algos
+fixtures/eval-okay-hashstring-context
 fixtures/eval-okay-import
 fixtures/eval-okay-import-values
 fixtures/eval-okay-inherit-and-escapes
@@ -256,7 +260,6 @@ fixtures/refuse-gsos-findfile
 fixtures/refuse-gsos-hashfile
 fixtures/refuse-gsos-import
 fixtures/refuse-gsos-readfile
-fixtures/refuse-hashstring-md5
 fixtures/refuse-tojson-path
 tvix/nix_tests/eval-okay-any-all
 tvix/nix_tests/eval-okay-arithmetic
@@ -296,6 +299,7 @@ tvix/nix_tests/eval-okay-fromjson
 tvix/nix_tests/eval-okay-fromjson-escapes
 tvix/nix_tests/eval-okay-functionargs
 tvix/nix_tests/eval-okay-groupBy
+tvix/nix_tests/eval-okay-hashstring
 tvix/nix_tests/eval-okay-if
 tvix/nix_tests/eval-okay-ind-string
 tvix/nix_tests/eval-okay-intersectAttrs
@@ -328,6 +332,7 @@ tvix/nix_tests/eval-okay-splitversion
 tvix/nix_tests/eval-okay-string
 tvix/nix_tests/eval-okay-strings-as-attrs-names
 tvix/nix_tests/eval-okay-substring
+tvix/nix_tests/eval-okay-tail-call-1
 tvix/nix_tests/eval-okay-tojson
 tvix/nix_tests/eval-okay-toxml
 tvix/nix_tests/eval-okay-toxml2
@@ -400,6 +405,7 @@ tvix/tvix_tests/eval-okay-builtins-group-by-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-groupby-thunk
 tvix/tvix_tests/eval-okay-builtins-hasContext-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-hasattr
+tvix/tvix_tests/eval-okay-builtins-hashString
 tvix/tvix_tests/eval-okay-builtins-head
 tvix/tvix_tests/eval-okay-builtins-head-propagate-catchable
 tvix/tvix_tests/eval-okay-builtins-isType-propagate-catchable
