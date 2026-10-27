@@ -122,6 +122,9 @@ fixtures/eval-fail-int-overflow-sub
 fixtures/eval-fail-int-overflow-uncaught
 fixtures/eval-fail-mapattrs-set
 fixtures/eval-fail-parsedrvname-context
+fixtures/eval-fail-path-interp-context
+fixtures/eval-fail-path-interp-int
+fixtures/eval-fail-path-interp-order
 fixtures/eval-fail-path-plus-context
 fixtures/eval-fail-regex-class
 fixtures/eval-fail-regex-context
@@ -211,6 +214,7 @@ fixtures/eval-okay-misc-builtins
 fixtures/eval-okay-mutual-recursion
 fixtures/eval-okay-nested-let-shadow
 fixtures/eval-okay-ordering
+fixtures/eval-okay-path-interp
 fixtures/eval-okay-paths
 fixtures/eval-okay-primop-display
 fixtures/eval-okay-rec-paths-legacy
@@ -325,8 +329,10 @@ tvix/nix_tests/eval-okay-tryeval
 tvix/nix_tests/eval-okay-types
 tvix/nix_tests/eval-okay-versions
 tvix/nix_tests/eval-okay-with
+tvix/nix_tests/notyetpassing/eval-okay-curpos
 tvix/nix_tests/notyetpassing/eval-okay-delayed-with
 tvix/nix_tests/notyetpassing/eval-okay-eq-derivations
+tvix/nix_tests/notyetpassing/eval-okay-path-antiquotation
 tvix/nix_tests/notyetpassing/eval-okay-replacestrings
 tvix/nix_tests/notyetpassing/eval-okay-zipAttrsWith
 tvix/tvix_tests/eval-okay-abort-throw-can-be-caught

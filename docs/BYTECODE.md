@@ -364,6 +364,7 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$5E` | `import` | 1 | the primop, for an import the generator cannot resolve (not a path literal, or `import` as a value; "Imports"): its argument forced, then `E_GSOS` -- reading the file is GS/OS's (D26) |
 | `$5F` | `scopedImport` | 2 | `scope p`: the scope forced, a set (`E_TYPE`), then `p`, then `E_GSOS` (D26) |
 | `$60` | `fromTOML` | 1 | a string without context (`E_TYPE`), parsed as Nix's toml11 4.4.0 parses it, TOML 1.0 ([TOML.md](TOML.md), `toml.c`): a table a set, an array a list; not TOML, a date or a time (no `parse-toml-timestamps`), or a NUL in a key or a string is `E_TOML`; past the bank or 32 nested arrays and inline tables, `E_NOMEM` |
+| `$61` | `pathInterp` | 1 | internal, never a builtin: a path with interpolations, `./a/${b}`, which nbc lowers to `[ prefix part... ]` and this (Nix's `ExprConcatStrings` with a path first; the prefix is the first segment as Nix's parser resolves it, its trailing `/` kept): each part forced and coerced in order as a path segment is (a path its text, not copied; an int `E_TYPE`), a context in any `E_TYPE`, the texts joined and canonical, a `PATH` |
 | `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`

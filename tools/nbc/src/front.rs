@@ -74,6 +74,13 @@ fn parse_in(src: &str, dir: Option<PathBuf>, chain: Vec<PathBuf>) -> Result<Expr
     Lower { src, dir, chain }.expr(&expr)
 }
 
+#[derive(Clone, Copy)]
+enum PathKind {
+    Abs,
+    Rel,
+    Home,
+}
+
 struct Lower<'a> {
     src: &'a str,
     /// The directory of the file being lowered, for resolving a relative
@@ -125,7 +132,12 @@ impl<'a> Lower<'a> {
         }
         let src = match std::fs::read_to_string(&target) {
             Ok(s) => s,
-            Err(e) => return self.refuse(app, &format!("import {}: {e}", target.display())),
+            // Not there to compile: the primop, which would read it at run time
+            // -- GS/OS's (D26) -- as Nix reads it when the import is forced.
+            Err(_) => {
+                let pos = self.pos(app);
+                return Ok(Expr::Apply(Box::new(Expr::Var("import".into(), pos)), Box::new(self.expr(arg)?)));
+            }
         };
         let key = target.to_string_lossy().into_owned();
         let mut chain = self.chain.clone();
@@ -159,6 +171,40 @@ impl<'a> Lower<'a> {
             None => text.to_string(),
         };
         Ok(Expr::Path(canon_path(&joined)))
+    }
+
+    /// A path with interpolations: the first segment resolved as Nix's parser
+    /// resolves path_start -- an absolute one canonical, a relative one
+    /// against the fixture convention's directory, each with its trailing '/'
+    /// added back; a home one the home directory and the rest, as written --
+    /// then the parts, literal or interpolated, for the VM (PathInterp).
+    fn path_interp(&self, parts: Vec<ast::InterpolPart<ast::PathContent>>, kind: PathKind) -> Result<Expr, Unsupported> {
+        let mut out = Vec::new();
+        for (i, part) in parts.into_iter().enumerate() {
+            match part {
+                ast::InterpolPart::Literal(t) => {
+                    let text = t.text();
+                    if i > 0 {
+                        out.push(StrPart::Lit(text.to_string()));
+                        continue;
+                    }
+                    let mut s = match kind {
+                        PathKind::Abs => canon_path(text),
+                        PathKind::Rel => canon_path(&format!("{FIXTURE_PWD}/{text}")),
+                        PathKind::Home => format!("{FIXTURE_HOME}{}", &text[1..]),
+                    };
+                    if !matches!(kind, PathKind::Home) && text.len() > 1 && text.ends_with('/') {
+                        s.push('/');
+                    }
+                    out.push(StrPart::Lit(s));
+                }
+                ast::InterpolPart::Interpolation(ip) => match ip.expr() {
+                    Some(e) => out.push(StrPart::Interp(self.expr(&e)?)),
+                    None => return self.refuse(&ip, "empty interpolation"),
+                },
+            }
+        }
+        Ok(Expr::PathInterp(out))
     }
 
     fn refuse<T>(&self, node: &impl AstNode, what: &str) -> Result<T, Unsupported> {
@@ -561,6 +607,9 @@ impl<'a> Lower<'a> {
             // A path VALUE resolves against the fixture convention (FIXTURE_PWD,
             // FIXTURE_HOME), never the disk: the expected outputs are written
             // that way, and a fixture must not carry this machine's paths (D7).
+            ast::Expr::PathAbs(n) if n.parts().len() > 1 => self.path_interp(n.parts(), PathKind::Abs),
+            ast::Expr::PathRel(n) if n.parts().len() > 1 => self.path_interp(n.parts(), PathKind::Rel),
+            ast::Expr::PathHome(n) if n.parts().len() > 1 => self.path_interp(n.parts(), PathKind::Home),
             ast::Expr::PathAbs(n) => self.path_value(n, &n.to_string(), None),
             ast::Expr::PathRel(n) => self.path_value(n, &n.to_string(), Some(FIXTURE_PWD)),
             ast::Expr::PathHome(n) => {
@@ -581,7 +630,20 @@ impl<'a> Lower<'a> {
                     Box::new(Expr::Str(vec![StrPart::Lit(name)])),
                 ))
             }
-            ast::Expr::CurPos(n) => self.refuse(n, "__curPos"),
+            // __curPos: Nix's ExprPos, the set of this position. The file is the
+            // fixture convention's, as a path value's is (D7).
+            ast::Expr::CurPos(n) => {
+                let pos = self.pos(n);
+                let file = match self.chain.last().and_then(|f| f.file_name()) {
+                    Some(name) => format!("{FIXTURE_PWD}/{}", name.to_string_lossy()),
+                    None => FIXTURE_PWD.to_string(),
+                };
+                Ok(Expr::AttrSet(vec![
+                    ("column".into(), pos, Expr::Int(pos.col as i64)),
+                    ("file".into(), pos, Expr::Str(vec![StrPart::Lit(file)])),
+                    ("line".into(), pos, Expr::Int(pos.line as i64)),
+                ]))
+            }
             ast::Expr::Root(n) => self.refuse(n, "nested root"),
             ast::Expr::Error(n) => self.refuse(n, "syntax error"),
         }
@@ -830,6 +892,20 @@ mod tests {
     }
 
     #[test]
+    fn interpolated_paths_and_cur_pos() {
+        // ./${a}: the first segment as Nix's parser resolves it, its '/' kept
+        match p("./a/${b}-c") {
+            Expr::PathInterp(parts) => assert!(matches!(&parts[..],
+                [StrPart::Lit(a), StrPart::Interp(_), StrPart::Lit(c)] if a == "/pwd/lang/a/" && c == "-c")),
+            e => panic!("{e:?}"),
+        }
+        assert!(matches!(p("/${b}"), Expr::PathInterp(ref parts) if matches!(&parts[0], StrPart::Lit(a) if a == "/")));
+        assert!(matches!(p("~/${b}"), Expr::PathInterp(ref parts) if matches!(&parts[0], StrPart::Lit(a) if a == "/fake-home/")));
+        // __curPos: a constant set
+        assert!(matches!(p("__curPos"), Expr::AttrSet(ref s) if s.len() == 3));
+    }
+
+    #[test]
     fn imports_not_resolved_here_are_the_primop() {
         // a computed import, and import passed around: the primop, applied
         // at run time (D26), never a guess at the file
@@ -857,7 +933,6 @@ mod tests {
             ("let ${a} = 1; in 1", "dynamic attributes not allowed in let"),
             ("let \"${a}\" = 1; in 1", "dynamic attributes not allowed in let"),
             ("{ inherit ${a}; }", "dynamic attributes not allowed in inherit"),
-            ("./p/${a}", "path antiquotation"),
             ("1.0e309", "invalid float"),
             ("2.2250738585072011e-308", "invalid float"),
             ("let x = 1; x = 2; in x", "`x` bound twice in one let"),
@@ -929,7 +1004,7 @@ mod tests {
 
     #[test]
     fn positions_are_line_and_column() {
-        let err = parse("let\n  x = 1;\n  in __curPos").unwrap_err();   // any refused construct
+        let err = parse("let\n  x = 1;\n  in 1.0e309").unwrap_err();    // any refused construct
         assert_eq!(err.pos, Pos { line: 3, col: 6 });
     }
 

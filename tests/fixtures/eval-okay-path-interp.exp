@@ -1,0 +1,1 @@
+[ true true true true /foo /foo/bar /x/b /a/b /xfoo "path" /abs/path [ 16 12 "eval-okay-path-interp.nix" ] ]

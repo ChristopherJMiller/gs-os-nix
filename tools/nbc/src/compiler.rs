@@ -280,6 +280,7 @@ impl Compiler {
                 self.imported.insert(BUILTINS_CHUNK.to_string(), b);
                 let outer = std::mem::take(&mut self.scopes);
                 let mut names: Vec<&'static str> = PRIMOPS.iter().map(|(n, _, _)| *n)
+                    .filter(|n| NIX_BUILTINS.contains(n))
                     .chain(BUILTIN_VALUES.iter().map(|(n, _)| *n))
                     .chain(std::iter::once("builtins")).collect();
                 names.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
@@ -327,7 +328,7 @@ impl Compiler {
         if name == "builtins" {
             return self.emit_builtins_set(pos, chunk);
         }
-        let Some((id, arity)) = primop(name) else {
+        let Some((id, arity)) = primop(name).filter(|_| NIX_BUILTINS.contains(&name)) else {
             if NIX_BUILTINS.contains(&name) {
                 return unsupported(pos, format!("builtins.{name}"));
             }
@@ -593,6 +594,18 @@ impl Compiler {
                 let n = Self::count(items.len(), "list elements")?;
                 self.emit(chunk, OP_LIST);
                 self.emit_u16(chunk, n);
+            }
+            // The parts as a list -- the VM forces and coerces them in order,
+            // as Nix does -- for the internal pathInterp primop.
+            Expr::PathInterp(parts) => {
+                let items: Vec<Expr> = parts.iter().map(|p| match p {
+                    StrPart::Lit(s) => Expr::Str(vec![StrPart::Lit(s.clone())]),
+                    StrPart::Interp(e) => e.clone(),
+                }).collect();
+                self.strict(&Expr::List(items), chunk)?;
+                let (id, _) = primop("pathInterp").expect("the internal primop");
+                self.emit(chunk, OP_PRIM);
+                self.emit(chunk, id);
             }
             Expr::AttrSet(binds) => {
                 // Nix keeps attributes sorted by name bytes; the VM relies on it.

@@ -252,10 +252,19 @@ mutations. **Reached 2026-10-26: nbc refuses nothing in the vendored corpus**
 refused at run time, by name. The 3 errors left are the VM's, not the
 generator's: `eval-okay-tail-call-1` does not halt, and `hashString`'s
 `md5`, `sha1` and `sha512` are `E_UNSUP` (their constant tables wait for
-bank 0). Past the finish line -- tvix's notyetpassing, or in no test: positions
-(`unsafeGetAttrPos`, `__curPos`), path antiquotation, `trace`, `warn`, `break`,
-`addErrorContext`, `storeDir`, `placeholder`, `convertHash`,
-`flakeRefToString`/`parseFlakeRef`, and `<nix/...>` (Nix's corepkgs).
+bank 0). Then the last syntax tvix's notyetpassing tests use: ~~`__curPos`,
+path interpolation, a missing import~~ **done** -- `__curPos` is a constant
+set; `./a-${b}` is Nix's ExprConcatStrings with a path first (the first
+segment as Nix's parser resolves it, its trailing '/' kept; each part
+coerced in order as a path segment, no context; the texts joined and made
+canonical once: the internal `pathInterp` primop); an import of a file
+that is not there is the `import` primop, GS/OS's at run time (D26); tvix's
+curpos and path-antiquotation pass, 4 fixtures, 2 mutations. **nbc's last
+refusal is `builtins.unsafeGetAttrPos`** (3 of tvix's notyetpassing tests),
+which needs a position in every set (next, below). Past the finish line, in
+no test: `trace`, `warn`, `break`, `addErrorContext`, `storeDir`,
+`placeholder`, `convertHash`, `flakeRefToString`/`parseFlakeRef`, and
+`<nix/...>` (Nix's corepkgs).
 
 ## Roadmap (2026-10-25): from here to M4
 
@@ -369,8 +378,10 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **586 / 614** (2026-10-26, after `fromTOML`; 0 fail, 3
-error, 9 need GS/OS, **0 unsupported**, 16 notyetpassing). It was 564 / 593
+The scoreboard reads **592 / 618** (2026-10-26, after `__curPos` and path
+interpolation; 0 fail, 3 error, 9 need GS/OS, 0 unsupported, 14
+notyetpassing -- tvix's own curpos and path-antiquotation pass now). It was
+586 / 614 after `fromTOML`, the first with **0 unsupported**. It was 564 / 593
 after search paths and `import` as a value (1 unsupported; one of tvix's own
 notyetpassing, cppnix-non-identifier-pointer-inequality, passed then). It was 550 / 583 after the GS/OS builtins (4 unsupported). It was
 546 / 579 after `match` and `split` (13 unsupported). It was 530 / 569 after

@@ -1216,6 +1216,7 @@ void op_prim(void)
     case PRIM_IMPORT:          prim_import(0);
     case PRIM_SCOPEDIMPORT:    prim_import(1);
     case PRIM_FROMTOML:        prim_fromtoml(); break;
+    case PRIM_PATHINTERP:      prim_pathinterp(); break;
     default:                   err_exit(E_BADOP);
     }
 }

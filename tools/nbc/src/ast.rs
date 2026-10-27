@@ -96,6 +96,10 @@ pub enum Expr {
     /// A string: literal parts and `${…}` interpolations, escapes and indentation
     /// already resolved by rnix. A plain literal is a single `Lit` part.
     Str(Vec<StrPart>),
+    /// A path with interpolations, `./a/${b}`: Nix's ExprConcatStrings with a
+    /// path first. The first part is the first segment's text as Nix's
+    /// parser resolves it (its trailing '/' kept); the VM makes the PATH.
+    PathInterp(Vec<StrPart>),
     /// A path literal, already absolute and canonical (front.rs canon_path):
     /// relative paths resolve against the fixture convention, not the disk.
     Path(String),

@@ -67,6 +67,7 @@ _Noreturn void prim_gsos(uint16_t id, uint16_t arity);   /* strings.c: E_GSOS (D
 void prim_findfile(void);                           /* strings.c */
 _Noreturn void prim_import(uint16_t scoped);        /* strings.c: E_GSOS (D26) */
 void prim_fromtoml(void);                           /* json.c */
+void prim_pathinterp(void);                         /* strings.c */
 void copy_entry(obj_t *dst, uint16_t n, uint16_t i, obj_t *src, uint16_t ns, uint16_t j);   /* prims.c */
 obj_t *lit_attr(obj_t *set, const char *lit, uint16_t n);   /* the value a C literal names in set, or 0; no bytecode */
 void prim_unsafediscardstringcontext(void);

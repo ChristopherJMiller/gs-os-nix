@@ -401,6 +401,43 @@ _Noreturn void prim_gsos(uint16_t id, uint16_t arity)
     gsos_exit(t, n);
 }
 
+/* pathInterp [ prefix part... ] ($61, internal: nbc's ./a/${b}, BYTECODE.md):
+ * Nix's ExprConcatStrings with a path first. The prefix is the first
+ * segment's text as Nix's parser resolves it; each part is forced and
+ * coerced in order as a path segment is -- a path is its text, not copied to
+ * the store, and nothing "${}" would refuse is taken -- and a context in any
+ * is an error, as for path + string ("a string that refers to a store path
+ * cannot be appended to a path"). The texts joined, canonical: a PATH. */
+void prim_pathinterp(void)
+{
+    uint16_t b = rsp, n, i, len = 0, at;
+    obj_t *lo, *l, *s, *o;
+    l = force_pop_as(T_LIST, &lo);
+    n = AUX16(l);
+    rpush(lo);
+    at = vsp;
+    for (i = 0; i < n; ++i) {
+        push(RELEM(b, i, n));
+        coerce_top(CO_PATH);
+        s = deref(peek());
+        if (CTX(s)) type_err();
+        if ((uint16_t)(len + AUX16(s) + 1) <= len) nomem();
+        len += AUX16(s);
+    }
+    nursery_reserve_n(2, round4(len + 1), 8);   /* the joined text, then the PATH */
+    o = str_alloc(len);
+    len = 0;
+    for (i = 0; i < n; ++i) {
+        s = deref(vstack[at + i]);
+        memcpy(STRBYTES(o) + len, STRBYTES(s), AUX16(s));
+        len += AUX16(s);
+    }
+    o = path_join(STRBYTES(o), len, "", 0);
+    vsp = at;
+    rsp = b;
+    push(o);
+}
+
 /* import p, and scopedImport scope p, applied at run time -- an import the
  * generator could not resolve (a literal path it reads itself). Nix forces
  * the scope, a set, then realises the path; reading the file is GS/OS's. */
