@@ -10,6 +10,8 @@
 
 #include "vm.h"
 
+segment "core";
+
 const uint8_t *pc;
 obj_t **ctab;
 obj_t *env;
@@ -71,7 +73,7 @@ static void force_thunk(void)
     obj_t **sctab = ctab;
     uint32_t buf[3];
     stack_check();
-    tv = deref(th);
+    tv = DEREF(th);
     if (fstack_n >= FSTACK_N) nomem();
     fstack[fstack_n++] = th;
     rpush(env);
@@ -133,7 +135,7 @@ void force_top(void)
 {
     obj_t *p;
     for (;;) {
-        p = deref(peek());
+        p = DEREF(peek());
         switch (p->tag) {
         case T_INDIRECT:  poke(IND_TARGET(p)); break;
         case T_BLACKHOLE: err_exit(E_INFREC);
@@ -147,6 +149,8 @@ void force_top(void)
 void force_slot(uint16_t k)
 {
     uint16_t at = vsp - k;
+    uint8_t t = DEREF(vstack[at])->tag;
+    if (!NEEDS_FORCE(t)) return;
     push(vstack[at]);
     force_top();
     vstack[at] = pop();
@@ -156,10 +160,10 @@ void force_slot(uint16_t k)
  * below. A binary operation must force both operands before it reads either. */
 void force_two_orig(obj_t **a, obj_t **b, obj_t **ao, obj_t **bo)
 {
-    force_top();
-    force_slot(2);
-    *bo = pop(); *b = deref(*bo);
-    *ao = pop(); *a = deref(*ao);
+    FORCE_TOP();
+    FORCE_SLOT2();
+    *bo = pop(); *b = DEREF(*bo);
+    *ao = pop(); *a = DEREF(*ao);
 }
 
 void force_two(obj_t **a, obj_t **b)
@@ -172,10 +176,10 @@ void force_two(obj_t **a, obj_t **b)
  * nursery_reserve() before it pops them. The caller drops them (vsp -= 2). */
 void view_two(obj_t **a, obj_t **b)
 {
-    force_top();
-    force_slot(2);
-    *b = deref(vstack[vsp - 1]);
-    *a = deref(vstack[vsp - 2]);
+    FORCE_TOP();
+    FORCE_SLOT2();
+    *b = DEREF(vstack[vsp - 1]);
+    *a = DEREF(vstack[vsp - 2]);
 }
 
 /* --- calls ------------------------------------------------------------------------ */
@@ -188,10 +192,10 @@ void call_enter(void)
     obj_t *f, *fo, *x, *e, *fv;
     uint16_t ix;
     for (;;) {
-        force_slot(2);                          /* f, forced in place */
+        FORCE_SLOT2();                          /* f, forced in place */
         x = pop();
         fo = pop();
-        f = deref(fo);
+        f = DEREF(fo);
         if (f->tag == T_LAMBDA) break;
         if (f->tag != T_ATTRS) type_err();
         if (!find_attr(fo, str_functor, &ix, &fv)) type_err();
@@ -464,12 +468,12 @@ void run(void)
         case OP_JMP: n = fetch16(); pc += (int16_t)n; break;
         case OP_JMP_IF_FALSE:                   /* peeks: the value stays for the POP */
             n = fetch16();
-            force_top(); a = deref(peek()); need(a, T_BOOL);
+            FORCE_TOP(); a = DEREF(peek()); need(a, T_BOOL);
             if (!BOOLVAL(a)) pc += (int16_t)n;
             break;
         case OP_JMP_IF_TRUE:
             n = fetch16();
-            force_top(); a = deref(peek()); need(a, T_BOOL);
+            FORCE_TOP(); a = DEREF(peek()); need(a, T_BOOL);
             if (BOOLVAL(a)) pc += (int16_t)n;
             break;
         case OP_ASSERT:
@@ -544,16 +548,16 @@ void run(void)
         case OP_ENV_GET:                        /* depth, i: walk depth parents, read element i */
             n = fetch16();
             i = fetch16();
-            o = deref(env);
+            o = DEREF(env);
             while (n--) {
                 if (ELEMS(o)[0] == 0) badnbc();
-                o = deref(ELEMS(o)[0]);
+                o = DEREF(ELEMS(o)[0]);
             }
             a = ELEMS(o)[i];
             if (a == 0) badnbc();               /* a slot read before it was set */
             push(a);
             break;
-        case OP_ENV_POP: env = ELEMS(deref(env))[0]; break;
+        case OP_ENV_POP: env = ELEMS(DEREF(env))[0]; break;
 
         /* --- closures and calls --- */
         case OP_LAMBDA: closure(T_LAMBDA, 0); break;
@@ -577,7 +581,7 @@ void run(void)
         case OP_TRY_WITH_GET: with_get(0); break;
 
         /* --- thunks --- */
-        case OP_FORCE:  force_top(); break;
+        case OP_FORCE:  FORCE_TOP(); break;
         case OP_RETURN: return;
         case OP_PRIM:   op_prim(); break;
 

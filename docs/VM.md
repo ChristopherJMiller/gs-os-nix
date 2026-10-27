@@ -32,9 +32,9 @@ bank 1  NURSERY   $010000-$01FFFF   64 KB, bump-allocated
 bank 2  STAGE     $020000-$02FFFF   the collector's to-space
 bank 3  the .nbc image               $030000, up to 64 KB (a2min --run-nbc puts it there)
 bank 4+ further code segments        ORCA/C `segment "prims";` etc., placed by omf2bin,
-                                     which skips banks 5 and 7 as the banks fill (bank 6
-                                     is next after 4, then 8); the interpreter core stays
-                                     in bank 0
+                                     which skips banks 5 and 7 as the banks fill: `core`
+                                     (run.c) in bank 4, `prims` in 6, `float`, `json`,
+                                     `regex` in 8, `toml`, `hashes`, `gsos` in 9
 bank 5  WINDOWS   $050000-$05EFFF   the 60 KB copy ring: views of mature objects
         RSET      $05F000-$05F9FF   the remembered set: 256 × (object, offset, scratch)
 bank 7  SCRATCH   $070000-$07FFFF   a primop's while it runs no bytecode: the regex
@@ -51,9 +51,11 @@ every value is promoted before it can be stored young, so the remembered set
 is never used; `k` = 2 or 3 is what tests it (DECISIONS.md D20).
 
 Bank 0's 40 KB were never going to hold the parser and the store layers, so
-code lives in load segments from the start: the primop files are `segment "prims"` and
-sit in bank 4; the core (`main`, `run`, `data`, `gc`, `card`) and every global
-stay in bank 0. `omf2bin` refuses a bank-0 segment past `$C000` rather than
+code lives in load segments from the start: the primop files are `segment "prims"`,
+and since 2026-10-27 `run.c` is `segment "core"` -- 10 KB out of bank 0, at no
+cost in cycles (ORCA/C calls everything with `JSL` and reaches globals through
+the data bank, wherever the code is: measured, every benchmark to the cycle).
+`main`, `data`, `gc` and `card`, and every global, stay in bank 0. `omf2bin` refuses a bank-0 segment past `$C000` rather than
 letting code land on the I/O page — the first time it did, the program ran as
 far as `$C0CF` and read the card's registers as instructions.
 
@@ -162,6 +164,25 @@ The levers, in order: `deref`'s young case inline at the hot sites, and
 where promotion makes every `CONST` a view; then the dispatch loop.
 Each is measured here and priced in bank-0 bytes.
 
+**Step 1 (2026-10-27): 336.3M -> 290.8M cycles, -13.5%**, and the full
+`eval-okay-tail-call-1` 2.13G -> 1.73G (`tail-calls`
+-21.5%, `recursion` -16.7%, `foldl-strict` -8.6%, `strings` -6.7%, `attrs`
+-6.4%, `derivations` -4.0%):
+
+| Change | All six | Bank 0 |
+|---|---|---|
+| `DEREF`, `deref`'s young case inline, at `run.c`'s hot sites | -7.6% | +409 |
+| the window cache's hit tested in `deref`, not a call to `mature_view` | -2.2% | -1 |
+| `FORCE_TOP` / `FORCE_SLOT2`: no `force_top` call for a value | -4.1% | +1,321 |
+| `run.c` into `segment "core"` | 0 (to the cycle) | -10,235 |
+
+The forcing check first cost 2 KB, because `NEEDS_FORCE` named its argument
+twice and so expanded `DEREF` twice: a macro's argument is read into a local.
+Moving `run.c` out of bank 0 changes nothing the CPU does -- ORCA/C calls with
+`JSL` and reaches globals through the data bank wherever code is -- and pays
+for every fast path here several times over. Two mutations guard the fast
+paths (an `INDIRECT` left unfollowed, a mature pointer taken for a view).
+
 ## Representation
 
 `vm.h` declares the heap objects of HEAP.md as C structs with explicit
@@ -235,17 +256,18 @@ target/vm/c/
   main.c      entry (first in the link: omf2bin takes the first code segment's
               entry), the loader, result reporting, DIAG
   run.c       run(): dispatch, environments, calls, thunks, FORCE, catch frames
+              -- segment "core", bank 4
   data.c      strings, lists, attribute sets, hashing, equality, deep force,
               the write barrier and the window ring for mature objects
   prims.h     what the three primop files share (private to them)
-  prims.c     the primops' shared helpers, lists, sets, errors, the table -- bank 4
-  strings.c   string primops, coercion, interpolation, string context -- bank 4
+  prims.c     the primops' shared helpers, lists, sets, errors, the table -- bank 6
+  strings.c   string primops, coercion, interpolation, string context -- bank 6
   derivation.c  derivationStrict, the ATerm, fixed outputs, and the
-              derivation rule of equality (DERIVATION.md) -- bank 4
+              derivation rule of equality (DERIVATION.md) -- bank 6
   gc.c        the Cheney collector into bank 2, then promotion to the card
               (copy-back into the nursery when no card is present)
   card.c      the driver: ALU64, RESERVE, DATA, LOOKUP, the SHA-256 verbs
-  sha256.c    SHA-256 and the store-path fold on the CPU, for no card -- bank 4
+  sha256.c    SHA-256 and the store-path fold on the CPU, for no card -- bank 6
   float.c     IEEE-754 binary64 on bit patterns, and %f: no VM in it, so
               checks.float-vectors tests it alone (FLOAT.md) -- segment "float"
   numbers.c   the VM's floats: FLOAT objects, mixed INT/float arithmetic and
@@ -258,17 +280,17 @@ target/vm/c/
               segment "regex"
   match.c     builtins.match and builtins.split on it -- segment "regex"
   toml.c      toml11's TOML 1.0 parser, ported, on bank 7; no VM in it
-              (TOML.md) -- segment "toml", which landed in bank 8
+              (TOML.md) -- segment "toml", in bank 9
   hashes.c    hashString's md5, sha1 and sha512 on the CPU, their tables
-              string literals -- segment "hashes", in bank 8 after toml
+              string literals -- segment "hashes", in bank 9 after toml
   gsos.c      pathExists, readFile, readFileType, readDir, hashFile, getEnv
               through GS/OS's stack entry, Nix's symlink walk on bank 7
-              (GSOS.md) -- segment "gsos", in bank 8 after hashes
+              (GSOS.md) -- segment "gsos", in bank 9 after hashes
 ```
 
-`float`, `json` and `regex` are in bank 6, and `toml`, `hashes` and `gsos` in bank 8: `prims` fills
-bank 4, and omf2bin skips bank 5, the window ring, and bank 7, the regex
-engine's (and fromTOML's).
+`core` is in bank 4, `prims` fills bank 6, `float`, `json` and `regex` are in
+bank 8, and `toml`, `hashes` and `gsos` in bank 9: omf2bin skips bank 5, the
+window ring, and bank 7, the scratch bank.
 
 `target/vm/c/SOURCES` is the one list of sources, in link order: the flake's
 `mkOrcaBinary`, `just cvm` and every script that builds the VM read it. Each

@@ -170,11 +170,11 @@ void windows_invalidate(obj_t *p)
     if (wins[h][1].card == p) wins[h][1].card = 0;
 }
 
-static obj_t *mature_view(obj_t *p)
+/* A copy of mature p into the ring, cached in set h (deref has looked there) */
+static obj_t *mature_view(obj_t *p, uint16_t h)
 {
-    uint16_t h = win_slot(p), size, k;
+    uint16_t size, k;
     obj_t hdr, *w;
-    if ((k = win_find(p, h)) != WIN_NONE) return WIN_PTR(k);
     card_read_at(PBITS(p), &hdr, 4);
     size = obj_size(&hdr);
     if (size > WINDOW_MAX) nomem();
@@ -218,17 +218,22 @@ obj_t *list_elem(obj_t *l, uint16_t i, uint16_t count)
     if (IS_RAM(l)) return ELEMS(l)[i];
     h = win_slot(l);
     if ((k = win_find(l, h)) != WIN_NONE) return ELEMS(WIN_PTR(k))[i];
-    if (count < LIST_READ_MIN) return ELEMS(mature_view(l))[i];
+    if (count < LIST_READ_MIN) return ELEMS(mature_view(l, h))[i];
     card_read_at(PBITS(l) + (uint16_t)(4 + 4 * i), &e, 4);   /* i < 16K: the offset fits 16 bits */
     return e;
 }
 
 /* --- pointers and stacks ---------------------------------------------------------------- */
+/* The window cache's hit is tested here, not in mature_view: a call saved
+ * on every view that is already cached (VM.md "Speed") */
 obj_t *deref(obj_t *p)
 {
+    uint16_t h, k;
     if (p == 0) badnbc();
     if (IS_RAM(p)) return p;
-    return mature_view(p);
+    h = win_slot(p);
+    if ((k = win_find(p, h)) != WIN_NONE) return WIN_PTR(k);
+    return mature_view(p, h);
 }
 
 /* The write barrier: a store into a mature object goes through the bus, and if
@@ -429,13 +434,13 @@ int values_equal(obj_t *a, obj_t *b)
     int r;
     obj_t *av, *bv;
     rpush(a);                       /* a is a root while b is forced */
-    push(b); force_top(); b = pop();
+    push(b); FORCE_TOP(); b = pop();
     rpush(b);                       /* b is a root while a is forced */
-    push(rstack[base]); force_top(); a = pop();
+    push(rstack[base]); FORCE_TOP(); a = pop();
     b = rstack[base + 1];
     rsp = base;
     if (a == b) return 1;           /* the same object (originals, not views) */
-    av = deref(a); bv = deref(b);
+    av = DEREF(a); bv = DEREF(b);
     if (av->tag == T_FLOAT || bv->tag == T_FLOAT) return num_cmp(av, bv) == 1;   /* 1 == 1.0 */
     if (av->tag != bv->tag) return 0;
     switch (av->tag) {

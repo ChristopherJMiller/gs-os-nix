@@ -171,6 +171,12 @@ case $? in
 esac
 echo
 
+mutate "the forcing fast path leaves an INDIRECT unfollowed" vm.h \
+       's/^#define NEEDS_FORCE(t)  ((uint8_t)((t) - T_THUNK) < 4 \&\& (t) != T_LAMBDA)$/#define NEEDS_FORCE(t)  ((t) == T_THUNK)/'
+
+mutate "DEREF takes a mature pointer for its own view" vm.h \
+       's/^#define DEREF(p)  ((HI16(p) \& 0x8000U) ? (p) : deref(p))$/#define DEREF(p)  ((HI16(p) | 0x8000U) ? (p) : deref(p))/'
+
 mutate "a store into a mature field is not recorded" data.c \
        's/    if (IS_YOUNG(v)) remember(c, off);//'
 

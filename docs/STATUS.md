@@ -115,10 +115,16 @@ passes, or is one of tvix's own notyetpassing. `error` is empty since
      regress check, an RTL mutation and `eval-okay-deep-force-self-select`
      guard it.
 
-   Then the measured levers, each priced in bank-0 bytes: an inline fast
-   path for a young `deref` and an already-forced `FORCE`; constants kept
-   out of the nursery, where promotion makes every `CONST` a view. The
-   target: tail-call-1 inside 500M again.
+   ~~**Step 1: inline fast paths**~~ **done** (VM.md "Speed"): `deref`'s
+   young case and `force_top`'s already-forced case inline at the hot
+   sites, the window cache's hit tested in `deref`, and `run.c` out of bank 0
+   (`segment "core"`: -10,235 bytes, no cycles). **336.3M -> 290.8M cycles,
+   -13.5%**; `tail-calls` -21.5%. Next, by the profile: the dispatch loop's
+   own cost (~4,900 cycles a `tail-calls` iteration: a long-pointer read of
+   the GC-stress byte, a 32-bit `pc` in memory), `listToAttrs`' insertion
+   (25% of `attrs`, O(n^2)), integer `toString`'s `~UDIV2` (9% of
+   `strings`), and constants kept out of the nursery. The target:
+   tail-call-1 inside 500M again: 2.13G -> 1.73G after step 1.
 
 ## Roadmap (2026-10-26): to a complete bytecode compiler
 
@@ -403,7 +409,7 @@ a2min.
   other, were decided -- soft-float in C -- and are done: [FLOAT.md](FLOAT.md).)
 - **Card-side `MARK`** only when the promoted-bytes counter shows the 512 KB
   ceiling binding on a real program; nothing has yet.
-- **Bank 0** (37,200 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
+- **Bank 0** (28,694 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
   far pointers are the big lever left. (The md5/sha1/sha512 tables do not need
   it: string literals, roadmap item 1.) Watch for ORCA/C library routines: a
   struct copy links `~MOVE`, a variable left shift `~SHIFTLEFT`, a 32-bit
@@ -448,8 +454,9 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-**Bank 0: 37,200 of 40,960 bytes** (2026-10-27, after the C stack's
-margin, +46, `stack_need` and its calls; 37,154 after the GS/OS file
+**Bank 0: 28,694 of 40,960 bytes** (2026-10-27, after speed step 1:
+-10,235 for `run.c` into `segment "core"`, +1,729 for the inline fast paths;
+37,200 after the C stack's margin, +46, `stack_need` and its calls; 37,154 after the GS/OS file
 builtins, +1, the `~GLOBALS` byte of `gsos.c`; 37,153 after md5, sha1 and
 sha512, +1, the `~GLOBALS` byte of `hashes.c`; 37,152 after `unsafeGetAttrPos`,
 -1,062: `//` moved into `prims.c` to carry the position column, and a
