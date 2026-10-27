@@ -229,7 +229,7 @@ pointer or a `uint32_t` as a whole is 12 to 20 instructions; on its two
 Tried and taken out: stepping `pc` by its low word only (the image is one
 bank). ORCA/C turned `((uint16_t *)&pc)[0] += 2` into a long pointer to `pc`
 on the direct page and a read-modify-write through it -- 0.7% slower.
-Eight mutations; `eval-okay-tostring-powers` holds every power of ten's
+Six mutations (mutation-vm 258 -> 264); `eval-okay-tostring-powers` holds every power of ten's
 edge, and `eval-okay-big-constants` both the image bank and the fallback.
 The binary search also made an older mutation decorative -- the window-ring
 turnover between `listToAttrs`' insertions, which `eval-okay-big-operations`
