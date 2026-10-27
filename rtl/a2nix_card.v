@@ -135,7 +135,7 @@ module a2nix_card (
         reg [31:0] aux;
         reg [31:0] s;
         begin
-            aux = {8'd0, hdr[31:8]};
+            aux = {8'd0, hdr[31:8]} & 32'h007F_FFFF;   // less bit 23, the CPU's visit mark (HEAP.md)
             case (hdr[7:0])
                 TAG_INT, TAG_FLOAT:     s = 32'd12;
                 TAG_STRING:             s = 32'd4 + round4(aux) + 32'd4;
@@ -164,7 +164,7 @@ module a2nix_card (
     function is_ptr_field(input [31:0] hdr, input [31:0] k);
         reg [31:0] aux;
         begin
-            aux = {8'd0, hdr[31:8]};
+            aux = {8'd0, hdr[31:8]} & 32'h007F_FFFF;   // less bit 23, the CPU's visit mark (HEAP.md)
             case (hdr[7:0])
                 TAG_STRING:             is_ptr_field = (k == (round4(aux) >> 2));
                 TAG_LIST:               is_ptr_field = (k < aux);
@@ -678,8 +678,10 @@ module a2nix_card (
                     end
                 end
 
-                // --- LOOKUP: the attribute count is the header's aux field, i.e.
-                // the top 24 bits of the header word. One access. ---
+                // --- LOOKUP: the attribute count is the header's aux field, the top
+                // 24 bits of the header word, less bit 23: the CPU's visit mark,
+                // set while it deep-forces the set (HEAP.md) -- and LOOKUP runs
+                // then, from the SELECTs the forced thunks make. One access. ---
                 M_LK_CNT: begin
                     mem_addr <= lk_base;
                     mret     <= M_LK_CB;
@@ -687,7 +689,7 @@ module a2nix_card (
                 end
 
                 M_LK_CB: begin
-                    lk_count <= mword[31:8];
+                    lk_count <= mword[31:8] & 24'h7F_FFFF;
                     lk_done  <= 24'd0;
                     mstate   <= M_LK_BATCH;
                 end

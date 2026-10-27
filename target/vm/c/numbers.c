@@ -85,8 +85,10 @@ int num_pair(obj_t *a, obj_t *b)
 obj_t *float_str(obj_t *v)
 {
     char buf[F_FORMAT_MAX];
-    uint16_t n = f_format(num_bits(v), buf);
+    uint16_t n;
     obj_t *r;
+    stack_need(FLOAT_STACK);
+    n = f_format(num_bits(v), buf);
     nursery_reserve(round4(n) + 8);
     r = str_alloc(n);
     memcpy(STRBYTES(r), buf, n);

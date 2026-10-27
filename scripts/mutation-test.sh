@@ -147,6 +147,12 @@ mutate "L3 LOOKUP examines one batch only" rtl/a2nix_card.v \
 mutate "L3 LOOKUP reads the wrong column" rtl/a2nix_card.v \
        's/mem_addr <= lk_values_at + ({8.d0, lk_hit_index} << 2);/mem_addr <= lk_keys_at + ({8'"'"'d0, lk_hit_index} << 2);/'
 
+# L3: count the CPU's visit mark (bit 23 of aux, set while it deep-forces a set) as
+# part of the attribute count, so a SELECT inside that deep force reads its value
+# from 4 * 2^23 bytes past the set: null, or a real pointer from the wrong object.
+mutate "L3 LOOKUP counts the visit mark" rtl/a2nix_card.v \
+       's/                    lk_count <= mword\[31:8\] \& 24.h7F_FFFF;/                    lk_count <= mword[31:8];/'
+
 # ALU64: never add the partial product, so every multiply returns zero -- or, with a
 # multiplicand of 1, the right answer, which is why the tests use awkward operands.
 mutate "ALU64 MUL never accumulates" rtl/alu64.v \

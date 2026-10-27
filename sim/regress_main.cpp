@@ -390,6 +390,24 @@ void l3_lookup() {
     check(all, "LOOKUP finds every key in a 10-attribute set",
           "an off-by-one in the value column address");
 
+    // --- the same set while the CPU deep-forces it: bit 23 of aux is the visit
+    // mark (docs/HEAP.md), not part of the count. A SELECT inside the deep force
+    // of a set that refers to itself (`let a = { b = 1; c = a.b; }; in a`, under
+    // GC stress) used to read its value from base + 4 + 4 * (n | 2^23).
+    heap.poke(small + 3, 0x80);
+    bool marked = true;
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        bus->set_areg(0, small);
+        set_key(keys[i]);
+        bus->wr(R_CMD, V_LOOKUP);
+        const std::uint8_t s = bus->wait_verb();
+        if ((s & ST_ERR) || bus->get_areg(1) != vals[i]) marked = false;
+    }
+    heap.poke(small + 3, 0x00);
+    check(marked, "LOOKUP finds every key in a set the CPU has marked",
+          "counting the visit mark: a value read from far past the set -- null, "
+          "or worse, a real pointer from the wrong object");
+
     // --- a miss must report NOTFOUND, not return a neighbouring value ---
     bus->set_areg(0, small);
     set_key(0xDEADBEEF);

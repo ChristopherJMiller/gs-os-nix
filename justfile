@@ -210,6 +210,17 @@ orca-lint:
 mutation-vm: build-a2min nbc-build
     ./scripts/mutation-vm.sh ./sim/build_a2min/a2min {{NBC}}
 
+# The interpreter's speed against tests/bench/cycles.txt (scripts/bench.py, D29):
+# slower fails; faster asks for `just bench-update`.
+bench *flags: build-a2min cvm nbc-build
+    python3 scripts/bench.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin {{flags}}
+
+bench-update: (bench "--update")
+
+# Every deep program at every stack depth, under a2min's tripwire (VM.md "The C stack").
+stack-stress: build-a2min cvm nbc-build
+    ./scripts/stack-stress.sh ./sim/build_a2min/a2min {{NBC}} target/build/cvm.bin
+
 # The phase counters for one .nix, bounded by cycles rather than wall clock (D19).
 phases file budget="400000000": build-a2min cvm nbc-build
     mkdir -p target/build

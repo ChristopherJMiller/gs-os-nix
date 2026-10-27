@@ -256,7 +256,7 @@ skip would be a policy decision (D2).
 
 | Op | Name | In | Out |
 |---|---|---|---|
-| `$30` | `LOOKUP` | `A0` = attrset, `P0` = key hash (4 bytes, LSB first) | `A1` = value address, `P1` = attribute index; or ERR `NOTFOUND` |
+| `$30` | `LOOKUP` | `A0` = attrset, `P0` = key hash (4 bytes, LSB first) | `A1` = value address, `P1` = attribute index; or ERR `NOTFOUND`. The count is the header's `aux` less bit 23, the CPU's visit mark (HEAP.md) |
 | `$50` | `ALU64` | `P0`, `P1` operands, `P2` = op selector | `P3` = 64-bit result |
 | `$60` | `DFASTEP` | `A0` = text, `P0` = DFA state | `P1` = token type + length |
 

@@ -561,7 +561,7 @@ mutate "toString refuses a float" strings.c \
        's/^    case T_FLOAT:  push(float_str(v)); return;     \/\* %f: "4.200000" (docs\/FLOAT.md) \*\/$//'
 
 mutate "toString reads its float after the reserve" numbers.c \
-       's/^    uint16_t n = f_format(num_bits(v), buf);$/    uint16_t n = (nursery_reserve(340), f_format(num_bits(v), buf));/'
+       's/^    n = f_format(num_bits(v), buf);$/    n = (nursery_reserve(340), f_format(num_bits(v), buf));/'
 
 mutate "the loader does not know K_FLOAT" main.c \
        's/^            case K_FLOAT:                       \/\* the same shape: kind is tag \*\/$//'

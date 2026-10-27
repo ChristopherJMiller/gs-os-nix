@@ -198,6 +198,11 @@ void card_write(uint8_t off, uint8_t v) {
     ++slot_accesses;
 }
 
+// The C-stack tripwire (run_to_halt, below)
+extern uint16_t sp_floor;
+extern bool sp_armed;
+[[noreturn]] void stack_overflow(const char *how, uint32_t a);
+
 // --- 24-bit memory ---------------------------------------------------------------
 uint8_t rd8(uint32_t a) {
     a &= 0xFFFFFF;
@@ -216,6 +221,7 @@ void wr8(uint32_t a, uint8_t v) {
         return;
     }
     if (a >= RAM_BYTES) die("write outside modelled RAM", a);
+    if (sp_armed && ((a >= 0x0330 && a < 0x0340) || (a >= 0x0360 && a < 0x03FE))) stack_overflow("a write to", a);
     ram[a] = v;
 }
 
@@ -254,6 +260,13 @@ A2Bus bus;
 Cpu65816<A2Bus> cpu(bus);
 
 void dump_trace() { cpu.print_trace(stderr); }
+
+void stack_overflow(const char *how, uint32_t a) {
+    std::printf("error: C stack overflow: %s $%04X, under the VM's stack at $%04X, at pc $%06X (S=$%04X)\n",
+                how, static_cast<unsigned>(a), sp_floor, cpu.pcaddr(), cpu.sp);
+    std::fflush(stdout);
+    std::exit(3);
+}
 
 // GS/OS's stack entry, as orcarun's: the return address, then the call number,
 // then the parameter block's address on the stack; both are popped, and the
@@ -411,6 +424,18 @@ void print_symbol_profile() {
     if (unattributed) std::printf("    %5.1f%% outside every symbol\n", 100.0 * unattributed / (total ? total : 1));
 }
 
+// The C VM's stack is $0400-$1FFF (docs/VM.md); below it are the harness's
+// RESULT, DIAG, flags and STATS. A VM run that takes S under $0400 has
+// written over them -- silently: flags flipped GC stress and verb masks on
+// mid-run, and STATS read 80 MB promoted, before the VM's own check saw it.
+// So a2min stops such a run loudly: S in $0200-$03FF (page 1 is the caller's
+// stack, which the VM returns to), or a write by the VM to the flags
+// ($0330-$033F, a2min's alone) or to the gap under the stack ($0360-$03FD;
+// $03FE holds the caller's S). Armed once S has been moved up into the VM's
+// stack (the reset seeds it at $01FF). 0: off (other programs).
+uint16_t sp_floor = 0;
+bool sp_armed = false;
+
 // The default budget is a hang detector. It was 50M cycles when the card was
 // clocked every cycle and 50M took two minutes; with the quiet clock it takes
 // ~0.3 s, and eval-okay-foldlStrict -- which needs 86M -- was scored as an
@@ -430,7 +455,12 @@ bool run_to_halt(uint64_t budget = 2'500'000'000) {
     bus.halted = false;
     const uint16_t seed = HALT_ADDR - 1;
     cpu.push16(seed);
+    sp_armed = false;
     while (!bus.halted && cpu.cycles < budget) {
+        if (sp_floor) {
+            if (cpu.sp >= sp_floor) sp_armed = true;   // in the VM's stack
+            else if (sp_armed && cpu.sp < sp_floor && cpu.sp >= 0x0200) stack_overflow("S", cpu.sp);
+        }
         if (trace_on)
             std::fprintf(stderr, "%06X %02X %02X %02X %02X A=%04X X=%04X Y=%04X S=%04X D=%04X P=%02X\n", cpu.pcaddr(),
                          ram[cpu.pcaddr() & 0xFFFFF], ram[(cpu.pcaddr() + 1) & 0xFFFFF],
@@ -703,6 +733,22 @@ std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &see
 // contract is BYTECODE.md "Result reporting".
 int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     if (!load_image(vm_path)) return 2;
+    sp_floor = 0x0400;                          // the C VM's stack floor (docs/VM.md)
+    // A2MIN_STACK_TOP=<hex>: start the VM's stack there instead of $1FFF, by
+    // patching omf2bin's stub (CLC XCE REP TSC STA $03FE, then LDA #$1FFF TCS
+    // at $2008). Stepping it down puts every operation of a program at every
+    // depth near the floor: scripts/stack-stress.sh, which the tripwire above
+    // turns into a test that a check is never too late.
+    if (const char *t = std::getenv("A2MIN_STACK_TOP"); t && *t) {
+        const unsigned top = static_cast<unsigned>(std::strtoul(t, nullptr, 16));
+        if (ram[0x2008] != 0xA9 || ram[0x2009] != 0xFF || ram[0x200A] != 0x1F || ram[0x200B] != 0x1B ||
+            top < 0x0800 || top > 0x1FFF) {
+            std::fprintf(stderr, "A2MIN_STACK_TOP: no stub to patch, or $%04X is outside $0800-$1FFF\n", top);
+            return 2;
+        }
+        ram[0x2009] = static_cast<uint8_t>(top & 0xFF);
+        ram[0x200A] = static_cast<uint8_t>(top >> 8);
+    }
     // The VM collects at every bytecode boundary when this byte is set (gc.c),
     // which turns every fixture into a collector test.
     // A2MIN_GC_PERIOD=k makes that every k-th boundary instead (vm.h gc_due):

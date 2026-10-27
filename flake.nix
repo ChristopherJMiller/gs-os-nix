@@ -450,6 +450,52 @@
             grep -q "MUTATION PASS" "$out"
           '';
 
+        # The interpreter's speed (DECISIONS.md D29, VM.md "Speed"): each
+        # tests/bench program must give the host's answer in no more cycles
+        # than tests/bench/cycles.txt records. a2min is cycle-exact, so the
+        # ratchet is exact, and it must be able to fail: a record one cycle
+        # faster than the program is must be refused.
+        bench = pkgs.runCommandCC "check-bench"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.nbc ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            vm=${ours.cvm}/cvm.bin
+            python3 scripts/bench.py --nbc nbc --a2min ./build/a2min --vm "$vm" | tee "$out"
+            grep -q "^BENCH OK" "$out"
+            awk '!/^#/ && !done { $2 = $2 - 1; done = 1 } { print }' tests/bench/cycles.txt > tight.txt
+            if python3 scripts/bench.py --nbc nbc --a2min ./build/a2min --vm "$vm" --record tight.txt > tight.log 2>&1; then
+              echo "bench ratchet SURVIVED a benchmark one cycle slower than recorded" >&2; exit 1
+            fi
+            grep -q "slower than recorded" tight.log
+            echo "ratchet self-test: one cycle slower is caught" | tee -a "$out"
+          '';
+
+        # The C stack's checks are never too late (docs/VM.md "The C stack"):
+        # the deepest program of each kind runs with its stack starting at
+        # every 64-byte step down to $0800, under a2min's tripwire, and must
+        # answer or E_NOMEM every time; a VM with the old margin must fail.
+        stack-stress = pkgs.runCommandCC "check-stack-stress"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ours.nbc ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/target ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            ./scripts/stack-stress.sh ./build/a2min nbc ${ours.cvm}/cvm.bin | tee "$out"
+            grep -q "STACK STRESS OK" "$out"
+          '';
+
         # float.c, built by ORCA/C and run on a2min, against the host's own
         # IEEE-754 arithmetic, printf and toJSON's text (scripts/float-vectors.sh):
         # three seeds of 1,520 vectors, then two planted bugs (D14).

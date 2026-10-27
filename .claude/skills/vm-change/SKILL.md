@@ -63,6 +63,13 @@ The fixtures are the host's own output, never a model's.
   from strings must unite their contexts (`ctx_join`) or a dependent
   derivation silently loses an input.
 - Valid Nix not implemented yet is `E_UNSUP`, never a guess.
+- **The C stack has a 1 KB margin above `$0400`** (VM.md "The C stack"):
+  every path between two `stack_check()`s must fit it. A new path deeper than
+  ~700 bytes -- a big local array, a call into `float.c` or `toml.c`, which
+  have no checks of their own -- calls `stack_need(n)` first. Frame sizes are
+  readable from each prologue (`TSC SEC SBC #n TCS`) in `cvm.bin`; `just
+  stack-stress` runs the deepest programs at every stack depth, and a2min
+  ends any run that goes under the floor.
 
 ## 3. Tests that can fail (D14)
 
@@ -91,10 +98,17 @@ The fixtures are the host's own output, never a model's.
    or error code, `just opcodes` (seconds): one row per primop in BYTECODE.md,
    its name in a2min's table -- the flake's `nbc-opcodes` fails otherwise,
    after an hour of other checks.
-2. `just verb-economics` if hashing or a card verb changed (needs `just
+2. `just bench` (seconds): the six speed benchmarks against
+   `tests/bench/cycles.txt` -- slower fails, faster asks for `just
+   bench-update` (D29). `just stack-stress` (minutes) if a deep path, a big
+   frame or `STACK_MIN` changed. Before claiming a collector change safe, the
+   corpus too under GC stress (`--gc-stress` with `--corpus tests/corpus/tvix`,
+   periods 1-3): no check runs it, and it found the `LOOKUP` mark bug; only
+   `eval-okay-tail-call-1` fails it (E_NOMEM, the card's half-space).
+3. `just verb-economics` if hashing or a card verb changed (needs `just
    fixtures` first so the workload is compiled); add the fixture to
    `VERB_WORKLOAD` in both the justfile and flake.nix if it exercises a verb.
-3. **`git add` every new file**, then `nix flake check -L --max-jobs 2` in the
+4. **`git add` every new file**, then `nix flake check -L --max-jobs 2` in the
    background (~12 min). The flake sees only tracked files: an untracked
    fixture is silently not tested. The "ABC: Error: Abc_FrameUpdateGia()" line
    in rtl-synth is old and harmless.

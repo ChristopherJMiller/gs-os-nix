@@ -89,6 +89,79 @@ stack pointer and points the direct-page register at them (`tsc / sbc / tcs / ph
 / tcd`), so `FORCE`'s recursion through `run()` costs one C frame per nesting
 level, as the assembly's did through `jsr run`. `E_NOMEM` when it nears `$0400`.
 
+### The C stack
+
+The stack runs down from `$1FFF` to `$0400`, and under it are the harness's
+`RESULT`, `DIAG`, flags (`$0330`) and `STATS` (`$0340`). Nothing below `$0400`
+may ever be written by a frame. `stack_check()` -- at every force and call --
+refuses (`E_NOMEM`) once S is under `STACK_MIN`, which is only safe if every
+path from one check to the next fits in the margin `STACK_MIN` leaves above
+`$0400`.
+
+**It did not** (found 2026-10-27, building the speed benchmarks): the margin
+was 256 bytes, and a chain of seven derivations, each a level of
+`derivationStrict` (a 486-byte frame) under the previous, took S to `$0351`.
+That wrote over the flags -- GC stress every sixth boundary and three verbs
+masked, from then on -- and over `STATS` (80 MB "promoted") before any check
+saw it; the run then failed as `E_NOMEM`, for the wrong reason. Measured
+over every fixture and corpus test since, the deepest stack used between
+two checks (a2min, from each check's S to the lowest S before the next):
+
+| Path | Bytes | |
+|---|---|---|
+| `fromTOML`, 32 nested arrays and a float | 2,538 | `tm_parse`, then `f_strtod` |
+| `fromJSON` numbers, `toXML` floats | 1,284, 1,225 | `f_strtod` 1,068, `g_digits` 1,038 |
+| float `toString`, `toJSON` floats | ~980 | `f_format` 502, `f_json` |
+| a fixed-output derivation | 682 | `prim_derivationstrict` 486 |
+| `hashString` | 665 | `sha512_block` 238, `str_hash` 218 |
+| everything else | under 560 | |
+
+(The frame sizes are read from each function's prologue, `TSC SEC SBC #n
+TCS`, in `cvm.bin`.) So `STACK_MIN` is `$0800`: a 1 KB margin over the 682
+bytes of the deepest ordinary path. The paths through `float.c` and `toml.c`,
+which have no VM in them and so no checks, call `stack_need(n)` first, at
+each of their five VM-side entries: `FLOAT_STACK` (1,600) and `TOML_STACK`
+(2,600) bytes above `STACK_MIN`. The cost is 1 KB of stack -- a derivation
+nests about 1 KB deep a level -- for a margin that is now measured, not hoped.
+
+Two things hold it: a2min's tripwire, which ends any VM run whose S or whose
+writes go under `$0400` (outside page 1, the caller's stack) as "C stack
+overflow", in every run of every check; and `scripts/stack-stress.sh`
+(`just stack-stress`, `checks.stack-stress`), which runs the deepest program
+of each kind with its stack starting at every 64-byte step from `$1FFF`
+down to `$0800` (`A2MIN_STACK_TOP` patches omf2bin's stub), so that each of
+its operations meets the floor somewhere. Every run must give the answer or
+`E_NOMEM`. A VM built with the old margin must fail it.
+
+### Speed (D29)
+
+`scripts/bench.py` (`just bench`, `checks.bench`) runs six programs in
+`tests/bench/`, each a different kind of work, once each with the card, and
+holds their CPU cycles to `tests/bench/cycles.txt`: an answer must be the
+host's (the `.exp` is `nix-instantiate`'s), and a cycle more than recorded
+fails. a2min is cycle-exact, so the ratchet is exact. Faster is recorded with
+`just bench-update`, in the commit that made it so. The baseline
+(2026-10-27):
+
+| Benchmark | Cycles | Its work |
+|---|---|---|
+| `tail-calls` | 99,949,902 | 5,000 calls of `n: if n == 5000 then n else f (n + 1)` -- 20,000 a call |
+| `recursion` | 77,692,598 | `fib 15`, `map`/`filter` and `sort` over 300 |
+| `strings` | 65,927,931 | 800 interpolations, a join, a slice, a SHA-256 |
+| `foldl-strict` | 45,947,756 | `foldl'` over 1,000 |
+| `attrs` | 36,252,861 | `listToAttrs` of 200, a `//`, 200 computed selections |
+| `derivations` | 10,532,760 | four chains of three derivations, to the `.drv` paths |
+
+Where `tail-calls`' cycles go (`A2MIN_PROFILE`, 4,000 calls): `deref` 26% --
+26 calls an iteration, ~196 cycles each, most of it ORCA/C's call and frame
+overhead around a two-line function -- `run` itself 24%, `mature_view` 8%
+(5.6 views an iteration, of the lambda and the constants, which the first
+collection promoted), `force_top` 8%, `force_thunk` 5%, `values_equal` 5%.
+The levers, in order: `deref`'s young case inline at the hot sites, and
+`force_top`'s already-forced case; keeping the constants out of the nursery,
+where promotion makes every `CONST` a view; then the dispatch loop.
+Each is measured here and priced in bank-0 bytes.
+
 ## Representation
 
 `vm.h` declares the heap objects of HEAP.md as C structs with explicit

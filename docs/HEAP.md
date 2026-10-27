@@ -140,12 +140,19 @@ length compare equal by whole words.
 **Bit 7 of `aux2` (bit 23 of `aux`) is a transient visit mark.** The VM's deep
 force sets it on a `LIST` or `ATTRS` while descending into it and clears it on the
 way out, so a cyclic structure (`let as = { y = as; }`) terminates as Nix's
-`deepSeq` does. No real count reaches bit 23, and nothing on the card runs while
-the CPU deep-forces. A collection during the descent promotes the marked
-container with its mark set, and the way out clears it through the write
-barrier, so the card can hold a marked object — harmless while nothing
-card-side reads `aux2`, and one more reason the card-side tracer of slice 5 must
-mask it (see the discrepancy note below).
+`deepSeq` does. No real count reaches bit 23, so **every card-side reader of
+`aux` masks it out**: `LOOKUP`'s attribute count, and `obj_size` and
+`is_ptr_field` for the tracer. A collection during the descent promotes the
+marked container with its mark set, and the way out clears it through the
+write barrier, so the card holds marked objects -- and the card does run while
+the CPU deep-forces: each thunk the descent forces runs bytecode, and a
+`SELECT` on a promoted set is `LOOKUP`. This text once said nothing on the card
+ran then, and `LOOKUP` took all 24 bits as the count. Found 2026-10-27, by the
+corpus under GC stress: `let a = { b = 1; c = a.b; }; in a` read `b`'s value
+from `4 * 2^23` bytes past the set -- null, so `E_BADNBC`, but where that
+memory held a pointer it would have been a silent wrong answer
+(`eval-okay-deep-force-self-select`, regress "LOOKUP finds every key in a
+set the CPU has marked", and an RTL mutation guard it).
 
 ## Alignment and minimum size
 
@@ -301,7 +308,7 @@ word 0 of a closure is opaque. Two more things become the card collector's
 problem the day it compacts: the window table caches copies by card address, so
 it must be flushed when addresses move (today a `RESERVE` never reuses one), and
 an object promoted mid-deep-force carries the `aux2` visit mark, which the
-tracer must mask out of the count. And since D20, a mature field may hold a young
+tracer masks out of the count (`obj_size`, `is_ptr_field`; as `LOOKUP` does). And since D20, a mature field may hold a young
 pointer until the next nursery collection: `MARK` (and `FOLLOW`) may only be
 issued with the remembered set empty, i.e. straight after a nursery collection.
 Recorded here so none of it can be forgotten.

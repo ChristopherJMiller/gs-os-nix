@@ -80,7 +80,15 @@
 #define VERB_NO_ALU64    0x02U
 #define VERB_NO_HASH     0x04U   /* SHA-256: HASH_PUSH / HASH_STREAM + HASH_FINAL */
 #define verb_off(bit)    (*(volatile uint8_t *)VERB_MASK_ADDR & (bit))
-#define STACK_MIN        0x0500U    /* the C stack (S) must stay above this */
+#define STACK_MIN        0x0800U    /* the C stack (S) must stay above this at every check,
+                                       which leaves 1 KB above $0400, under which are the
+                                       harness's RESULT, DIAG, flags and STATS: the deepest
+                                       stack measured between two checks is 682 bytes
+                                       (a fixed-output derivation; VM.md "The C stack").
+                                       Deeper paths ask for their own room: stack_need */
+#define FLOAT_STACK      1600U      /* float.c's parsing and formatting, under one call:
+                                       f_strtod's frame alone is 1,068 bytes, g_digits' 1,038 */
+#define TOML_STACK       2600U      /* tm_parse: 32 nested arrays or tables, then f_strtod */
 
 #define YOUNG_TAG        0x80000000UL
 #define NURSERY_BANK     0x01
@@ -326,6 +334,7 @@ void call_enter(void);
 obj_t *make_apply(obj_t *f, obj_t *x);
 uint16_t stack_ptr(void);
 void stack_check(void);
+void stack_need(uint16_t n);        /* E_NOMEM unless n bytes more than STACK_MIN are free */
 
 /* --- gc.c: the nursery collector --------------------------------------------------- */
 void gc_collect(void);

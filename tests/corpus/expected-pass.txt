@@ -195,8 +195,10 @@ fixtures/eval-okay-context-builtins
 fixtures/eval-okay-current-system
 fixtures/eval-okay-curry
 fixtures/eval-okay-deep-equality
+fixtures/eval-okay-deep-force-self-select
 fixtures/eval-okay-deepseq-cycle
 fixtures/eval-okay-derivation
+fixtures/eval-okay-derivation-chain
 fixtures/eval-okay-derivation-context
 fixtures/eval-okay-derivation-deep
 fixtures/eval-okay-derivation-dependent

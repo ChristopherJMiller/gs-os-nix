@@ -200,6 +200,7 @@ static void text(struct text *t, obj_t *o)
     case T_INT:    put(t, num, int_text(INTVAL(v), num)); break;
     case T_FLOAT:
         memcpy(&bits, PAYLOAD(v), 8);
+        stack_need(FLOAT_STACK);
         put(t, num, f_json(bits, num));
         break;
     case T_STRING: esc(t, v); break;
@@ -447,6 +448,7 @@ static void jnumber(struct src *s)
         push(new_int((int64_t)v));
         return;
     }
+    stack_need(FLOAT_STACK);
     bits = f_strtod((const char *)b + start, p - start);
     if (((bits >> 52) & 0x7FF) == 0x7FF) type_err();   /* nlohmann: "number overflow" */
     nursery_reserve(12);
@@ -765,6 +767,7 @@ static void xtext(struct text *t, obj_t *o, uint16_t depth, uint16_t seen, uint1
     case T_NULL:   xelem(t, depth, LIT("null"), 0, 0, 0, 0, 0); break;
     case T_FLOAT:
         memcpy(&bits, PAYLOAD(v), 8);
+        stack_need(FLOAT_STACK);
         len = f_g(bits, num);
         xelem(t, depth, LIT("float"), LIT("value"), num, len, 0);
         break;
@@ -974,6 +977,7 @@ void prim_fromtoml(void)
     force_top();
     s = deref(peek());
     if (s->tag != T_STRING || CTX(s)) type_err();      /* forceStringNoCtx */
+    stack_need(TOML_STACK);
     root = tm_parse(STRBYTES(s), AUX16(s));
     total = tm_size(root, 0);
     if (total > 0xFFFFUL) nomem();

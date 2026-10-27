@@ -36,6 +36,13 @@ void stack_check(void)
     if (stack_ptr() < STACK_MIN) nomem();
 }
 
+/* Before a path that goes deeper than STACK_MIN's margin with no check of its
+ * own -- float.c and toml.c, which have no VM in them (VM.md "The C stack") */
+void stack_need(uint16_t n)
+{
+    if (stack_ptr() < (uint16_t)(STACK_MIN + n)) nomem();
+}
+
 /* --- forcing ------------------------------------------------------------------------- */
 /* The one pointer an in-place update of a thunk with the value v (view vv)
  * writes, and its offset: the value, when the thunk becomes an INDIRECT to it;
