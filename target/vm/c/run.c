@@ -206,7 +206,7 @@ void call_enter(void)
         push(rpop());                           /* then g x */
     }
     stack_check();
-    e = alloc(12);
+    ALLOC(e, 12);
     SET_HDR(e, T_LIST, 2);
     ELEMS(e)[0] = CL_ENV(f);
     ELEMS(e)[1] = x;
@@ -266,7 +266,7 @@ static void closure(uint8_t tag, int closed)
         if (idx >= CHUNK_MAX) badnbc();
         if (imports[idx]) { push(imports[idx]); return; }
     }
-    o = alloc(12);
+    ALLOC(o, 12);
     SET_HDR(o, tag, 0);
     CL_CODE(o) = chunk_info[idx].code;
     CL_CTAB(o) = chunk_info[idx].ctab;
@@ -426,7 +426,13 @@ void run(void)
         /* A boundary: no C local holds an object or a view, so a collection
          * (gc.c lists the other places one runs) and a ring turnover (prims.c
          * also turns it over between strings, holding no view) are safe. */
-        if (gc_due())
+        if (gc_period) {                        /* as branches: ORCA/C made a ?: of this a
+                                                   boolean, then tested it (VM.md "Speed") */
+            if (++gc_tick >= gc_period) {
+                gc_tick = 0;
+                if (nfree != gc_water) gc_collect();
+            }
+        } else if (nfree >= NURSERY_END - GC_MARGIN)
             gc_collect();
         windows_maybe();
         op = fetch8();
@@ -439,7 +445,25 @@ void run(void)
         case OP_NULL:  push(obj_null); break;
 
         /* --- arithmetic --- */
-        case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_NEG:
+        case OP_ADD: case OP_SUB:
+            /* Two INTs, the usual case, here; anything else -- strings,
+             * paths, floats -- is op_arith's (VM.md "Speed") */
+            FORCE_TOP();
+            FORCE_SLOT2();
+            a = DEREF(vstack[vsp - 2]);
+            b = DEREF(vstack[vsp - 1]);
+            if (a->tag == T_INT && b->tag == T_INT) {
+                int64_t r;                      /* an if, not a 64-bit ?: with calls in its
+                                                   arms, which ORCA/C miscompiles (TOOLCHAIN.md) */
+                if (op == OP_ADD) r = add_checked(INTVAL(a), INTVAL(b));
+                else r = sub_checked(INTVAL(a), INTVAL(b));
+                vsp -= 2;                       /* new_int allocates within the boundary's margin */
+                push(new_int(r));
+                break;
+            }
+            op_arith(op);
+            break;
+        case OP_MUL: case OP_DIV: case OP_NEG:
             op_arith(op);
             break;
 
@@ -449,13 +473,18 @@ void run(void)
              * same object -- C++ Nix's rule, which the corpus pins. Inside a list
              * or set the pointer shortcut in values_equal applies. */
             force_two_orig(&a, &b, &ao, &bo);
+            if (a->tag == T_INT && b->tag == T_INT) {   /* the usual case, here (VM.md "Speed") */
+                push_bool(((uint32_t *)PAYLOAD(a))[0] == ((uint32_t *)PAYLOAD(b))[0] &&
+                          ((uint32_t *)PAYLOAD(a))[1] == ((uint32_t *)PAYLOAD(b))[1]);
+                break;
+            }
             if (a->tag == T_LAMBDA && b->tag == T_LAMBDA) { push(obj_false); break; }
             /* Nor is a NaN, even itself: at the top level Nix compares two
              * fresh values, so no pointer shortcut (docs/FLOAT.md). */
             if (a->tag == T_FLOAT || b->tag == T_FLOAT) { push_bool(num_cmp(a, b) == 1); break; }
             push_bool(values_equal(ao, bo));
             break;
-        case OP_LT: op_arith(OP_LT); break;
+        case OP_LT: push_bool(cmp_values() == 0); break;
         case OP_GT: push_bool(cmp_values() == 2); break;
         case OP_LE: push_bool(cmp_values() != 2); break;
         case OP_GE: push_bool(cmp_values() != 0); break;

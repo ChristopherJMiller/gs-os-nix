@@ -183,6 +183,29 @@ Moving `run.c` out of bank 0 changes nothing the CPU does -- ORCA/C calls with
 for every fast path here several times over. Two mutations guard the fast
 paths (an `INDIRECT` left unfollowed, a mature pointer taken for a view).
 
+**Step 2 (2026-10-27): 290.8M -> 263.8M cycles, -9.3%** (-21.6% from the
+start), and `eval-okay-tail-call-1` 1.73G -> 1.37G. Bank 0 +207.
+
+| Change | All six | Notes |
+|---|---|---|
+| the GC-stress period read once at entry, not through a long pointer at every boundary | -1.4% | |
+| `==` of two INTs inline in `EQ` | -3.3% | `tail-calls` -11.6%: `values_equal` cost ~1,800 cycles for two INTs |
+| `<` `>` `<=` `>=`: two INTs first in `cmp_values`, ordered from the bytes | -0.3% | no `~SCMP8`, the 64-bit signed compare, a call |
+| `+` `-` of two INTs inline in the dispatch | -1.6% | `add_checked`/`sub_checked` still: Nix 2.34's overflow is an error |
+| `ALLOC`, `alloc` inline, in `new_int`, `closure`, `call_enter` | -1.6% | |
+| `win_slot`'s shift unsigned | -1.0% | an `int`'s `>>` is `~SSHIFTRIGHT`, a call, on every mature `deref` |
+| the boundary's GC test as branches | -0.6% | ORCA/C made `gc_due()`'s `?:` a boolean, then tested it |
+
+Measured on the way (a2min trace, per dispatch, `tail-calls`): the loop
+alone is ~30 65816 instructions an operation -- `POP`, whose body is
+`--vsp`, costs 34 -- and `CONST` 93, `ENV_GET` 156, `EQ` 272, `ADD` 414.
+`fetch8` is nine instructions through a 32-bit `pc` in memory. Four
+mutations guard the integer paths; two of them survived every fixture until
+`eval-okay-int-compare`, which compares INTs differing only in their high 32
+bits and only in sign. And `c-lint`'s orcabugs refused the first `+`/`-`:
+`op == OP_ADD ? add_checked(...) : sub_checked(...)` is a 64-bit `?:` with a
+call in an arm, the shape ORCA/C miscompiles (TOOLCHAIN.md) -- an `if` now.
+
 ## Representation
 
 `vm.h` declares the heap objects of HEAP.md as C structs with explicit

@@ -103,6 +103,7 @@ static int rs_is_ptr(const obj_t *h, uint16_t off)
 }
 
 uint8_t gc_tick;            /* boundaries since the last stress collection */
+uint8_t gc_period;          /* the stress period, 0 for none (vm.h, run.c's loop head) */
 
 /* vm.h explains when this may be called. Under A2MIN_RESERVE_STRESS it
  * collects every time (if anything is young), which is what proves each call

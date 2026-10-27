@@ -260,6 +260,9 @@ _Noreturn void badnbc(void);
 
 /* --- data.c: allocation, stacks, values ------------------------------------------ */
 obj_t *alloc(uint16_t size);        /* size a multiple of 4, >= 8 */
+/* alloc, inline: the nursery's bump, for the hot allocations (VM.md "Speed") */
+#define ALLOC(o, n) do { if ((uint16_t)(n) > (uint16_t)(NURSERY_END - nfree)) nomem(); \
+                         (o) = YOUNG_PTR(nfree); nfree += (n); } while (0)
 obj_t *new_int(int64_t v);
 obj_t *str_alloc(uint16_t len);     /* a STRING with a null context, padded */
 obj_t *path_alloc(uint16_t len);    /* a PATH, no context word (HEAP.md) */
@@ -351,14 +354,15 @@ void stack_need(uint16_t n);        /* E_NOMEM unless n bytes more than STACK_MI
 
 /* --- gc.c: the nursery collector --------------------------------------------------- */
 void gc_collect(void);
-/* Collect at this boundary? Normally for nursery pressure. Under GC stress the
- * byte at GC_STRESS_ADDR is a period k: every k-th boundary. k = 1 promotes
- * every value before it can ever be stored young, so it never exercises the
- * remembered set; k = 2 or 3 leaves values young across some stores (D20). */
+/* Whether a boundary collects (run()'s loop head): normally for nursery
+ * pressure. Under GC stress the byte at GC_STRESS_ADDR is a period k: every
+ * k-th boundary. k = 1 promotes every value before it can ever be stored
+ * young, so it never exercises the remembered set; k = 2 or 3 leaves values
+ * young across some stores (D20). */
 extern uint8_t gc_tick;
-#define gc_due() (*(volatile uint8_t *)GC_STRESS_ADDR \
-    ? (++gc_tick >= *(volatile uint8_t *)GC_STRESS_ADDR && (gc_tick = 0, nfree != gc_water)) \
-    : nfree >= NURSERY_END - GC_MARGIN)
+extern uint8_t gc_period;   /* GC_STRESS_ADDR's byte, read once at entry: a2min sets it
+                               before the run, and the loop read it through a long
+                               pointer at every boundary (VM.md "Speed") */
 /* Room for one operation's allocation: collect now if fewer than `bytes` are
  * free (E_NOMEM if a collection cannot make them). Collections otherwise run
  * only at bytecode boundaries with a GC_MARGIN of 2 KB, so an operation that

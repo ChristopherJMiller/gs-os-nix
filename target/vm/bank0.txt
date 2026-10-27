@@ -1,4 +1,4 @@
 # Bank 0 of the VM (scripts/bank-gate.py): its size, exactly, and the runtime
 # routines allowed in it. Rewritten by `just bank-gate --update`.
-bank0 28694
+bank0 28901
 lib longjmp memcmp memcpy memset memset_explicit setjmp ~CUMUL2 ~LSHR4 ~LSHR8 ~SCMP8 ~SHL4 ~SHL8 ~SSHIFTRIGHT ~UDIV2 ~UDIV4 ~UDIV8 ~UMOD4 ~UMUL8

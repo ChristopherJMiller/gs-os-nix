@@ -230,6 +230,7 @@ fixtures/eval-okay-hashstring-context
 fixtures/eval-okay-import
 fixtures/eval-okay-import-values
 fixtures/eval-okay-inherit-and-escapes
+fixtures/eval-okay-int-compare
 fixtures/eval-okay-int-limits
 fixtures/eval-okay-lambda-basic
 fixtures/eval-okay-lambda-value

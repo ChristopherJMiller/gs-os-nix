@@ -24,7 +24,8 @@ obj_t *alloc(uint16_t size)
 
 obj_t *new_int(int64_t v)
 {
-    obj_t *o = alloc(12);
+    obj_t *o;
+    ALLOC(o, 12);
     SET_HDR(o, T_INT, 0);
     INTVAL(o) = v;
     return o;
@@ -161,7 +162,7 @@ void windows_turnover(void)
  * slot, without two ~LSHR4 calls -- which made this ~4% of a promoting
  * program's cycles (vm.h BYTE_OF) -- and a macro, because the call cost
  * more than the XOR (~100 cycles; ORCA/C does not inline). p: an lvalue. */
-#define win_slot(p) ((uint16_t)((BYTE_OF(p, 0) >> 2) ^ BYTE_OF(p, 1)) & (NWIN - 1))
+#define win_slot(p) ((uint16_t)(((uint16_t)BYTE_OF(p, 0) >> 2) ^ BYTE_OF(p, 1)) & (NWIN - 1))   /* unsigned: an int's >> is ~SSHIFTRIGHT, a call */
 
 void windows_invalidate(obj_t *p)
 {
@@ -375,11 +376,18 @@ int has_attr(obj_t *set, obj_t *name)
 }
 
 /* --- ordering ------------------------------------------------------------------------------ */
+/* Two INTs' order, from their bytes: differing signs decide it, and two of one
+ * sign order as their unsigned bits -- no 64-bit signed compare, which is
+ * ~SCMP8, a call (VM.md "Speed") */
 static int cmp64(obj_t *a, obj_t *b)
 {
-    int64_t x = INTVAL(a), y = INTVAL(b);
-    if (x < y) return 0;
-    if (x > y) return 2;
+    const uint8_t *x = (const uint8_t *)PAYLOAD(a), *y = (const uint8_t *)PAYLOAD(b);
+    uint32_t xw, yw;
+    if ((x[7] ^ y[7]) & 0x80) return x[7] & 0x80 ? 0 : 2;
+    xw = ((const uint32_t *)x)[1]; yw = ((const uint32_t *)y)[1];
+    if (xw != yw) return xw < yw ? 0 : 2;
+    xw = ((const uint32_t *)x)[0]; yw = ((const uint32_t *)y)[0];
+    if (xw != yw) return xw < yw ? 0 : 2;
     return 1;
 }
 
@@ -414,6 +422,7 @@ int cmp_values(void)
 {
     obj_t *a, *b, *ao, *bo;
     force_two_orig(&a, &b, &ao, &bo);
+    if (a->tag == T_INT && b->tag == T_INT) return cmp64(a, b);           /* the usual case, first */
     if (a->tag == T_FLOAT || b->tag == T_FLOAT) return num_order(a, b);   /* as doubles; 3 unordered */
     if (a->tag != b->tag) type_err();
     switch (a->tag) {

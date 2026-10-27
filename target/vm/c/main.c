@@ -59,6 +59,7 @@ void vm_entry(void)
     for (i = 0; i < STATS_N; ++i) STAT(i) = 0;
     vsp = rsp = fstack_n = catch_n = rs_n = 0;
     gc_tick = 0;
+    gc_period = *(volatile uint8_t *)GC_STRESS_ADDR;
     env = 0;
     gc_water = nfree = 0x0010;                  /* offset 0 stays unallocated */
     prims_init();
