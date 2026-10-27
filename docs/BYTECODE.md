@@ -605,4 +605,8 @@ Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corp
    `eval-okay-tail-call-1` (100 000 calls) no longer grows the CPU stack but
    still allocates an environment per call, so it waits for slice 4.
 4. Builtins that touch the store, `import`, paths; the nursery collector runs
-   during evaluation.
+   during evaluation. Done.
+5. **The rest of the language, by the refusal histogram.** Done 2026-10-26:
+   the generator refuses nothing in the vendored corpus (STATUS.md, "to a
+   complete bytecode compiler"); what needs GS/OS compiles and is refused at
+   run time by name (DECISIONS.md D26).
