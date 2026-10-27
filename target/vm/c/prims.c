@@ -449,12 +449,18 @@ static void prim_removeattrs(void)              /* set [ names ]: keep entries n
  * bytecode. */
 void insert_entry_pos(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, obj_t *value, uint16_t pos)
 {
-    uint16_t j, k, c;
-    obj_t *nv = deref(name);
-    for (j = 0; j < *cnt; ++j) {
-        c = str_cmp(deref(ANAMES(set, cap)[j]), nv);
+    uint16_t j, k, c, hi, mid;
+    obj_t *nv = deref(name), *e;
+    /* A binary search: the names so far are sorted and unique, so an equal one
+     * met on the way is the duplicate. It was a scan from the start, a
+     * str_cmp a name -- 29% of listToAttrs over 200 names (VM.md "Speed"). */
+    for (j = 0, hi = *cnt; j < hi; ) {
+        mid = (uint16_t)((j + hi) >> 1);
+        e = ANAMES(set, cap)[mid];
+        c = str_cmp(DEREF(e), nv);
         if (c == 1) return;                     /* first occurrence wins */
-        if (c == 2) break;                      /* existing > new: insert here */
+        if (c == 2) hi = mid;                   /* existing > new: it goes before */
+        else j = mid + 1;
     }
     for (k = *cnt; k > j; --k) {
         HASHES(set)[k] = HASHES(set)[k - 1];

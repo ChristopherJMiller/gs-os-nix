@@ -8,7 +8,7 @@
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
 | **L2** | Card in a machine: register map, verilate, a2bus device, patched mame | **done — M2 achieved** (gated by the ROM-free harness; MAME glue written, needs a romset) |
 | **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, collector, CPU nursery | **done** — card side (memory engine, `DATA`/`TAG`, `ALLOC`/`RESERVE`, `FOLLOW`, `HASH_STREAM`, `LOOKUP`, `ALU64`, `MARK`/`COMPACT`) and the CPU-side nursery (`target/heap/nursery.s`: bump alloc, Cheney in RAM, one-burst promotion). D6 measured: `just bench-nursery` |
-| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — the bytecode compiler is complete (2026-10-26): `nbc` refuses nothing in the vendored corpus, tvix's own notyetpassing tests included. Scoreboard 637 / 648: 0 fail, 0 error, 0 need GS/OS, 0 unsupported -- every corpus test passes but tvix's own 11 notyetpassing. Next: interpreter speed (the roadmap below, item 4).** The history: `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
+| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — the bytecode compiler is complete (2026-10-26): `nbc` refuses nothing in the vendored corpus, tvix's own notyetpassing tests included. Scoreboard 640 / 651: 0 fail, 0 error, 0 need GS/OS, 0 unsupported -- every corpus test passes but tvix's own 11 notyetpassing. Next: interpreter speed (the roadmap below, item 4).** The history: `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | not started |
 | **L6** | SHA-256 of strings, ATerm, `derivation` primop, string context; `NARHASH` with file I/O (D21) | **in progress** — `builtins.hashString "sha256"` on the card (`HASH_PUSH` for a young string, `HASH_STREAM` for a mature one, `sha256.c` without a card), matching Nix on FIPS padding edges; `md5`, `sha1` and `sha512` on the CPU (`hashes.c`). **`derivation`** ([DERIVATION.md](DERIVATION.md)): input-addressed, byte-identical to the host -- ATerm, `hashDerivationModulo`, output and `.drv` paths from the card's `HASH_FINAL` `P3`; `derivation.nix` embedded verbatim. **String context** carries inputs through `+`, `"${}"`, `concatStringsSep`, `toString`, `substring`, `baseNameOf`, `dirOf`, so a chain of derivations matches the host. **Fixed-output derivations** (`outputHash`, every `fetchurl`): the path from the declared hash (base16, nix32, Base64, SRI; md5, sha1, sha256, sha512; flat and NAR), and the modulo hash a dependent sees, as the host computes them. `drvPath` (`=`) context, the context builtins, `toFile` and `currentSystem` too (Phase B of the roadmap below, complete 2026-10-26). Next for L6: `NARHASH`, which needs file I/O (L7) |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | **started, in simulation** (2026-10-26): the file builtins call GS/OS (`gsos.c`, [GSOS.md](GSOS.md), D30) and a2min answers from a mounted directory; the FST's symlink is defined (a `$F1` file holding its target). The driver, the FST itself, the store and fetching are not started |
@@ -123,12 +123,16 @@ passes, or is one of tvix's own notyetpassing. `error` is empty since
    **done**: `==`, the orderings, `+` and `-` of two INTs inline, `alloc`
    inline where it is hot, the GC-stress period read once, two library calls
    ORCA/C hid in a shift and a `?:`. **290.8M -> 263.8M, -9.3%**; -21.6%
-   from the start. Next, by the per-operation trace (VM.md "Speed"): the
-   dispatch loop (~30 instructions an operation; `fetch8` through a 32-bit
-   `pc`), `listToAttrs`' insertion (25% of `attrs`, O(n^2)), integer
-   `toString`'s `~UDIV2` (9% of `strings`), constants kept out of the
-   nursery. The target: tail-call-1 inside 500M again: 2.13G -> 1.73G ->
-   1.37G.
+   from the start. ~~**Step 3: ORCA/C's 32-bit code, the operand fetch,
+   constants**~~ **done**: tests and stores on 16-bit halves (`IS_RAM`,
+   `IS_NULL`, `SET_HDR`, `ALLOC`), `fetch16` one load, `ctab` an index,
+   `listToAttrs` by binary search, `toString` and the reserve check without
+   a divide, the card's parameter port in bursts, and constants in the image
+   bank, never promoted. **263.8M -> 210.2M, -20.3%; -37.5% from the
+   start.** The target: tail-call-1 inside 500M again: 2.13G -> 1.73G ->
+   1.37G -> 1.04G. What is left is structural: the loop's ~25 instructions
+   an operation, a heap INT for every integer, an environment a call --
+   fused operations or unboxed small integers, each a design of its own.
 
 ## Roadmap (2026-10-26): to a complete bytecode compiler
 
@@ -413,7 +417,7 @@ a2min.
   other, were decided -- soft-float in C -- and are done: [FLOAT.md](FLOAT.md).)
 - **Card-side `MARK`** only when the promoted-bytes counter shows the 512 KB
   ceiling binding on a real program; nothing has yet.
-- **Bank 0** (28,901 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
+- **Bank 0** (28,813 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
   far pointers are the big lever left. (The md5/sha1/sha512 tables do not need
   it: string literals, roadmap item 1.) Watch for ORCA/C library routines: a
   struct copy links `~MOVE`, a variable left shift `~SHIFTLEFT`, a 32-bit
@@ -421,6 +425,10 @@ a2min.
 - **The corpus under GC stress** passes but for `eval-okay-tail-call-1`,
   which fills the card's 512 KB half-space (mature space is never collected:
   card-side `MARK`). No check runs it; it found the `LOOKUP` bug.
+- **Two promoted strings of 12 KB, joined, are `E_NOMEM` under GC stress**
+  (8 KB are not), as before speed step 3 (measured at c8e1d71): the views
+  and the result in one instruction. A program under no stress keeps such
+  strings young and is not affected.
 - **a2min's printer** shows `«repeated»` for a list printed twice when it is
   one object, where Nix prints it again (its printer tracks `Value*`s, and a
   returned value is a copy). No corpus test shows it yet.
@@ -458,7 +466,9 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-**Bank 0: 28,901 of 40,960 bytes** (2026-10-27, after speed step 2, +207:
+**Bank 0: 28,813 of 40,960 bytes** (2026-10-27, after speed step 3, -88:
+the halves in `IS_RAM`, `SET_HDR`, `ALLOC` and the bursts saved more than
+`load()`'s constants cost; 28,901 after speed step 2, +207:
 `gc_period`, the integer order from the bytes, `ALLOC`; 28,694 after speed step 1:
 -10,235 for `run.c` into `segment "core"`, +1,729 for the inline fast paths;
 37,200 after the C stack's margin, +46, `stack_need` and its calls; 37,154 after the GS/OS file
@@ -491,8 +501,10 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **637 / 648** (2026-10-27, after speed step 2:
-`eval-okay-int-compare`). It was 636 / 647 after the C stack's margin and
+The scoreboard reads **640 / 651** (2026-10-27, after speed step 3:
+`eval-okay-tostring-powers`, `eval-okay-big-constants`,
+`eval-okay-listtoattrs-long-names`). It was 637 / 648
+after speed step 2 (`eval-okay-int-compare`). It was 636 / 647 after the C stack's margin and
 `LOOKUP`'s mark (two fixtures). It was 634 / 645 (2026-10-26, after the GS/OS file
 builtins; **0 fail, 0 error, 0 need GS/OS, 0 unsupported**, 11
 notyetpassing -- tvix's own). It was 607 / 627 after md5/sha1/sha512 and the

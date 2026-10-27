@@ -13,14 +13,17 @@
 segment "core";
 
 const uint8_t *pc;
-obj_t **ctab;
+uint16_t ctab;
 obj_t *env;
 obj_t *fstack[FSTACK_N];
 uint16_t fstack_n;
 
 /* --- operand fetch ------------------------------------------------------------------ */
-#define fetch8()  (*pc++)
-#define fetch16() (pc += 2, (uint16_t)(pc[-2] | ((uint16_t)pc[-1] << 8)))
+/* One 16-bit load (the 65816 is little-endian and reads unaligned words),
+ * then the step: the two-byte form recomputed the address for each byte,
+ * ~30 instructions to this one's ~12 (VM.md "Speed") */
+static uint16_t fetch_w;
+#define fetch16() (fetch_w = *(const uint16_t *)pc, pc += 2, fetch_w)
 
 /* --- the C stack -------------------------------------------------------------------- */
 uint16_t stack_ptr(void)
@@ -70,7 +73,7 @@ static void force_thunk(void)
     uint16_t yoff;
     const uint8_t *spc = pc;
     ++ST_FORCES;
-    obj_t **sctab = ctab;
+    uint16_t sctab = ctab;
     uint32_t buf[3];
     stack_check();
     tv = DEREF(th);
@@ -78,9 +81,12 @@ static void force_thunk(void)
     fstack[fstack_n++] = th;
     rpush(env);
     pc = IMAGE_PC(CL_CODE(tv));
-    ctab = CTAB_AT(CL_CTAB(tv));
+    ctab = CL_CTAB(tv);
     env = CL_ENV(tv);
-    store_byte(th, 0, T_BLACKHOLE);             /* re-entry during evaluation is infinite recursion */
+    /* re-entry during evaluation is infinite recursion; a young thunk takes
+     * a plain store, a mature one the bus (store_byte) */
+    if (IS_RAM(th)) th->tag = T_BLACKHOLE;
+    else store_byte(th, 0, T_BLACKHOLE);
     run();                                      /* leaves the value above the thunk */
     env = rpop();
     ctab = sctab;
@@ -113,7 +119,7 @@ static void force_thunk(void)
         if (IS_YOUNG(y)) remember(th, yoff);
         windows_invalidate(th);
     } else {
-        vv = deref(v);
+        vv = DEREF(v);
         switch (vv->tag) {
         case T_INT: case T_FLOAT: case T_LAMBDA: case T_THUNK:
             ((uint32_t *)th)[2] = ((uint32_t *)vv)[2];
@@ -211,7 +217,7 @@ void call_enter(void)
     ELEMS(e)[0] = CL_ENV(f);
     ELEMS(e)[1] = x;
     pc = IMAGE_PC(CL_CODE(f));
-    ctab = CTAB_AT(CL_CTAB(f));
+    ctab = CL_CTAB(f);
     env = e;
 }
 
@@ -221,7 +227,7 @@ void call_enter(void)
 void do_call(void)
 {
     const uint8_t *spc = pc;
-    obj_t **sctab = ctab;
+    uint16_t sctab = ctab;
     rpush(env);
     call_enter();
     run();
@@ -435,10 +441,10 @@ void run(void)
         } else if (nfree >= NURSERY_END - GC_MARGIN)
             gc_collect();
         windows_maybe();
-        op = fetch8();
+        op = *pc++;
         switch (op) {
         /* --- constants and singletons --- */
-        case OP_CONST: push(ctab[fetch16()]); break;
+        case OP_CONST: push(ctab_pool[ctab + fetch16()]); break;
         case OP_POP:   --vsp; break;
         case OP_TRUE:  push(obj_true); break;
         case OP_FALSE: push(obj_false); break;
@@ -579,11 +585,12 @@ void run(void)
             i = fetch16();
             o = DEREF(env);
             while (n--) {
-                if (ELEMS(o)[0] == 0) badnbc();
-                o = DEREF(ELEMS(o)[0]);
+                a = ELEMS(o)[0];
+                if (IS_NULL(a)) badnbc();
+                o = DEREF(a);
             }
             a = ELEMS(o)[i];
-            if (a == 0) badnbc();               /* a slot read before it was set */
+            if (IS_NULL(a)) badnbc();           /* a slot read before it was set */
             push(a);
             break;
         case OP_ENV_POP: env = ELEMS(DEREF(env))[0]; break;

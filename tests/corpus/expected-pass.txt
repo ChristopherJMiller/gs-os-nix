@@ -185,6 +185,7 @@ fixtures/eval-okay-attrpos
 fixtures/eval-okay-attrpos-derivation
 fixtures/eval-okay-attrpos-insert
 fixtures/eval-okay-attrs
+fixtures/eval-okay-big-constants
 fixtures/eval-okay-big-operations
 fixtures/eval-okay-bool-ops
 fixtures/eval-okay-builtins-corners
@@ -238,6 +239,7 @@ fixtures/eval-okay-lazy-argument
 fixtures/eval-okay-let-forward
 fixtures/eval-okay-list-builtins
 fixtures/eval-okay-lists
+fixtures/eval-okay-listtoattrs-long-names
 fixtures/eval-okay-misc-builtins
 fixtures/eval-okay-mutual-recursion
 fixtures/eval-okay-nested-let-shadow
@@ -261,6 +263,7 @@ fixtures/eval-okay-tofile
 fixtures/eval-okay-tojson
 fixtures/eval-okay-tostring-int64
 fixtures/eval-okay-tostring-lists
+fixtures/eval-okay-tostring-powers
 fixtures/eval-okay-tostring-widths
 fixtures/eval-okay-toxml-rules
 fixtures/eval-okay-tryeval

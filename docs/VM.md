@@ -206,6 +206,37 @@ bits and only in sign. And `c-lint`'s orcabugs refused the first `+`/`-`:
 `op == OP_ADD ? add_checked(...) : sub_checked(...)` is a 64-bit `?:` with a
 call in an arm, the shape ORCA/C miscompiles (TOOLCHAIN.md) -- an `if` now.
 
+**Step 3 (2026-10-27): 263.8M -> 210.2M cycles, -20.3%** (-37.5% from the
+start), and `eval-okay-tail-call-1` 1.37G -> 1.04G -- half what it was. The
+pattern under most of it: ORCA/C's 32-bit code. A test or a store on a
+pointer or a `uint32_t` as a whole is 12 to 20 instructions; on its two
+16-bit halves, two to four. Read from a small 65816 disassembler over
+`cvm.bin` (a scratch tool) and a per-dispatch count from a2min's trace.
+
+| Change | All six | Notes |
+|---|---|---|
+| `fetch16` one 16-bit load | -2.5% | the two-byte form recomputed the address a byte |
+| `ctab` an index into `ctab_pool`, not a pointer | -0.7% | `CONST` an absolute indexed load |
+| `force_thunk`'s young paths inline (blackhole, the value's view) | -1.0% | |
+| `IS_NULL` (a pointer's halves ORed) in `ENV_GET` | -0.2% | |
+| `IS_RAM` on the pointer's high word | -3.5% | its 32-bit `&` was ~20 instructions, in every `deref` |
+| `SET_HDR` and `ALLOC`'s young pointer by halves | -2.1% | `YOUNG_PTR`'s ORs went through the stack |
+| no divide in `nursery_reserve_n`'s check, `toString` below 2^32, djb2 | -1.6% | powers of ten as a string literal; `h * 33` by halves |
+| `insert_entry_pos` by binary search | -3.1% | `attrs` -24%: it was a scan from the start, a `str_cmp` a name |
+| the parameter port in bursts (`ALU64`'s operands, `LOOKUP`'s key, the digest) | -4.0% | a `cw8` call a byte was ~76 cycles for one access |
+| constants in the image bank, above the image | -3.9% | never promoted, so never a view; the nursery when the bank is full |
+
+Tried and taken out: stepping `pc` by its low word only (the image is one
+bank). ORCA/C turned `((uint16_t *)&pc)[0] += 2` into a long pointer to `pc`
+on the direct page and a read-modify-write through it -- 0.7% slower.
+Eight mutations; `eval-okay-tostring-powers` holds every power of ten's
+edge, and `eval-okay-big-constants` both the image bank and the fallback.
+The binary search also made an older mutation decorative -- the window-ring
+turnover between `listToAttrs`' insertions, which `eval-okay-big-operations`
+had needed when every insertion scanned every name -- so
+`eval-okay-listtoattrs-long-names` (100 promoted names of ~700 bytes: 70 KB
+of views in one instruction) now needs it, and catches its removal.
+
 ## Representation
 
 `vm.h` declares the heap objects of HEAP.md as C structs with explicit

@@ -292,12 +292,25 @@ obj_t *deref_rpop(void)
 /* --- strings ------------------------------------------------------------------------------ */
 /* djb2, as HEAP.md specifies: h = 5381; h = h * 33 + c. The card never computes
  * it; LOOKUP takes the search hash as a parameter. */
+/* djb2, h = h * 33 + c, by 16-bit halves: a 32-bit shift is ~SHL4, a call,
+ * and this ran one a byte of every name hashed (VM.md "Speed"). The same h. */
 uint32_t hash_str(obj_t *s)
 {
-    uint32_t h = 5381;
-    uint16_t n = AUX16(s), i;
+    uint16_t lo = 5381, hi = 0, slo, shi, n = AUX16(s), i;
+    uint32_t h;
     const uint8_t *b = (const uint8_t *)STRBYTES(s);
-    for (i = 0; i < n; ++i) h = (h << 5) + h + b[i];
+    for (i = 0; i < n; ++i) {
+        shi = (uint16_t)((hi << 5) | (lo >> 11));   /* h << 5 */
+        slo = (uint16_t)(lo << 5);
+        shi += hi;                                  /* + h */
+        slo += lo;
+        if (slo < lo) ++shi;
+        lo = slo + b[i];                            /* + c */
+        if (lo < slo) ++shi;
+        hi = shi;
+    }
+    ((uint16_t *)&h)[0] = lo;
+    ((uint16_t *)&h)[1] = hi;
     return h;
 }
 

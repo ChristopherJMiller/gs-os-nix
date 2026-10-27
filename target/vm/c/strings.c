@@ -65,18 +65,32 @@ static obj_t *int_to_str(int64_t v)
      * made toString 37% of a program that prints numbers (a2min's function
      * profile, eval-okay-big-operations). Almost every number printed fits 16
      * bits, so the narrow loops come first and the wide one runs only above. */
-    if (u <= 0xFFFFU) {
-        uint16_t w = (uint16_t)u;
-        do { buf[n++] = (char)('0' + w % 10); w /= 10; } while (w);
-    } else if (u <= 0xFFFFFFFFUL) {
-        uint32_t w = (uint32_t)u;
-        do { buf[n++] = (char)('0' + (uint16_t)(w % 10)); w /= 10; } while (w);
-    } else {
-        do { buf[n++] = (char)('0' + (uint16_t)(u % 10)); u /= 10; } while (u);
-    }
     if (v < 0) buf[n++] = '-';
+    if (u <= 0xFFFFFFFFUL) {
+        /* Below 2^32, each digit by subtracting its power of ten, at most 9
+         * times: no divide at all, where two ~UDIV2 calls a digit were 11% of
+         * a program that prints numbers (VM.md "Speed"). The powers are a
+         * string literal, so they stay with the code (a static would be bank 0's). */
+        const uint32_t *p = (const uint32_t *)"\x00\xca\x9a\x3b\x00\xe1\xf5\x05\x80\x96\x98\x00"
+                                              "\x40\x42\x0f\x00\xa0\x86\x01\x00\x10\x27\x00\x00"
+                                              "\xe8\x03\x00\x00\x64\x00\x00\x00\x0a\x00\x00\x00";
+        uint32_t w = (uint32_t)u;
+        uint16_t k, started = 0;
+        char d;
+        for (k = 0; k < 9; ++k) {
+            for (d = '0'; w >= p[k]; ++d) w -= p[k];
+            if (d != '0' || started) { buf[n++] = d; started = 1; }
+        }
+        buf[n++] = (char)('0' + (uint16_t)w);
+        o = str_alloc(n);
+        memcpy(STRBYTES(o), buf, n);
+        return o;
+    }
+    i = n;                                      /* past the sign: the digits, last first */
+    do { buf[n++] = (char)('0' + (uint16_t)(u % 10)); u /= 10; } while (u);
     o = str_alloc(n);
-    for (i = 0; i < n; ++i) STRBYTES(o)[i] = buf[n - 1 - i];
+    if (i) STRBYTES(o)[0] = '-';
+    for (; i < n; ++i) STRBYTES(o)[i] = buf[n - 1 - i + (v < 0)];
     return o;
 }
 

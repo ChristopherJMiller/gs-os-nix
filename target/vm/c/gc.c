@@ -126,7 +126,9 @@ int nursery_reserve(uint16_t bytes)
 
 int nursery_reserve_n(uint16_t n, uint16_t per, uint16_t fixed)
 {
-    if (per && n > (uint16_t)(0xFFFFU - fixed) / per) nomem();   /* more than a bank */
+    /* The divide (~UDIV2, a call) only when it can matter: below 256 each,
+     * n * per is at most 65,025, and every caller's fixed is 4, 8 or 40 */
+    if ((n > 0xFF || per > 0xFF) && per && n > (uint16_t)(0xFFFFU - fixed) / per) nomem();   /* more than a bank */
     return nursery_reserve((uint16_t)(fixed + n * per));
 }
 

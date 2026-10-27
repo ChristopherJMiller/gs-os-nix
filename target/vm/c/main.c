@@ -108,6 +108,24 @@ _Noreturn void badnbc(void)   { err_exit(E_BADNBC); }
  * and record each chunk's code and constant-table offsets. */
 static uint16_t rd16(const uint8_t *p) { return p[0] | ((uint16_t)p[1] << 8); }
 
+/* Constants live in the image bank, above the image, for good (VM.md
+ * "Speed"): immutable and pointer-free, they need no collector -- and in the
+ * nursery the first collection promoted them, after which every use of one
+ * was a mature view. STATIC_PTR gives them the RAM bit and not the nursery's
+ * bank ($8003, not $8001), so deref takes them as they are and the collector
+ * leaves them where they are, as it does the singletons. When the bank is
+ * full, the nursery, as before. */
+static uint16_t konst;                          /* the next free offset in the image bank */
+
+static obj_t *const_alloc(uint16_t size)
+{
+    obj_t *o;
+    if ((uint16_t)(APPLY_CODE_OFF - konst) < size) return alloc(size);
+    o = STATIC_PTR(IMAGE_BASE + konst);
+    konst += size;
+    return o;
+}
+
 static void load(void)
 {
     const uint8_t *img = (const uint8_t *)IMAGE_BASE;
@@ -121,6 +139,7 @@ static void load(void)
     total = (uint32_t)rd16(img + 8) | ((uint32_t)rd16(img + 10) << 16);
     if (total > IMAGE_MAX || nchunks == 0 || nchunks > CHUNK_MAX) badnbc();
     cnext = 0;
+    konst = round4((uint16_t)total);            /* the constants after the image */
     memset(imports, 0, sizeof imports);      /* no file imported yet */
     for (ci = 0; ci < nchunks; ++ci) {
         off = (uint32_t)rd16(img + 20 + 4 * ci) | ((uint32_t)rd16(img + 22 + 4 * ci) << 16);
@@ -128,26 +147,33 @@ static void load(void)
         q = img + (uint16_t)off;
         cnt = rd16(q);
         q += 4;
-        chunk_info[ci].ctab = 4 * cnext;
+        chunk_info[ci].ctab = cnext;
         for (k = 0; k < cnt; ++k) {
             if (cnext >= CTAB_N) nomem();
             switch (q[0]) {
             case K_INT:
             case K_FLOAT:                       /* the same shape: kind is tag */
-                o = alloc(12);
+                o = const_alloc(12);
                 SET_HDR(o, q[0], 0);
                 memcpy(PAYLOAD(o), q + 1, 8);
                 q += 9;
                 break;
-            case K_STRING:
+            case K_STRING:                      /* str_alloc's shape: padded, then no context */
                 len = rd16(q + 1);
-                o = str_alloc(len);
+                if (round4(len) < len) nomem();
+                o = const_alloc(round4(len) + 8);
+                SET_HDR(o, T_STRING, len);
+                if (round4(len)) *(uint32_t *)(PAYLOAD(o) + round4(len) - 4) = 0;
+                STRCTX(o, len) = 0;
                 memcpy(STRBYTES(o), q + 3, len);
                 q += 3 + len;
                 break;
-            case K_PATH:                        /* already canonical: the generator did it */
-                len = rd16(q + 1);
-                o = path_alloc(len);
+            case K_PATH:                        /* path_alloc's: padded, no context word */
+                len = rd16(q + 1);              /* already canonical: the generator did it */
+                if (round4(len) < len) nomem();
+                o = const_alloc(round4(len) ? round4(len) + 4 : 8);
+                SET_HDR(o, T_PATH, len);
+                if (round4(len)) *(uint32_t *)(PAYLOAD(o) + round4(len) - 4) = 0;
                 memcpy(STRBYTES(o), q + 3, len);
                 q += 3 + len;
                 break;
@@ -160,7 +186,7 @@ static void load(void)
     }
     if (entry >= nchunks) badnbc();
     pc = IMAGE_PC(chunk_info[entry].code);
-    ctab = CTAB_AT(chunk_info[entry].ctab);
+    ctab = chunk_info[entry].ctab;
 }
 
 /* --- the state on error, for a2min --run-nbc-c --------------------------------------- */

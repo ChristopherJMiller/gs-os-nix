@@ -158,9 +158,14 @@ _Static_assert(sizeof(obj_t) == 4, "a header is four bytes (HEAP.md)");
  * must be an lvalue -- an rvalue fails to compile rather than misbehaving. */
 #define BYTE_OF(x, i) (((const uint8_t *)&(x))[i])
 #define HI16(x)       (((const uint16_t *)&(x))[1])
+#define LO16(x)       (((const uint16_t *)&(x))[0])
+/* A null pointer, x a variable: its halves ORed -- ORCA/C's == 0 on a pointer
+ * was ~13 instructions (VM.md "Speed") */
+#define IS_NULL(x)    ((LO16(x) | HI16(x)) == 0)
 #define IS_YOUNG(p)  (HI16(p) == 0x8001U)   /* in the nursery */
 #define IS_STATIC(p) (HI16(p) == 0x8000U)   /* in this program */
-#define IS_RAM(p)    ((PBITS(p) & YOUNG_TAG) != 0)               /* dereferenceable */
+#define IS_RAM(p)    ((HI16(p) & 0x8000U) != 0)                  /* dereferenceable; p a variable:
+                                                                   the 32-bit & was ~20 instructions */
 #define IS_MATURE(p) ((p) != 0 && !IS_RAM(p))                     /* on the card */
 #define IS_WINDOW(p) (HI16(p) == 0x8005U)   /* a copy of a mature object */
 #define LOW16(p)     ((uint16_t)PBITS(p))
@@ -168,8 +173,10 @@ _Static_assert(sizeof(obj_t) == 4, "a header is four bytes (HEAP.md)");
 #define STATIC_PTR(o)  ((obj_t *)(YOUNG_TAG | (uint32_t)(o)))
 
 #define AUX16(o)     ((uint16_t)((o)->aux0 | ((uint16_t)(o)->aux1 << 8)))
-#define SET_HDR(o, t, n) ((o)->tag = (t), (o)->aux0 = (uint8_t)(n), \
-                          (o)->aux1 = (uint8_t)((uint16_t)(n) >> 8), (o)->aux2 = 0)
+/* The header as two words -- tag and aux0, then aux1 and aux2 = 0 -- not four
+ * byte stores, each with its own SEP/REP (VM.md "Speed") */
+#define SET_HDR(o, t, n) (((uint16_t *)(o))[0] = (uint16_t)((t) | ((uint16_t)(n) << 8)), \
+                          ((uint16_t *)(o))[1] = (uint16_t)((uint16_t)(n) >> 8))
 #define PAYLOAD(o)   ((uint8_t *)(o) + 4)
 #define INTVAL(o)    (*(int64_t *)PAYLOAD(o))
 #define BOOLVAL(o)   (PAYLOAD(o)[0])
@@ -205,14 +212,14 @@ _Static_assert(sizeof(obj_t) == 4, "a header is four bytes (HEAP.md)");
  * loader refuses an image with more (main.c), loudly. */
 #define CHUNK_MAX  256
 
-struct chunk_info { uint16_t code; uint16_t ctab; };   /* image offset, ctab offset */
+struct chunk_info { uint16_t code; uint16_t ctab; };   /* image offset, first constant's index in ctab_pool */
 
 struct catch_frame {
     jmp_buf jb;
     uint16_t vsp, rsp, fstack_n;
     obj_t *env;
     const uint8_t *pc;
-    obj_t **ctab;
+    uint16_t ctab;
 };
 
 extern obj_t *vstack[VSTACK_N];
@@ -237,7 +244,9 @@ extern obj_t *imports[CHUNK_MAX];
 extern uint16_t nchunks;
 
 extern const uint8_t *pc;
-extern obj_t **ctab;
+extern uint16_t ctab;              /* the running chunk's first constant, an index into ctab_pool:
+                                       CONST k is ctab_pool[ctab + k], an absolute indexed load
+                                       where a pointer was 32-bit arithmetic (VM.md "Speed") */
 extern obj_t *env;                  /* the current environment LIST, or 0 */
 extern uint16_t nfree;              /* nursery bump pointer (offset in bank 1) */
 extern uint16_t gc_water;           /* where the nursery starts (constants are promoted like anything else) */
@@ -249,8 +258,6 @@ extern obj_t *str_success, *str_value;
 
 #define IMAGE_PC(off)  ((const uint8_t *)(IMAGE_BASE + (uint32_t)(uint16_t)(off)))
 #define PC_OFF()       ((uint16_t)(uint32_t)pc)
-#define CTAB_AT(off)   ((obj_t **)((uint8_t *)ctab_pool + (uint16_t)(off)))
-#define CTAB_OFF()     ((uint16_t)((uint8_t *)ctab - (uint8_t *)ctab_pool))
 
 /* --- main.c ----------------------------------------------------------------------- */
 _Noreturn void err_exit(uint8_t code);
@@ -262,7 +269,8 @@ _Noreturn void badnbc(void);
 obj_t *alloc(uint16_t size);        /* size a multiple of 4, >= 8 */
 /* alloc, inline: the nursery's bump, for the hot allocations (VM.md "Speed") */
 #define ALLOC(o, n) do { if ((uint16_t)(n) > (uint16_t)(NURSERY_END - nfree)) nomem(); \
-                         (o) = YOUNG_PTR(nfree); nfree += (n); } while (0)
+                         ((uint16_t *)&(o))[0] = nfree; ((uint16_t *)&(o))[1] = 0x8001U; \
+                         nfree += (n); } while (0)   /* YOUNG_PTR(nfree), by halves; o a variable */
 obj_t *new_int(int64_t v);
 obj_t *str_alloc(uint16_t len);     /* a STRING with a null context, padded */
 obj_t *path_alloc(uint16_t len);    /* a PATH, no context word (HEAP.md) */

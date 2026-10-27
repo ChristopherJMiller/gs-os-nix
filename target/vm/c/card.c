@@ -159,6 +159,42 @@ static void burst_in(uint8_t *dst, uint16_t n)
     }
 }
 
+/* n bytes to and from the parameter slot PSEL names, which auto-increments as
+ * DATA does: a burst, where a cw8 or cr8 call a byte was ~76 cycles of call
+ * for one register access (VM.md "Speed"). The card sees the same accesses
+ * in the same order. */
+static void pport_out(const uint8_t *src, uint16_t n)
+{
+    asm {
+        ldx slot_x
+        ldy #0
+        sep #0x20
+    lp: cpy n
+        beq done
+        lda [src],y
+        sta 0xC087,x
+        iny
+        bra lp
+    done: rep #0x20
+    }
+}
+
+static void pport_in(uint8_t *dst, uint16_t n)
+{
+    asm {
+        ldx slot_x
+        ldy #0
+        sep #0x20
+    lp: cpy n
+        beq done
+        lda 0xC087,x
+        sta [dst],y
+        iny
+        bra lp
+    done: rep #0x20
+    }
+}
+
 void card_read_at(uint32_t addr, void *dst, uint16_t n)
 {
     set_a0(addr);
@@ -184,12 +220,12 @@ void card_write_at(uint32_t addr, const void *src, uint16_t n)
  * (its error state cleared). */
 static int hash_finish(uint8_t *out, uint8_t psel)
 {
-    uint16_t st, i;
+    uint16_t st;
     cw8(REG_CMD, V_HASH_FINAL);                 /* drains the FIFO, then pads */
     do st = cr8(REG_CMD); while (!(st & (ST_DONE | ST_ERR)));
     if (st & ST_ERR) { cw8(REG_CTRL, 0x01); return 0; }
     cw8(REG_PSEL, psel);
-    for (i = 0; i < 32; ++i) out[i] = (uint8_t)cr8(REG_PPORT);
+    pport_in(out, 32);
     return 1;
 }
 
@@ -256,10 +292,7 @@ int card_lookup(uint32_t set, uint32_t h, uint16_t *ix, uint32_t *value)
     uint16_t st;
     set_a0(set);
     cw8(REG_PSEL, 0);
-    cw8(REG_PPORT, BYTE_OF(h, 0));
-    cw8(REG_PPORT, BYTE_OF(h, 1));
-    cw8(REG_PPORT, BYTE_OF(h, 2));
-    cw8(REG_PPORT, BYTE_OF(h, 3));
+    pport_out((const uint8_t *)&h, 4);
     cw8(REG_CMD, V_LOOKUP);
     do st = cr8(REG_CMD); while (!(st & (ST_DONE | ST_ERR)));
     if (st & ST_ERR) {
@@ -277,11 +310,11 @@ int card_lookup(uint32_t set, uint32_t h, uint16_t *ix, uint32_t *value)
  * Returns 0, or 1 if the card reported an error (division by zero). */
 int card_alu64(uint8_t op, const uint8_t *a, const uint8_t *b, uint8_t *r)
 {
-    uint16_t i, st;
+    uint16_t st;
     cw8(REG_PSEL, 0);
-    for (i = 0; i < 8; ++i) cw8(REG_PPORT, a[i]);
+    pport_out(a, 8);
     cw8(REG_PSEL, 1);
-    for (i = 0; i < 8; ++i) cw8(REG_PPORT, b[i]);
+    pport_out(b, 8);
     cw8(REG_PSEL, 2);
     cw8(REG_PPORT, op);
     cw8(REG_CMD, V_ALU64);
@@ -291,6 +324,6 @@ int card_alu64(uint8_t op, const uint8_t *a, const uint8_t *b, uint8_t *r)
         return 1;
     }
     cw8(REG_PSEL, 3);
-    for (i = 0; i < 8; ++i) r[i] = (uint8_t)cr8(REG_PPORT);
+    pport_in(r, 8);
     return 0;
 }
