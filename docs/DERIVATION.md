@@ -15,7 +15,9 @@ through string context.** Section "Refused" lists the rest, each a loud
 
 `derivation` is not a primop. It is Nix code, `derivation-internal.nix`,
 wrapped around the primop `derivationStrict`, and the generator embeds that
-file verbatim (`tools/nbc/src/derivation.nix`) and compiles it like an import: one
+file verbatim (`tools/nbc/src/derivation.nix`, byte for byte Nix 2.34.9's, its
+doc comment included, so that its attributes' positions are Nix's: D28) and
+compiles it like an import: one
 chunk, one `CLOSED_THUNK`, evaluated once however many sites say `derivation`
 (BYTECODE.md "Imports"). So the attribute set a program gets back (`all`,
 `drvAttrs`, `drvPath`, `outPath`, `outputName`, `type`, one attribute per

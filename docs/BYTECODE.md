@@ -52,13 +52,14 @@ tvix.
 All integers little-endian.
 
 ```
-Header (16 bytes)
+Header (20 bytes)
   +0   "NBC"          3 bytes, magic
-  +3   version        u8   = 1
+  +3   version        u8   = 2
   +4   chunk_count    u16
   +6   entry_chunk    u16  index of the chunk to evaluate (always 0 today)
   +8   total_size     u32  bytes in the file, header included
   +12  kinds          u32  0, or the offset of the chunk kinds (below)
+  +16  positions      u32  0, or the offset of the position table (below)
 
 Chunk table
   chunk_count x u32   byte offset of each chunk from the start of the file
@@ -87,6 +88,16 @@ which shows a function as Nix does, `<PRIMOP>` and `<PRIMOP-APP>` where a
 lambda is `<LAMBDA>` ("Deep force and the printer"). A primop is a synthesised
 lambda here, and its code is the same as a user's `a: b: builtins.add a b`,
 which Nix prints `<LAMBDA>`, so only the generator can say which is which.
+
+**The position table**, after the kinds and inside `total_size`, is
+`builtins.unsafeGetAttrPos`'s: `u16` file count, each file a `u16` length and
+its bytes (an absolute path, by the convention below: `/pwd/lang/` and the
+file's path from the compiled one's directory, Nix's own
+`/derivation-internal.nix` for the embedded `derivation`); then `u16` position
+count, each position `u16` file, `u16` line and `u16` column, 1-based as
+Nix's. Position *k* is the *k*-th, from 1; 0 is none. A set's attributes
+carry these indices (HEAP.md "ATTRS is struct-of-arrays"), the generator writing them into
+`ATTRS` and `ATTRS_DYN`; nothing reads the table but `unsafeGetAttrPos`.
 
 ### Constants
 
@@ -177,7 +188,7 @@ instruction even if it was a thunk before (in-place update, see below).
 | `$42` | `RETURN` | | `v →` | end of chunk: hand `v` to whoever forced this chunk, or, for the entry chunk, to the harness |
 | `$24` | `LIST` | `u16 n` | `e1 … en → l` | allocate `LIST` of the `n` values in push order. Elements are **not** forced |
 | `$25` | `CONCAT` | | `a b → a++b` | forces both; `LIST` only |
-| `$26` | `ATTRS` | `u16 n` | `k1 v1 … kn vn → s` | allocate `ATTRS`: names are `STRING` values pushed **in sorted order** by the generator (it refuses duplicates); the VM hashes each name (HEAP.md) into the key column. Values are not forced |
+| `$26` | `ATTRS` | `u16 n, u16 p` | `k1 v1 … kn vn → s` | allocate `ATTRS`: names are `STRING` values pushed **in sorted order** by the generator (it refuses duplicates); the VM hashes each name (HEAP.md) into the key column; attribute *i*'s position is `p + i`, or none if `p` is 0. Values are not forced |
 | `$27` | `SELECT` | | `s k → v` | forces `s` (must be `ATTRS`); `k` is a `STRING`; missing → `E_NOATTR` |
 | `$28` | `TRY_SELECT` | | `s k → v \| ∅` | as `SELECT`, but a missing attribute **or a non-`ATTRS` `s`** pushes the not-found marker ∅ (the null pointer, never otherwise a value) instead of aborting — Nix's `or` catches both |
 | `$29` | `JMP_IF_NOTFOUND` | `i16 rel` | `x → x` | peeks; jumps if the top is ∅. The compiler emits `POP` on the taken path |
@@ -191,7 +202,7 @@ instruction even if it was a thunk before (in-place update, see below).
 | `$38` | `TRY_WITH_GET` | | `k → v \| ∅` | as `WITH_GET`, but a miss pushes ∅ — the compiler uses it when a global (`map`, `toString`, …) is the fallback |
 | `$39` | `TAIL_CALL` | | `f a → ` | `CALL` without a frame: sets `pc`/`ctab`/`env` to the callee and continues, so the callee's `RETURN` returns to *this* chunk's caller. Emitted for a `CALL` immediately before `RETURN` |
 | `$3A` | `ATTR_NAME` | | `k → k` | forces `k`; a `STRING` with context is `E_TYPE`. After a computed key in `e.${k}`, `e ? ${k}` and `e.${k} or d` ("Dynamic attribute names"): the `SELECT`, `TRY_SELECT` or `HAS_ATTR` that follows refuses anything but a `STRING`, so the two make Nix's `forceStringNoCtx` |
-| `$3B` | `ATTRS_DYN` | `u16 n, u16 m` | `k1 v1 … kn vn d1 w1 … dm wm → s` | `ATTRS` with `m` computed names after the `n` sorted static ones: each `d` is a forced name, `null` drops its pair, anything but a `STRING` without context is `E_TYPE`, and a name already in the set is `E_DUPATTR`. Values are not forced |
+| `$3B` | `ATTRS_DYN` | `u16 n, u16 m, u16 p, u16 q` | `k1 v1 … kn vn d1 w1 … dm wm → s` | `ATTRS` with `m` computed names after the `n` sorted static ones (positions `p + i` for the static, `q + j` for the computed, in source order; 0 for none): each `d` is a forced name, `null` drops its pair, anything but a `STRING` without context is `E_TYPE`, and a name already in the set is `E_DUPATTR`. Values are not forced |
 | `$3C` | `LAMBDA_ARGS` | `u16 c, u16 a` | `→ f` | `LAMBDA c`, for a lambda with formals: chunk `a` builds its `builtins.functionArgs` set, `{ name = hasDefault; }`, and the `LAMBDA`'s `aux` keeps `a + 1` (HEAP.md). The formals themselves are desugared ("Desugarings"), so this is all that is left of them at run time |
 
 ### Catch frames: `tryEval` and `throw`
@@ -365,6 +376,7 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$5F` | `scopedImport` | 2 | `scope p`: the scope forced, a set (`E_TYPE`), then `p`, then `E_GSOS` (D26) |
 | `$60` | `fromTOML` | 1 | a string without context (`E_TYPE`), parsed as Nix's toml11 4.4.0 parses it, TOML 1.0 ([TOML.md](TOML.md), `toml.c`): a table a set, an array a list; not TOML, a date or a time (no `parse-toml-timestamps`), or a NUL in a key or a string is `E_TOML`; past the bank or 32 nested arrays and inline tables, `E_NOMEM` |
 | `$61` | `pathInterp` | 1 | internal, never a builtin: a path with interpolations, `./a/${b}`, which nbc lowers to `[ prefix part... ]` and this (Nix's `ExprConcatStrings` with a path first; the prefix is the first segment as Nix's parser resolves it, its trailing `/` kept): each part forced and coerced in order as a path segment is (a path its text, not copied; an int `E_TYPE`), a context in any `E_TYPE`, the texts joined and canonical, a `PATH` |
+| `$62` | `unsafeGetAttrPos` | 2 | `name set`: `name` a string without context (`E_TYPE`), then `set` forced (`E_TYPE` unless `ATTRS`); `null` if it has no such attribute or the attribute no position (HEAP.md "ATTRS is struct-of-arrays"), else Nix's `{ column; file; line; }` from the image's position table |
 | `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`

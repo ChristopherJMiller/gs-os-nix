@@ -162,6 +162,7 @@
 #define PRIM_SCOPEDIMPORT         0x5F /* 2 */
 #define PRIM_FROMTOML             0x60 /* 1 */
 #define PRIM_PATHINTERP           0x61 /* 1 */
+#define PRIM_UNSAFEGETATTRPOS     0x62 /* 2 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */

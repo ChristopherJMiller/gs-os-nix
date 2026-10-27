@@ -499,7 +499,7 @@ static void jobject(struct src *s)
         }
     /* the last value of a repeated key: insert_entry keeps a name's first,
      * so the pairs go in from the last */
-    nursery_reserve_n(cnt, 24, 8);              /* the set and its compacted copy; the pairs are on the stack */
+    nursery_reserve_n(cnt, 2 * ATTR_RESERVE, 8);    /* the set and its compacted copy; the pairs are on the stack */
     set = attrs_alloc(cnt);
     for (i = cnt; i-- > 0; ) insert_entry(set, cnt, &got, vstack[at + 2 * i], vstack[at + 2 * i + 1]);
     if (got != cnt) {
@@ -908,7 +908,10 @@ static uint32_t tm_size(uint16_t v, uint16_t depth)
             t += tm_size(tm_val(i), depth + 1);
         }
         if (!k) return t + 8;
-        if (kind == TM_TABLE) k += k + k;       /* 12 bytes an attribute, 4 an element */
+        if (kind == TM_TABLE) {                 /* 12 bytes an attribute, and a position */
+            t += round4((uint16_t)(k + k));
+            k = k + k + k;                      /* (no 32-bit multiply: ~UMUL4 is bank 0's) */
+        }
         return t + k + k + k + k + 4;
     case TM_STRING: return (uint32_t)round4(tm_len(v)) + 8;
     case TM_INT: case TM_FLOAT: return 12;

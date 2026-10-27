@@ -638,10 +638,12 @@ impl<'a> Lower<'a> {
                     Some(name) => format!("{FIXTURE_PWD}/{}", name.to_string_lossy()),
                     None => FIXTURE_PWD.to_string(),
                 };
+                // Its own attributes have no positions (mkPos: noPos): line 0.
+                let none = Pos { line: 0, col: 0 };
                 Ok(Expr::AttrSet(vec![
-                    ("column".into(), pos, Expr::Int(pos.col as i64)),
-                    ("file".into(), pos, Expr::Str(vec![StrPart::Lit(file)])),
-                    ("line".into(), pos, Expr::Int(pos.line as i64)),
+                    ("column".into(), none, Expr::Int(pos.col as i64)),
+                    ("file".into(), none, Expr::Str(vec![StrPart::Lit(file)])),
+                    ("line".into(), none, Expr::Int(pos.line as i64)),
                 ]))
             }
             ast::Expr::Root(n) => self.refuse(n, "nested root"),

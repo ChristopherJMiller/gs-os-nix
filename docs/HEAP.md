@@ -80,14 +80,32 @@ being moved — which is why chasing chains is common enough to deserve a verb.
 
 ## ATTRS is struct-of-arrays, deliberately
 
-An attribute set stores its three columns separately rather than interleaving them:
+An attribute set stores its columns separately rather than interleaving them:
 
 ```
 +0                      tag = $07, aux = count
 +4                      key hashes   : count x 4 bytes   <-- contiguous
 +4 + 4*count            value pointers: count x 4 bytes
 +4 + 8*count            name pointers : count x 4 bytes
++4 + 12*count           positions    : count x 2 bytes, padded to a word
 ```
+
+So a set is `4 + 12n + round4(2n)` bytes (8 if empty), and a reservation
+counts 16 bytes an attribute (`ATTR_RESERVE`), which covers the padding.
+
+**Positions** are `builtins.unsafeGetAttrPos`'s: an attribute's index into
+the image's position table (BYTECODE.md "File layout"), 0 for none. They are
+not pointers, so the collector and the card never trace them, and `LOOKUP`
+never reads them; they ride along as Nix's attributes carry their `PosIdx`.
+A literal set's attributes are the generator's positions -- a binding's is
+where its attribute path starts (so in `a.b.c = 1` all three report `a`), an
+`inherit`'s the name's, a computed name's its `${`. `//`, `removeAttrs` and
+`intersectAttrs` copy them; `listToAttrs` takes the `value` attribute's of
+each element; `functionArgs` has the formals'; everything else Nix builds
+with `noPos` -- `mapAttrs`, `zipAttrsWith`, `groupBy`, `tryEval`,
+`parseDrvName`, `fromJSON`, `fromTOML`, `builtins` itself -- and so do the
+VM's (all measured on the host, 2026-10-26). They cost 2 bytes an attribute,
+about 15% of a set.
 
 The key hashes are contiguous **so the CAM can stream them**. `LOOKUP` compares a
 search hash against 32 stored hashes per pass; interleaving the columns would force a

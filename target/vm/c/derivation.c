@@ -845,7 +845,7 @@ void prim_derivationstrict(void)
          + (round4(1 + dl) + 8 + 8)             /* its context, "=<drv>" in a LIST */
          + (24 + 72)                            /* its drv_table entry and modulo hash */
          + (4 + 4 * d.no)                       /* the entry's list of output names */
-         + (4 + 12 * (d.no + 1));               /* the result set */
+         + (4 + ATTR_RESERVE * (d.no + 1));     /* the result set */
     for (i = 0; i < d.no; ++i) {
         pl = path_name(pn, deref(PAIR_VAL(&d, d.name)), deref(OUT_NAME(&d, i)));
         check_name(pn, pl);

@@ -1,5 +1,8 @@
 # Tests the 65816 VM passes. scripts/scoreboard.py --update maintains it;
 # checks.scoreboard fails if any of these stops passing.
+fixtures/eval-fail-attrpos-name
+fixtures/eval-fail-attrpos-order
+fixtures/eval-fail-attrpos-set
 fixtures/eval-fail-builtins-missing
 fixtures/eval-fail-catattrs-element
 fixtures/eval-fail-catattrs-name-context
@@ -166,6 +169,9 @@ fixtures/eval-fail-zipattrswith-function
 fixtures/eval-okay-assert
 fixtures/eval-okay-attr-builtins
 fixtures/eval-okay-attr-primops
+fixtures/eval-okay-attrpos
+fixtures/eval-okay-attrpos-derivation
+fixtures/eval-okay-attrpos-insert
 fixtures/eval-okay-attrs
 fixtures/eval-okay-big-operations
 fixtures/eval-okay-bool-ops
@@ -332,6 +338,9 @@ tvix/nix_tests/eval-okay-with
 tvix/nix_tests/notyetpassing/eval-okay-curpos
 tvix/nix_tests/notyetpassing/eval-okay-delayed-with
 tvix/nix_tests/notyetpassing/eval-okay-eq-derivations
+tvix/nix_tests/notyetpassing/eval-okay-getattrpos
+tvix/nix_tests/notyetpassing/eval-okay-getattrpos-functionargs
+tvix/nix_tests/notyetpassing/eval-okay-getattrpos-undefined
 tvix/nix_tests/notyetpassing/eval-okay-path-antiquotation
 tvix/nix_tests/notyetpassing/eval-okay-replacestrings
 tvix/nix_tests/notyetpassing/eval-okay-zipAttrsWith

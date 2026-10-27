@@ -697,3 +697,22 @@ It shares bank 7 with the regex engine: fromTOML runs no bytecode between
 parsing and building its value, and the value is sized from the tree and
 reserved at once, so a collection cannot disturb either. A date or a time
 is an error, as in Nix without `parse-toml-timestamps`.
+
+## D28 — Every set carries its attributes' positions, 2 bytes each
+
+**Decided 2026-10-26, when Chris chose `unsafeGetAttrPos` as the next step
+after nbc refused nothing else, with this cost described to him.** nixpkgs'
+`mkDerivation` asks `unsafeGetAttrPos` for every package's `meta.position`,
+and Nix's answer depends on where every attribute came from: a literal's
+binding, `//`, `removeAttrs` and `intersectAttrs` keeping them, `listToAttrs`
+taking the `value`'s, `functionArgs` the formals', and everything else none
+(HEAP.md "ATTRS is struct-of-arrays", measured). No side table survives `//`, so the
+position is the set's own: a fourth column after the names, a `u16` index
+into a position table the generator writes at the end of the image
+(BYTECODE.md). A set grows by 2 bytes an attribute, about 15%. The card is
+told only the new size (its `obj_size`); it never traces or reads the
+column. Moving `//` out of bank 0 to carry the column paid for it there
+twice over: bank 0 is 1,062 bytes smaller. The embedded `derivation.nix` is
+now Nix's file verbatim, doc comment and all, so its positions are Nix's
+`/derivation-internal.nix` -- one line later than the file, as Nix embeds it
+after a newline.

@@ -131,6 +131,7 @@ void copy_entry(obj_t *dst, uint16_t n, uint16_t i, obj_t *src, uint16_t ns, uin
     HASHES(dst)[i] = HASHES(src)[j];
     ANAMES(dst, n)[i] = ANAMES(src, ns)[j];
     AVALUES(dst, n)[i] = AVALUES(src, ns)[j];
+    APOS(dst, n)[i] = APOS(src, ns)[j];
 }
 
 /* --- lists --------------------------------------------------------------------------- */
@@ -387,7 +388,7 @@ static void prim_intersectattrs(void)           /* names of a that are in b, wit
         if (has_attr(bo, ANAMES(a, na)[i])) ++k;
     }
     rpush(ao); rpush(bo);                       /* rooted across the reserve */
-    nursery_reserve_n(k, 12, 4);
+    nursery_reserve_n(k, ATTR_RESERVE, 4);
     ao = rstack[rb]; bo = rstack[rb + 1];
     rsp = rb;
     r = attrs_alloc(k);
@@ -431,7 +432,7 @@ static void prim_removeattrs(void)              /* set [ names ]: keep entries n
         s = deref(so);
         if (!name_in_list(deref(ANAMES(s, ns)[i]), lo)) ++k;
     }
-    nursery_reserve_n(k, 12, 4);                /* so and lo are still on RSTACK */
+    nursery_reserve_n(k, ATTR_RESERVE, 4);      /* so and lo are still on RSTACK */
     so = rstack[b];
     lo = rstack[b + 1];
     rsp = b;
@@ -444,8 +445,9 @@ static void prim_removeattrs(void)              /* set [ names ]: keep entries n
 }
 
 /* Sorted insertion into the fresh ATTRS `set` of capacity `cap` holding *cnt
- * entries; a duplicate name is dropped. Nothing here runs bytecode. */
-void insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, obj_t *value)
+ * entries, at position pos; a duplicate name is dropped. Nothing here runs
+ * bytecode. */
+void insert_entry_pos(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, obj_t *value, uint16_t pos)
 {
     uint16_t j, k, c;
     obj_t *nv = deref(name);
@@ -458,11 +460,37 @@ void insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, obj_t *v
         HASHES(set)[k] = HASHES(set)[k - 1];
         ANAMES(set, cap)[k] = ANAMES(set, cap)[k - 1];
         AVALUES(set, cap)[k] = AVALUES(set, cap)[k - 1];
+        APOS(set, cap)[k] = APOS(set, cap)[k - 1];
     }
     HASHES(set)[j] = hash_str(nv);
     ANAMES(set, cap)[j] = name;
     AVALUES(set, cap)[j] = value;
+    APOS(set, cap)[j] = pos;
     ++*cnt;
+}
+
+void insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, obj_t *value)
+{
+    insert_entry_pos(set, cap, cnt, name, value, 0);
+}
+
+/* ATTRS n p: a literal set, its n (name, value) pairs sorted on the stack;
+ * attribute i's position is p + i (none if p is 0). The operands are read
+ * here, not in run(): each fetch there is bank-0 code. */
+void attrs_literal(void)
+{
+    uint16_t n = pc[0] | ((uint16_t)pc[1] << 8), p = pc[2] | ((uint16_t)pc[3] << 8), at, i;
+    obj_t *o;
+    pc += 4;
+    nursery_reserve_n(n, ATTR_RESERVE, 4);      /* the pairs are on the stack: roots */
+    o = attrs_alloc(n);
+    at = vsp - 2 * n;
+    for (i = 0; i < n; ++i) {
+        attrs_put(o, n, i, vstack[at + 2 * i], vstack[at + 2 * i + 1]);
+        if (p) APOS(o, n)[i] = p + i;
+    }
+    vsp = at;
+    push(o);
 }
 
 /* --- computed attribute names (BYTECODE.md "Dynamic attribute names") ------------------ */
@@ -486,22 +514,25 @@ void attr_name(void)
 void attrs_dynamic(void)
 {
     uint16_t n = pc[0] | ((uint16_t)pc[1] << 8), m = pc[2] | ((uint16_t)pc[3] << 8);
-    uint16_t at = vsp - 2 * (n + m), keep = n, cnt = 0, before, i;
+    uint16_t p = pc[4] | ((uint16_t)pc[5] << 8), q = pc[6] | ((uint16_t)pc[7] << 8);
+    uint16_t at = vsp - 2 * (n + m), keep = n, cnt = 0, before, i, pos;
     obj_t *nm, *set;
-    pc += 4;
+    pc += 8;
     for (i = n; i < n + m; ++i) {
         nm = deref(vstack[at + 2 * i]);
         if (nm->tag == T_NULL) continue;
         if (nm->tag != T_STRING || CTX(nm)) type_err();
         ++keep;
     }
-    nursery_reserve_n(keep, 12, 4);             /* as ATTRS */
+    nursery_reserve_n(keep, ATTR_RESERVE, 4);   /* as ATTRS */
     set = attrs_alloc(keep);
     for (i = 0; i < n + m; ++i) {
         nm = vstack[at + 2 * i];
         if (i >= n && deref(nm)->tag == T_NULL) continue;
         before = cnt;
-        insert_entry(set, keep, &cnt, nm, vstack[at + 2 * i + 1]);
+        if (i < n) pos = p ? p + i : 0;          /* the static names', then the computed */
+        else pos = q ? q + (i - n) : 0;
+        insert_entry_pos(set, keep, &cnt, nm, vstack[at + 2 * i + 1], pos);
         if (cnt == before) err_exit(E_DUPATTR);
     }
     vsp = at;
@@ -528,13 +559,27 @@ static void prim_listtoattrs(void)              /* [ { name; value; } ... ] */
         push(av);                               /* the value, unforced */
         rsp = b + 1;
     }
+    /* the position of each element's `value` (Nix: j->pos), into the scratch
+     * bank: the elements are forced, so no bytecode runs from here */
+    for (i = 0; i < n; ++i) {
+        push(RELEM(b, i, n));
+        (void)force_pop_as(T_ATTRS, &eo);
+        (void)find_attr(eo, str_value, &ix, &av);
+        set = deref(eo);
+        SCRATCH_W(i) = APOS(set, AUX16(set))[ix];
+    }
     rsp = b;
-    /* pass 2, no bytecode: sorted insertion into a fresh set */
+    /* pass 2: sorted insertion into a fresh set */
     at = vsp - 2 * n;
-    nursery_reserve_n(n, 24, 8);                /* the set and its compacted copy; pairs are on the stack */
+    nursery_reserve_n(n, 2 * ATTR_RESERVE, 8);  /* the set and its compacted copy; pairs are on the stack */
     set = attrs_alloc(n);                       /* capacity n; column offsets use n */
-    for (i = 0; i < n; ++i)
-        insert_entry(set, n, &cnt, vstack[at + 2 * i], vstack[at + 2 * i + 1]);
+    for (i = 0; i < n; ++i) {
+        windows_maybe();                        /* each insertion views promoted names, and the
+                                                   set is young: no view lives past one. Without
+                                                   it, after the pass above, 180 promoted names
+                                                   filled the ring (eval-okay-big-operations) */
+        insert_entry_pos(set, n, &cnt, vstack[at + 2 * i], vstack[at + 2 * i + 1], SCRATCH_W(i));
+    }
     vsp = at;
     if (cnt != n) {                             /* duplicates were dropped: compact */
         obj_t *r = attrs_alloc(cnt);
@@ -614,15 +659,125 @@ static void prim_functionargs(void)
     force_top();
 }
 
+/* a // b: both sorted by name; a merge, b winning ties. Two passes, since the
+ * column offsets depend on the count. Nothing here runs bytecode. */
+static obj_t *update(obj_t *a, obj_t *b)
+{
+    uint16_t na = AUX16(a), nb = AUX16(b), ia, ib, k, n, c;
+    obj_t **an = ANAMES(a, na), **bn = ANAMES(b, nb);
+    obj_t *o;
+    for (ia = ib = k = 0; ia < na && ib < nb; ++k) {
+        c = str_cmp(deref(an[ia]), deref(bn[ib]));
+        if (c == 0) ++ia; else if (c == 2) ++ib; else { ++ia; ++ib; }
+    }
+    n = k + (na - ia) + (nb - ib);
+    o = attrs_alloc(n);
+    for (ia = ib = k = 0; k < n; ++k) {
+        if (ib == nb) c = 0;
+        else if (ia == na) c = 2;
+        else c = str_cmp(deref(an[ia]), deref(bn[ib]));
+        if (c == 0) {
+            HASHES(o)[k] = HASHES(a)[ia];
+            ANAMES(o, n)[k] = an[ia];
+            AVALUES(o, n)[k] = AVALUES(a, na)[ia];
+            APOS(o, n)[k] = APOS(a, na)[ia];    /* an attribute keeps its position */
+            ++ia;
+        } else {
+            HASHES(o)[k] = HASHES(b)[ib];
+            ANAMES(o, n)[k] = bn[ib];
+            AVALUES(o, n)[k] = AVALUES(b, nb)[ib];
+            APOS(o, n)[k] = APOS(b, nb)[ib];
+            if (c == 1) ++ia;
+            ++ib;
+        }
+    }
+    return o;
+}
+
+/* UPDATE: a // b (run.c's, here because bank 0 is full) */
+void op_update(void)
+{
+    obj_t *a, *b;
+    view_two(&a, &b);                           /* operands stay rooted for the reserve */
+    if (a->tag != T_ATTRS || b->tag != T_ATTRS) type_err();
+    if ((uint16_t)(AUX16(a) + AUX16(b)) < AUX16(a)) nomem();
+    if (nursery_reserve_n(AUX16(a) + AUX16(b), ATTR_RESERVE, 4)) view_two(&a, &b);
+    vsp -= 2;
+    push(update(a, b));
+}
+
+/* unsafeGetAttrPos name set: Nix's -- the name a string without context,
+ * then the set; null for a missing attribute, or one with no position (Nix's
+ * noPos); else mkPos's { column; file; line; }, from the image's position
+ * table (BYTECODE.md "File layout"): a u16 count of files, each a u16 length
+ * and the bytes, then the positions, each a u16 file, line and column. */
+static uint16_t img16(uint16_t off)
+{
+    const uint8_t *img = (const uint8_t *)IMAGE_BASE;
+    return img[off] | ((uint16_t)img[off + 1] << 8);
+}
+
+static obj_t *pos_str(uint16_t off, uint16_t n)    /* reserved by the caller */
+{
+    obj_t *o = str_alloc(n);
+    memcpy(STRBYTES(o), (const uint8_t *)IMAGE_BASE + off, n);
+    return o;
+}
+
+static obj_t *lit_name(const char *t, uint16_t n)  /* reserved by the caller */
+{
+    obj_t *o = str_alloc(n);
+    memcpy(STRBYTES(o), t, n);
+    return o;
+}
+
+static void prim_unsafegetattrpos(void)
+{
+    obj_t *nm, *s, *v, *o;
+    uint16_t ix, pos, tab, files, f, line, col, at, len, i;
+    force_slot(2);                              /* the name first, as Nix */
+    nm = deref(vstack[vsp - 2]);
+    if (nm->tag != T_STRING || CTX(nm)) type_err();
+    force_slot(1);
+    s = deref(vstack[vsp - 1]);
+    if (s->tag != T_ATTRS) type_err();
+    pos = 0;
+    tab = img16(16);                            /* the table's offset: an image fits a bank */
+    if (find_attr(vstack[vsp - 1], vstack[vsp - 2], &ix, &v)) {
+        s = deref(vstack[vsp - 1]);
+        pos = APOS(s, AUX16(s))[ix];
+    }
+    vsp -= 2;
+    if (!pos || !tab) { push(obj_null); return; }
+    files = img16(tab);
+    at = tab + 2;
+    for (i = 0; i < files; ++i) at += 2 + img16(at);    /* past the files */
+    at += 2 + ((pos - 1) << 2) + ((pos - 1) << 1);      /* position pos: 6 bytes each, from 1 */
+    f = img16(at);
+    line = img16(at + 2);
+    col = img16(at + 4);
+    at = tab + 2;
+    for (i = 0; i < f; ++i) at += 2 + img16(at);        /* its file */
+    len = img16(at);
+    /* the set, its three names, the file and two INTs */
+    nursery_reserve(3 * ATTR_RESERVE + 4 + 16 + 12 + 12 + round4(len) + 8 + 24);
+    o = attrs_alloc(3);
+    attrs_put(o, 3, 0, lit_name("column", 6), new_int(col));
+    attrs_put(o, 3, 1, lit_name("file", 4), pos_str(at + 2, len));
+    attrs_put(o, 3, 2, lit_name("line", 4), new_int(line));
+    push(o);
+}
+
 static void prim_mapattrs(void)                 /* f set -> { n = f n v; }, each a thunk */
 {
     obj_t *s = view_top_as(T_ATTRS), *f, *r;
     uint16_t n = AUX16(s), i;
-    if (nursery_reserve_n(n, 68, 4)) s = view_top_as(T_ATTRS);   /* two applications and an entry each */
+    if (nursery_reserve_n(n, 72, 4)) s = view_top_as(T_ATTRS);   /* two applications and an entry each */
     f = vstack[vsp - 2];                        /* not forced: Nix does not */
     r = attrs_alloc(n);
     for (i = 0; i < n; ++i) {
         copy_entry(r, n, i, s, n, i);
+        APOS(r, n)[i] = 0;                      /* Nix's mapAttrs: no positions */
         AVALUES(r, n)[i] = make_apply(make_apply(f, ANAMES(s, n)[i]), AVALUES(s, n)[i]);
     }
     vsp -= 2;
@@ -673,7 +828,7 @@ static void prim_groupby(void)
         for (j = 0; j < i && str_cmp(deref(vstack[at + 2 * j]), deref(vstack[at + 2 * i])) != 1; ++j) ;
         if (j == i) ++groups;
     }
-    nursery_reserve_n(n, 20, 8);                /* the set, and a list per group: pairs are on the stack */
+    nursery_reserve_n(n, 24, 8);                /* the set, and a list per group: pairs are on the stack */
     set = attrs_alloc(groups);
     for (i = 0; i < n; ++i) {
         for (j = 0; j < i && str_cmp(deref(vstack[at + 2 * j]), deref(vstack[at + 2 * i])) != 1; ++j) ;
@@ -717,7 +872,7 @@ static void prim_zipattrswith(void)
             if (j == names) { push(ANAMES(deref(vstack[at + i]), m)[k]); ++names; }
         }
     }
-    nursery_reserve_n(total, 80, 8);            /* an entry, a list and two applications per name */
+    nursery_reserve_n(total, 84, 8);            /* an entry, a list and two applications per name */
     set = attrs_alloc(names);
     for (j = 0; j < names; ++j) {
         for (size = 0, i = 0; i < n; ++i) size += find_attr(vstack[at + i], vstack[at + n + j], &ix, &av);
@@ -956,7 +1111,7 @@ static void prim_partition(void)                /* f list -> { right; wrong; } *
     rsp = b;
     at = vsp - 2 * n;
     for (i = 0; i < n; ++i) if (vstack[at + 2 * i + 1] == obj_true) ++nr; else ++nw;
-    nursery_reserve_n(n, 4, 8 + 28);            /* both lists and the 2-entry set; pairs on the stack */
+    nursery_reserve_n(n, 4, 8 + 32);            /* both lists and the 2-entry set; pairs on the stack */
     r = list_alloc(nr);
     w = list_alloc(nw);
     for (i = 0, nr = 0, nw = 0; i < n; ++i) {
@@ -1217,6 +1372,7 @@ void op_prim(void)
     case PRIM_SCOPEDIMPORT:    prim_import(1);
     case PRIM_FROMTOML:        prim_fromtoml(); break;
     case PRIM_PATHINTERP:      prim_pathinterp(); break;
+    case PRIM_UNSAFEGETATTRPOS: prim_unsafegetattrpos(); break;
     default:                   err_exit(E_BADOP);
     }
 }

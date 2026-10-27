@@ -360,38 +360,6 @@ static void alu(uint8_t op)
 static void push_bool(int v) { push(v ? obj_true : obj_false); }
 
 /* --- attribute sets -------------------------------------------------------------------- */
-/* a // b: both sorted by name; a merge, b winning ties. Two passes, since the
- * column offsets depend on the count. Nothing here runs bytecode. */
-static obj_t *update(obj_t *a, obj_t *b)
-{
-    uint16_t na = AUX16(a), nb = AUX16(b), ia, ib, k, n, c;
-    obj_t **an = ANAMES(a, na), **bn = ANAMES(b, nb);
-    obj_t *o;
-    for (ia = ib = k = 0; ia < na && ib < nb; ++k) {
-        c = str_cmp(deref(an[ia]), deref(bn[ib]));
-        if (c == 0) ++ia; else if (c == 2) ++ib; else { ++ia; ++ib; }
-    }
-    n = k + (na - ia) + (nb - ib);
-    o = attrs_alloc(n);
-    for (ia = ib = k = 0; k < n; ++k) {
-        if (ib == nb) c = 0;
-        else if (ia == na) c = 2;
-        else c = str_cmp(deref(an[ia]), deref(bn[ib]));
-        if (c == 0) {
-            HASHES(o)[k] = HASHES(a)[ia];
-            ANAMES(o, n)[k] = an[ia];
-            AVALUES(o, n)[k] = AVALUES(a, na)[ia];
-            ++ia;
-        } else {
-            HASHES(o)[k] = HASHES(b)[ib];
-            ANAMES(o, n)[k] = bn[ib];
-            AVALUES(o, n)[k] = AVALUES(b, nb)[ib];
-            if (c == 1) ++ia;
-            ++ib;
-        }
-    }
-    return o;
-}
 
 /* ADD SUB MUL DIV NEG and LT: the operators, shared with the primops of the
  * same names (builtins.add, builtins.lessThan, ...). */
@@ -525,16 +493,7 @@ void run(void)
             break;
 
         /* --- attribute sets --- */
-        case OP_ATTRS:                          /* n (name, value) pairs, names sorted */
-            n = fetch16();
-            nursery_reserve_n(n, 12, 4);        /* the pairs are on the stack: roots */
-            o = attrs_alloc(n);
-            ix = vsp - 2 * n;
-            for (i = 0; i < n; ++i)
-                attrs_put(o, n, i, vstack[ix + 2 * i], vstack[ix + 2 * i + 1]);
-            vsp = ix;
-            push(o);
-            break;
+        case OP_ATTRS: attrs_literal(); break;     /* prims.c: its operands are read there */
         case OP_SELECT:
             force_two_orig(&a, &b, &ao, &bo);   /* the set, the key */
             need(a, T_ATTRS); need(b, T_STRING);
@@ -556,14 +515,7 @@ void run(void)
             need(b, T_STRING);
             push_bool(a->tag == T_ATTRS && has_attr(ao, bo));
             break;
-        case OP_UPDATE:
-            view_two(&a, &b);                   /* operands stay rooted for the reserve */
-            need(a, T_ATTRS); need(b, T_ATTRS);
-            if ((uint16_t)(AUX16(a) + AUX16(b)) < AUX16(a)) nomem();
-            if (nursery_reserve_n(AUX16(a) + AUX16(b), 12, 4)) view_two(&a, &b);
-            vsp -= 2;
-            push(update(a, b));
-            break;
+        case OP_UPDATE: op_update(); break;        /* prims.c */
         case OP_INTERPOLATE: interpolate(fetch16()); break;
 
         /* --- environments --- */

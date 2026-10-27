@@ -169,6 +169,7 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("fromTOML", 0x60, 1),
     // Internal, not a builtin: a path with interpolations (front.rs path_interp)
     ("pathInterp", 0x61, 1),
+    ("unsafeGetAttrPos", 0x62, 2),
 ];
 
 /// The builtins Nix also exposes unqualified.
@@ -273,7 +274,7 @@ pub fn describe(op: u8) -> Option<(&'static str, usize)> {
         OP_ASSERT => ("ASSERT", 0),
         OP_LIST => ("LIST", 2),
         OP_CONCAT => ("CONCAT", 0),
-        OP_ATTRS => ("ATTRS", 2),
+        OP_ATTRS => ("ATTRS", 4),
         OP_SELECT => ("SELECT", 0),
         OP_TRY_SELECT => ("TRY_SELECT", 0),
         OP_JMP_IF_NOTFOUND => ("JMP_IF_NOTFOUND", 2),
@@ -292,7 +293,7 @@ pub fn describe(op: u8) -> Option<(&'static str, usize)> {
         OP_TRY_WITH_GET => ("TRY_WITH_GET", 0),
         OP_TAIL_CALL => ("TAIL_CALL", 0),
         OP_ATTR_NAME => ("ATTR_NAME", 0),
-        OP_ATTRS_DYN => ("ATTRS_DYN", 4),
+        OP_ATTRS_DYN => ("ATTRS_DYN", 8),
         OP_LAMBDA_ARGS => ("LAMBDA_ARGS", 4),
         OP_THUNK => ("THUNK", 2),
         OP_FORCE => ("FORCE", 0),

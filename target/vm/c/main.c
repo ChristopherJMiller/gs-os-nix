@@ -114,7 +114,7 @@ static void load(void)
     uint16_t ci, k, cnt, len, entry;
     uint32_t total, off;
     obj_t *o;
-    if (img[0] != 'N' || img[1] != 'B' || img[2] != 'C' || img[3] != 1) badnbc();
+    if (img[0] != 'N' || img[1] != 'B' || img[2] != 'C' || img[3] != 2) badnbc();
     nchunks = rd16(img + 4);
     entry = rd16(img + 6);
     total = (uint32_t)rd16(img + 8) | ((uint32_t)rd16(img + 10) << 16);
@@ -122,7 +122,7 @@ static void load(void)
     cnext = 0;
     memset(imports, 0, sizeof imports);      /* no file imported yet */
     for (ci = 0; ci < nchunks; ++ci) {
-        off = (uint32_t)rd16(img + 16 + 4 * ci) | ((uint32_t)rd16(img + 18 + 4 * ci) << 16);
+        off = (uint32_t)rd16(img + 20 + 4 * ci) | ((uint32_t)rd16(img + 22 + 4 * ci) << 16);
         if (off >= total) badnbc();
         q = img + (uint16_t)off;
         cnt = rd16(q);

@@ -167,6 +167,12 @@ _Static_assert(sizeof(obj_t) == 4, "a header is four bytes (HEAP.md)");
 #define HASHES(o)    ((uint32_t *)PAYLOAD(o))                      /* ATTRS */
 #define AVALUES(o, n) ((obj_t **)(PAYLOAD(o) + 4 * (uint16_t)(n)))
 #define ANAMES(o, n)  ((obj_t **)(PAYLOAD(o) + 8 * (uint16_t)(n)))
+#define APOS(o, n)    ((uint16_t *)(PAYLOAD(o) + 12 * (uint16_t)(n)))   /* positions, 0 none (HEAP.md) */
+/* Bank 7 (VM.md): a primop's scratch while it runs no bytecode -- regex.c's
+ * and toml.c's, and listToAttrs' positions -- which no collection touches. */
+#define SCRATCH_BASE  0x00070000UL
+#define SCRATCH_W(i)  (((uint16_t *)SCRATCH_BASE)[(uint16_t)(i)])
+#define ATTR_RESERVE  16    /* what a reservation counts an attribute: 12 bytes, a position, padding */
 #define STRBYTES(o)  ((char *)PAYLOAD(o))
 #define STRCTX(o, len) (*(obj_t **)(PAYLOAD(o) + round4(len)))
 #define CL_CODE(o)   (*(uint16_t *)PAYLOAD(o))                     /* THUNK/LAMBDA */
@@ -252,6 +258,8 @@ obj_t *list_alloc(uint16_t n);
 obj_t *attrs_alloc(uint16_t n);
 void   attr_name(void);                     /* ATTR_NAME (prims.c) */
 void   attrs_dynamic(void);                 /* ATTRS_DYN (prims.c): reads its operands at pc */
+void   attrs_literal(void);                 /* ATTRS (prims.c): likewise */
+void   op_update(void);                     /* UPDATE (prims.c) */
 void   lambda_args(void);                   /* LAMBDA_ARGS (prims.c): likewise */
 obj_t *deref_follow(obj_t *p);      /* checks, and follows INDIRECTs */
 obj_t *deref_pop(void);             /* deref(pop()) */

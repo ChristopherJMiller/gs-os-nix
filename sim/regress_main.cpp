@@ -333,7 +333,8 @@ void r6_errors_surface() {
 // L3 LOOKUP: attribute-set lookup via the key-hash CAM.
 //
 // Builds ATTRS objects directly in heap memory using the layout in docs/HEAP.md --
-// three parallel columns, key hashes first so the CAM can stream them.
+// parallel columns, key hashes first so the CAM can stream them (the position
+// column after the names is the CPU's alone, and left out here).
 //
 // Two properties matter beyond "it finds things":
 //   - sets larger than one CAM batch must still be searched (multi-pass);
@@ -825,7 +826,8 @@ void l3_gc() {
     const std::uint32_t S = lay(SPACE_B + 0x4010, TAG_ATTRS, 2,
                                 { canary, canary,      // "hashes" == the canary's address
                                   0, 0,                // values: null
-                                  0, 0 });             // names: null
+                                  0, 0,                // names: null
+                                  0 });                // two positions, none (HEAP.md)
     st = mark({ S });
     check((st & ST_ERR) == 0, "MARK of an ATTRS completes", "n/a");
     const std::uint32_t S2 = root(0);
@@ -838,7 +840,7 @@ void l3_gc() {
           "hash values corrupted into addresses");
     bus->wr(R_CMD, V_COMPACT);
     bus->wait_verb();
-    check(watermark() == SPACE_A + 4 + 24, "only the 28-byte ATTRS survived",
+    check(watermark() == SPACE_A + 4 + 24 + 4, "only the 32-byte ATTRS survived",
           "the canary being copied");
     // Allocating in A.
 

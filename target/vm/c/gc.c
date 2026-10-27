@@ -145,7 +145,7 @@ uint16_t obj_size(const obj_t *o)
     case T_STRING: return round4(n) + 8;
     case T_PATH:   return n ? round4(n) + 4 : 8;    /* no context word (HEAP.md) */
     case T_LIST:   return n ? 4 + 4 * n : 8;
-    case T_ATTRS:  return n ? 4 + 12 * n : 8;
+    case T_ATTRS:  return n ? 4 + 12 * n + round4(n + n) : 8;   /* the positions after the names */
     default:       return 8;                    /* BOOL, NULL, INDIRECT */
     }
 }

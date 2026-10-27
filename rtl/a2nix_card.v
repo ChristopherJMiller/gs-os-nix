@@ -141,7 +141,7 @@ module a2nix_card (
                 TAG_STRING:             s = 32'd4 + round4(aux) + 32'd4;
                 TAG_PATH:               s = 32'd4 + round4(aux);
                 TAG_LIST:               s = 32'd4 + (aux << 2);
-                TAG_ATTRS:              s = 32'd4 + (aux << 3) + (aux << 2);   // 12*aux
+                TAG_ATTRS:              s = 32'd4 + (aux << 3) + (aux << 2) + round4(aux << 1);   // 12*aux, then a 2-byte position each
                 TAG_THUNK, TAG_LAMBDA:  s = 32'd12;
                 default:                s = 32'd8;    // BOOL, NULL, BLACKHOLE, INDIRECT...
             endcase

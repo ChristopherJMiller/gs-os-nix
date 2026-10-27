@@ -103,8 +103,10 @@ obj_t *list_alloc(uint16_t n)
 
 obj_t *attrs_alloc(uint16_t n)
 {
-    obj_t *o = alloc(n ? 4 + 12 * n : 8);         /* >= 8: see obj_size (gc.c) */
+    uint16_t pad = round4(n + n);
+    obj_t *o = alloc(n ? 4 + 12 * n + pad : 8);   /* >= 8: see obj_size (gc.c) */
     SET_HDR(o, T_ATTRS, n);
+    if (n) memset(APOS(o, n), 0, pad);            /* no positions */
     return o;
 }
 

@@ -37,9 +37,10 @@ bank 4+ further code segments        ORCA/C `segment "prims";` etc., placed by o
                                      in bank 0
 bank 5  WINDOWS   $050000-$05EFFF   the 60 KB copy ring: views of mature objects
         RSET      $05F000-$05F9FF   the remembered set: 256 × (object, offset, scratch)
-bank 7  REGEX     $070000-$07FFFF   the regex engine's NFA, captures, matches and stack
-                                     (REGEX.md), and fromTOML's document and tree
-                                     (TOML.md): a primop's until it returns
+bank 7  SCRATCH   $070000-$07FFFF   a primop's while it runs no bytecode: the regex
+                                     engine's NFA, captures, matches and stack
+                                     (REGEX.md), fromTOML's document and tree
+                                     (TOML.md), listToAttrs' positions (HEAP.md)
 ```
 
 `$0332` is a third harness flag: `A2MIN_RSET_LIMIT` shrinks the remembered set

@@ -46,11 +46,11 @@ fn main() -> ExitCode {
         [input, flag, output] if flag == "-o" => {
             // parse_file, not parse: `import ./lib.nix` is resolved relative to
             // the file being compiled (docs/BYTECODE.md "Imports").
-            let compiled = front::parse_file(std::path::Path::new(input))
-                .and_then(|ast| compiler::compile(&ast));
+            let path = std::path::Path::new(input);
+            let compiled = front::parse_file(path).and_then(|ast| compiler::compile_file(&ast, Some(path)));
             match compiled {
-                Ok(chunks) => {
-                    if let Err(e) = std::fs::write(output, nbc::write(&chunks)) {
+                Ok(program) => {
+                    if let Err(e) = std::fs::write(output, nbc::write_program(&program)) {
                         eprintln!("nbc: {output}: {e}");
                         return ExitCode::from(1);
                     }

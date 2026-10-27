@@ -60,6 +60,23 @@ pub struct Compiler {
     /// Position of the last CALL emitted into each chunk, for the tail-call
     /// peephole in `emit_return`.
     last_call: HashMap<usize, usize>,
+    /// builtins.unsafeGetAttrPos's table (BYTECODE.md "File layout"): the
+    /// files, and the positions, (file, line, column), position k the k-th.
+    pub files: Vec<String>,
+    pub positions: Vec<(u16, u16, u16)>,
+    /// The file being compiled, an index into `files`; None for a bare string
+    /// (the unit tests), whose sets have no positions.
+    cur_file: Option<u16>,
+    /// The compiled file's directory, which the fixture convention's paths
+    /// are relative to.
+    main_dir: Option<std::path::PathBuf>,
+}
+
+/// A compiled program: its chunks and its position table.
+pub struct Program {
+    pub chunks: Vec<Chunk>,
+    pub files: Vec<String>,
+    pub positions: Vec<(u16, u16, u16)>,
 }
 
 /// What a name resolved to.
@@ -78,18 +95,37 @@ enum Binding {
     BuiltinsSet,
 }
 
+#[cfg(test)]
 pub fn compile(program: &Expr) -> Result<Vec<Chunk>, Unsupported> {
+    compile_file(program, None).map(|p| p.chunks)
+}
+
+/// `program` lowered from the file `file` (front.rs parse_file): its sets'
+/// attributes carry positions in that file, by the fixture convention's name
+/// for it.
+pub fn compile_file(program: &Expr, file: Option<&std::path::Path>) -> Result<Program, Unsupported> {
     let mut c = Compiler {
         chunks: vec![Chunk::default()],
         scopes: Vec::new(),
         imported: std::collections::HashMap::new(),
         builtins: HashMap::new(),
         last_call: HashMap::new(),
+        files: Vec::new(),
+        positions: Vec::new(),
+        cur_file: None,
+        main_dir: file.and_then(|f| f.parent()).map(|d| d.canonicalize().unwrap_or_else(|_| d.to_path_buf())),
     };
+    if let Some(f) = file {
+        let name = c.file_name(&f.canonicalize().unwrap_or_else(|_| f.to_path_buf()).to_string_lossy());
+        c.cur_file = Some(c.file_index(name));
+    }
     c.strict(program, 0)?;
     c.emit_return(0);
-    Ok(c.chunks)
+    Ok(Program { chunks: c.chunks, files: c.files, positions: c.positions })
 }
+
+/// The embedded derivation.nix's import key: Nix's corepkgs file.
+const DERIVATION_KEY: &str = "<nix/derivation-internal.nix>";
 
 /// The name the desugared formals bind the whole argument set to when the
 /// source gives none. Not a valid Nix identifier, so it cannot collide.
@@ -100,6 +136,48 @@ fn nowhere() -> Pos {
 }
 
 impl Compiler {
+    /// A source file's name in positions: Nix's own for the embedded
+    /// derivation.nix, else the fixture convention's (FIXTURE_PWD and the path
+    /// from the compiled file's directory), as a path value's is (D7).
+    fn file_name(&self, key: &str) -> String {
+        if key == DERIVATION_KEY {
+            return "/derivation-internal.nix".to_string();
+        }
+        let p = std::path::Path::new(key);
+        let rel = match &self.main_dir {
+            Some(d) => p.strip_prefix(d).map(|r| r.to_string_lossy().into_owned()).unwrap_or_else(|_| {
+                p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+            }),
+            None => p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        };
+        format!("{}/{rel}", crate::front::FIXTURE_PWD)
+    }
+    fn file_index(&mut self, name: String) -> u16 {
+        match self.files.iter().position(|f| *f == name) {
+            Some(i) => i as u16,
+            None => {
+                self.files.push(name);
+                (self.files.len() - 1) as u16
+            }
+        }
+    }
+    /// Consecutive positions for a set's attributes, in the order given: the
+    /// first's index, or 0 -- none -- outside a file or for a set Nix builds
+    /// without positions (a binding at line 0, as __curPos's).
+    fn positions_for(&mut self, poss: &[Pos]) -> Result<u16, Unsupported> {
+        let Some(f) = self.cur_file else { return Ok(0) };
+        if poss.is_empty() || poss.iter().any(|p| p.line == 0) {
+            return Ok(0);
+        }
+        let first = self.positions.len() + 1;
+        if first + poss.len() > 0xFFFF {
+            return unsupported(poss[0], "more than 65535 attribute positions".to_string());
+        }
+        for p in poss {
+            self.positions.push((f, p.line as u16, p.col as u16));
+        }
+        Ok(first as u16)
+    }
     fn emit(&mut self, chunk: usize, b: u8) {
         self.chunks[chunk].code.push(b);
     }
@@ -297,6 +375,7 @@ impl Compiler {
                 let n = Self::count(names.len(), "attributes")?;
                 self.emit(b, OP_ATTRS);
                 self.emit_u16(b, n);
+                self.emit_u16(b, 0);                    // builtins: no positions
                 self.emit_return(b);
                 b
             }
@@ -378,11 +457,14 @@ impl Compiler {
     /// `builtins` set value, which would compile it into every `with builtins;`
     /// program; a `with builtins;` lookup misses and falls back to this.
     fn emit_derivation(&mut self, pos: Pos, chunk: usize) -> Result<(), Unsupported> {
-        let e = match crate::front::parse(include_str!("derivation.nix")) {
+        // Nix embeds the file with a newline before it, so its positions
+        // (unsafeGetAttrPos on a derivation) are a line later than the file's:
+        // measured, `type` is line 52 of /derivation-internal.nix.
+        let e = match crate::front::parse(concat!("\n", include_str!("derivation.nix"))) {
             Ok(e) => e,
             Err(u) => return unsupported(pos, format!("derivation.nix: {}", u.what)),
         };
-        self.closed_thunk("<nix/derivation-internal.nix>", &e, chunk)?;
+        self.closed_thunk(DERIVATION_KEY, &e, chunk)?;
         self.emit(chunk, OP_FORCE);
         Ok(())
     }
@@ -542,8 +624,13 @@ impl Compiler {
                     self.emit(args, if *has_default { OP_TRUE } else { OP_FALSE });
                 }
                 let n = Self::count(formals.len(), "formals")?;
+                let mut fposs: Vec<(&String, Pos)> = entries.iter().map(|(f, fpos, _)| (f, *fpos)).collect();
+                fposs.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+                let poss: Vec<Pos> = fposs.iter().map(|f| f.1).collect();
+                let p = self.positions_for(&poss)?;     // functionArgs: the formals' positions
                 self.emit(args, OP_ATTRS);
                 self.emit_u16(args, n);
+                self.emit_u16(args, p);
                 self.emit_return(args);
                 let info = (KIND_FORMALS, bind.clone().unwrap_or_default(), *ellipsis);
                 self.emit_lambda(&arg, &body, chunk, Some(args), info)?;
@@ -611,13 +698,16 @@ impl Compiler {
                 // Nix keeps attributes sorted by name bytes; the VM relies on it.
                 let mut sorted: Vec<&(String, Pos, Expr)> = binds.iter().collect();
                 sorted.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+                let poss: Vec<Pos> = sorted.iter().map(|b| b.1).collect();
                 for (name, _, value) in sorted {
                     self.emit_const(chunk, Const::Str(name.clone()))?;
                     self.lazy(value, chunk)?;
                 }
                 let n = Self::count(binds.len(), "attributes")?;
+                let p = self.positions_for(&poss)?;
                 self.emit(chunk, OP_ATTRS);
                 self.emit_u16(chunk, n);
+                self.emit_u16(chunk, p);
             }
             Expr::RecSet(binds, dyns) => {
                 // let <bindings> in { inherit <names>; <computed> } (front.rs rec_set)
@@ -631,6 +721,8 @@ impl Compiler {
                 // and refuses a clash (BYTECODE.md "Dynamic attribute names").
                 let mut sorted: Vec<&(String, Pos, Expr)> = binds.iter().collect();
                 sorted.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+                let poss: Vec<Pos> = sorted.iter().map(|b| b.1).collect();
+                let dposs: Vec<Pos> = dyns.iter().map(|d| d.1).collect();
                 for (name, _, value) in sorted {
                     self.emit_const(chunk, Const::Str(name.clone()))?;
                     self.lazy(value, chunk)?;
@@ -644,9 +736,13 @@ impl Compiler {
                 }
                 let n = Self::count(binds.len(), "attributes")?;
                 let m = Self::count(dyns.len(), "computed attribute names")?;
+                let p = self.positions_for(&poss)?;
+                let q = self.positions_for(&dposs)?;
                 self.emit(chunk, OP_ATTRS_DYN);
                 self.emit_u16(chunk, n);
                 self.emit_u16(chunk, m);
+                self.emit_u16(chunk, p);
+                self.emit_u16(chunk, q);
             }
             Expr::Select(base, path, default) => {
                 // builtins.NAME is a primop reference unless `builtins` is shadowed.
@@ -838,8 +934,14 @@ impl Compiler {
         // walk and the VM stops with E_BADNBC -- but at run time, and a fixture
         // that compiles ought to be a valid program.
         let outer = std::mem::take(&mut self.scopes);
+        let outer_file = self.cur_file;
+        if outer_file.is_some() {
+            let name = self.file_name(path);
+            self.cur_file = Some(self.file_index(name));
+        }
         let r = self.strict(e, body);
         self.scopes = outer;
+        self.cur_file = outer_file;
         r?;
         self.emit_return(body);
         self.emit(chunk, OP_CLOSED_THUNK);
@@ -957,6 +1059,24 @@ mod tests {
     }
 
     #[test]
+    fn sets_from_a_file_carry_positions() {
+        // a literal set's attributes, sorted, are consecutive positions in the
+        // compiled file's table: a binding's is where its attribute path starts
+        let dir = std::env::temp_dir().join(format!("nbc-pos-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("p.nix");
+        std::fs::write(&f, "{\n  b = 1;\n  a.c = 2;\n}\n").unwrap();
+        let e = crate::front::parse_file(&f).unwrap();
+        let p = compile_file(&e, Some(&f)).unwrap();
+        assert_eq!(p.files, vec![format!("{}/p.nix", crate::front::FIXTURE_PWD)]);
+        // { c } first (compiled inside), then the outer { a; b; }
+        assert_eq!(p.positions, vec![(0, 3, 3), (0, 3, 3), (0, 2, 3)]);
+        let code = &p.chunks[0].code;
+        assert_eq!(code[code.len() - 6..], [OP_ATTRS, 2, 0, 2, 0, OP_RETURN]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn unbound_names_are_refused() {
         assert!(compile(&parse("x + 1").unwrap()).is_err());
     }
@@ -1009,7 +1129,7 @@ mod tests {
         // attributes are emitted sorted by name bytes, names as string constants
         let ch = c("{ b = 1; a = 2; \"B\" = 3; }");
         assert_eq!(ch[0].consts, vec![Const::Str("B".into()), Const::Int(3), Const::Str("a".into()), Const::Int(2), Const::Str("b".into()), Const::Int(1)]);
-        assert_eq!(ch[0].code[ch[0].code.len() - 4..], [OP_ATTRS, 3, 0, OP_RETURN]);
+        assert_eq!(ch[0].code[ch[0].code.len() - 6..], [OP_ATTRS, 3, 0, 0, 0, OP_RETURN]);   // no file: no positions
         // a.b.c or d: two try-selects, both misses jump to the default
         let ch = c("let a = { }; in a.b.c or 7");
         let code = &ch[0].code;
@@ -1063,7 +1183,7 @@ mod tests {
         assert!(c("let builtins = { length = 1; }; in builtins.length").iter().all(|k| !k.code.contains(&OP_PRIM)));
         // a Nix builtin the VM lacks is refused by name; a name that is no
         // builtin at all is Nix's missing attribute, at run time
-        assert_eq!(compile(&parse("builtins.unsafeGetAttrPos").unwrap()).unwrap_err().what, "builtins.unsafeGetAttrPos");
+        assert_eq!(compile(&parse("builtins.trace").unwrap()).unwrap_err().what, "builtins.trace");
         assert!(compile(&parse("builtins.nope").unwrap()).is_ok());
         // A value builtin is a constant, not a primop lambda (D23).
         assert!(c("builtins.currentSystem").iter().all(|k| !k.code.contains(&OP_LAMBDA)));
@@ -1084,7 +1204,7 @@ mod tests {
                 OP_ADD, OP_ENV_POP, OP_ENV_POP, OP_RETURN,
             ]
         );
-        assert_eq!(ch[1].code, vec![OP_CONST, 0, 0, OP_CONST, 1, 0, OP_ATTRS, 1, 0, OP_RETURN]);
+        assert_eq!(ch[1].code, vec![OP_CONST, 0, 0, OP_CONST, 1, 0, OP_ATTRS, 1, 0, 0, 0, OP_RETURN]);
         let ch = c("with { }; map");
         assert!(ch[0].code.contains(&OP_TRY_WITH_GET) && ch[0].code.contains(&OP_JMP_IF_NOTFOUND));
         // formals desugar to a let over selections; the default uses `or`

@@ -2,14 +2,37 @@
 //! disassembler. The reader exists for `nbc --dump` and for the round-trip test;
 //! the VM has its own loader in 65816 assembly.
 
-use crate::compiler::{Chunk, Const, KIND_CODE, KIND_FORMALS, KIND_LAMBDA, KIND_PRIMOP, KIND_PRIMOP_APP};
+use crate::compiler::{Chunk, Const, Program, KIND_CODE, KIND_FORMALS, KIND_LAMBDA, KIND_PRIMOP, KIND_PRIMOP_APP};
 use crate::opcodes::*;
 
 pub const MAGIC: &[u8; 3] = b"NBC";
-pub const VERSION: u8 = 1;
-pub const HEADER_LEN: usize = 16;
+pub const VERSION: u8 = 2;
+pub const HEADER_LEN: usize = 20;
 
+/// Chunks with no position table (the unit tests' programs).
+#[cfg(test)]
 pub fn write(chunks: &[Chunk]) -> Vec<u8> {
+    write_program(&Program { chunks: chunks.to_vec(), files: Vec::new(), positions: Vec::new() })
+}
+
+/// The image, its position table last: a u16 count of files, each a u16
+/// length and the bytes; a u16 count of positions, each (file, line, column).
+pub fn write_program(program: &Program) -> Vec<u8> {
+    let chunks = &program.chunks;
+    let mut table: Vec<u8> = Vec::new();
+    if !program.positions.is_empty() {
+        table.extend_from_slice(&(program.files.len() as u16).to_le_bytes());
+        for f in &program.files {
+            table.extend_from_slice(&(f.len() as u16).to_le_bytes());
+            table.extend_from_slice(f.as_bytes());
+        }
+        table.extend_from_slice(&(program.positions.len() as u16).to_le_bytes());
+        for (f, line, col) in &program.positions {
+            for v in [f, line, col] {
+                table.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+    }
     // Serialise the chunks first so the table can be filled in.
     let bodies: Vec<Vec<u8>> = chunks.iter().map(write_chunk).collect();
     let table_len = 4 * chunks.len();
@@ -36,9 +59,11 @@ pub fn write(chunks: &[Chunk]) -> Vec<u8> {
             None => offsets.push(0),
         }
     }
-    let total = if kinded { info_at + infos.len() } else { body };
+    let before = if kinded { info_at + infos.len() } else { body };
+    let total = before + table.len();
     out.extend_from_slice(&(total as u32).to_le_bytes());
     out.extend_from_slice(&(if kinded { body as u32 } else { 0 }).to_le_bytes()); // kinds
+    out.extend_from_slice(&(if table.is_empty() { 0 } else { before as u32 }).to_le_bytes()); // positions
     let mut off = HEADER_LEN + table_len;
     for b in &bodies {
         out.extend_from_slice(&(off as u32).to_le_bytes());
@@ -54,6 +79,7 @@ pub fn write(chunks: &[Chunk]) -> Vec<u8> {
         }
         out.extend_from_slice(&infos);
     }
+    out.extend_from_slice(&table);
     debug_assert_eq!(out.len(), total);
     out
 }
@@ -237,11 +263,12 @@ mod tests {
     fn round_trips_and_lays_out_the_header() {
         let chunks = compile(&parse("let x = 1 + 2; in x").unwrap()).unwrap();
         let bytes = write(&chunks);
-        assert_eq!(&bytes[0..4], b"NBC\x01");
+        assert_eq!(&bytes[0..4], b"NBC\x02");
         assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 2);
         assert_eq!(u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize, bytes.len());
-        // chunk 0 starts right after the 2-entry table
-        assert_eq!(u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]), 24);
+        // no position table; chunk 0 starts right after the 20-byte header and the 2-entry table
+        assert_eq!(u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]), 0);
+        assert_eq!(u32::from_le_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]), 28);
         let img = read(&bytes).unwrap();
         assert_eq!(img.chunks, chunks);
         assert!(disassemble(&img).contains("THUNK 1"));

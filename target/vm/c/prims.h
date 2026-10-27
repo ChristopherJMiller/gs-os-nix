@@ -31,6 +31,7 @@ obj_t *force_pop_as(uint8_t tag, obj_t **orig);    /* force, pop, type-check: th
 obj_t *list_from_stack(uint16_t n);                 /* the n values on top become a fresh LIST */
 obj_t *view_top_text(void);                         /* the top forced in place, a STRING or a PATH: a view */
 void   insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, obj_t *value);
+void   insert_entry_pos(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, obj_t *value, uint16_t pos);
 
 /* --- strings.c ------------------------------------------------------------------------- */
 int    is_lit(obj_t *s, const char *lit, uint16_t n);  /* the STRING view s is lit[0..n) */

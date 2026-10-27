@@ -656,7 +656,7 @@ void prim_parsedrvname(void)
     if (i < n) push(str_piece(rstack[b], i + 1, n - i - 1));
     else push(str_piece(rstack[b], n, 0));
     push(lit_str("version", 7));
-    nursery_reserve_n(2, 12, 4);
+    nursery_reserve_n(2, ATTR_RESERVE, 4);
     set = attrs_alloc(2);
     insert_entry(set, 2, &cnt, str_name, vstack[vsp - 3]);
     insert_entry(set, 2, &cnt, vstack[vsp - 1], vstack[vsp - 2]);
@@ -917,7 +917,7 @@ void prim_getcontext(void)
             r = list_from_stack(vsp - ob);
             push(r);
         }
-        nursery_reserve(4 + 12 * cnt);
+        nursery_reserve(4 + ATTR_RESERVE * cnt);
         r = attrs_alloc(cnt);
         j = 0;
         if (all) attrs_put(r, cnt, j++, vstack[kb - 2], obj_true);
@@ -926,7 +926,7 @@ void prim_getcontext(void)
         if (vsp > ob) --vsp;
         push(r);
     }
-    nursery_reserve(4 + 12 * nk);
+    nursery_reserve(4 + ATTR_RESERVE * nk);
     r = attrs_alloc(nk);
     for (k = 0; k < nk; ++k) attrs_put(r, nk, k, vstack[kb + k], vstack[kb + nk + k]);
     vsp = kb - 3;

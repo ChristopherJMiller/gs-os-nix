@@ -259,10 +259,17 @@ segment as Nix's parser resolves it, its trailing '/' kept; each part
 coerced in order as a path segment, no context; the texts joined and made
 canonical once: the internal `pathInterp` primop); an import of a file
 that is not there is the `import` primop, GS/OS's at run time (D26); tvix's
-curpos and path-antiquotation pass, 4 fixtures, 2 mutations. **nbc's last
-refusal is `builtins.unsafeGetAttrPos`** (3 of tvix's notyetpassing tests),
-which needs a position in every set (next, below). Past the finish line, in
-no test: `trace`, `warn`, `break`, `addErrorContext`, `storeDir`,
+curpos and path-antiquotation pass, 4 fixtures, 2 mutations;
+~~`builtins.unsafeGetAttrPos`~~ **done** (HEAP.md "ATTRS is struct-of-arrays", D28): every
+set carries its attributes' positions, 2 bytes each, indices into a table the
+generator writes at the end of the image (BYTECODE.md, version 2); a
+binding's is where its attribute path starts, `//`, `removeAttrs` and
+`intersectAttrs` keep them, `listToAttrs` takes the `value`'s,
+`functionArgs` the formals', the rest none -- all measured; a derivation's
+own are Nix's `/derivation-internal.nix`, its file now embedded verbatim;
+tvix's 3 getattrpos tests pass, 6 fixtures, 10 mutations. **Reached
+2026-10-26: nbc refuses nothing, tvix's own notyetpassing tests
+included.** Past the finish line, in no test: `trace`, `warn`, `break`, `addErrorContext`, `storeDir`,
 `placeholder`, `convertHash`, `flakeRefToString`/`parseFlakeRef`, and
 `<nix/...>` (Nix's corepkgs).
 
@@ -320,9 +327,13 @@ a2min.
   other, were decided -- soft-float in C -- and are done: [FLOAT.md](FLOAT.md).)
 - **Card-side `MARK`** only when the promoted-bytes counter shows the 512 KB
   ceiling binding on a real program; nothing has yet.
-- **Bank 0** (38,214 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
+- **Bank 0** (37,152 / 40,960): the value stack (4 KB) and CTAB (2 KB) behind
   far pointers would buy the md5/sha1/sha512 tables. Watch for ORCA/C library
   routines: a struct copy links `~MOVE`, a variable left shift `~SHIFTLEFT`.
+- **`CHUNK_MAX`** (256 chunks a program): nbc writes an image with more,
+  and the VM refuses it at load (`E_BADNBC`) -- honest, but late. A
+  position fixture reached 259 (the embedded `derivation.nix` is many
+  chunks) and was split. nbc should refuse it by name at compile time.
 - **The `eval-fail` corpus**, and **L5** (self-hosting, D7's exit).
 
 ## Next actions (L4)
@@ -353,7 +364,10 @@ assembly VM stayed until the C one passed everything it did; it has.
 **Long-term follow-up:** a black-box FOSS native-mode 65816 C compiler (or 16-bit
 mode in LLVM-MOS) to remove the last non-free tool. Its own project; not started.
 
-**Bank 0: 38,214 of 40,960 bytes** (2026-10-26, after `fromTOML`, +1, the
+**Bank 0: 37,152 of 40,960 bytes** (2026-10-26, after `unsafeGetAttrPos`,
+-1,062: `//` moved into `prims.c` to carry the position column, and a
+32-bit multiply that brought `~UMUL4` back into bank 0 was rewritten as
+additions; 38,214 after `fromTOML`, +1, the
 `~GLOBALS` byte of `toml.c`; 38,213 after `match` and `split`, +2, the
 `~GLOBALS` bytes of `regex.c` and `match.c`; 38,211 after `toJSON`,
 +1, an object file's `~GLOBALS` byte; 38,210 after `functionArgs`, +7 for
@@ -378,9 +392,10 @@ into a net saving of 420 bytes. That is the lever: code in bank 0 that does not
 have to be there. The value stack (4 KB) and CTAB (2 KB) behind far pointers
 remain the big one.
 
-The scoreboard reads **592 / 618** (2026-10-26, after `__curPos` and path
-interpolation; 0 fail, 3 error, 9 need GS/OS, 0 unsupported, 14
-notyetpassing -- tvix's own curpos and path-antiquotation pass now). It was
+The scoreboard reads **601 / 624** (2026-10-26, after `unsafeGetAttrPos`;
+0 fail, 3 error, 9 need GS/OS, 0 unsupported, 11 notyetpassing -- tvix's
+own 3 getattrpos tests pass now). It was 592 / 618 after `__curPos` and
+path interpolation (tvix's own curpos and path-antiquotation passed). It was
 586 / 614 after `fromTOML`, the first with **0 unsupported**. It was 564 / 593
 after search paths and `import` as a value (1 unsupported; one of tvix's own
 notyetpassing, cppnix-non-identifier-pointer-inequality, passed then). It was 550 / 583 after the GS/OS builtins (4 unsupported). It was
