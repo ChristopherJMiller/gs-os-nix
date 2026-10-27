@@ -19,6 +19,7 @@
 
 #include "vm.h"
 #include "prims.h"
+#include "toml.h"
 
 /* With float.c's: "prims" fills bank 4 (VM.md). */
 segment "json";
@@ -875,4 +876,105 @@ void prim_toxml(void)
     rsp = b;
     vsp = at;
     push(r);
+}
+
+/* --- builtins.fromTOML (docs/TOML.md) --------------------------------------------------- */
+
+/* Nix's prim_fromTOML: the string, without context, parsed as toml11 parses
+ * it (toml.c), then its visit -- a table a set, an array a list, a NUL in a
+ * key or a string an error (forceNoNullByte). toml.c's tree is in bank 7,
+ * which no collection touches: the value is sized from it first and reserved
+ * at once, so building it cannot collect, and needs no stack. */
+_Noreturn void tm_fail(uint8_t why)
+{
+    if (why == TM_ESPACE) nomem();
+    err_exit(E_TOML);
+}
+
+#define TM_BUILD_DEPTH 48       /* tables in tables, a header's keys among them */
+
+static uint32_t tm_size(uint16_t v, uint16_t depth)
+{
+    uint32_t t = 0, k = 0;
+    uint16_t i;
+    uint8_t kind = tm_kind(v);
+    if (depth > TM_BUILD_DEPTH) nomem();
+    switch (kind) {
+    case TM_TABLE:
+    case TM_ARRAY:
+        for (i = tm_first(v); i; i = tm_next(i)) {
+            ++k;
+            if (kind == TM_TABLE) t += (uint32_t)round4(tm_len(tm_key(i))) + 8;
+            t += tm_size(tm_val(i), depth + 1);
+        }
+        if (!k) return t + 8;
+        if (kind == TM_TABLE) k += k + k;       /* 12 bytes an attribute, 4 an element */
+        return t + k + k + k + k + 4;
+    case TM_STRING: return (uint32_t)round4(tm_len(v)) + 8;
+    case TM_INT: case TM_FLOAT: return 12;
+    default: return 0;
+    }
+}
+
+/* A STRING of a tree string's bytes; a NUL is Nix's forceNoNullByte */
+static obj_t *tm_str(uint16_t s)
+{
+    uint16_t n = tm_len(s), i;
+    const uint8_t *b = tm_bytes(s);
+    obj_t *o;
+    for (i = 0; i != n; ++i) if (!b[i]) err_exit(E_TOML);
+    o = str_alloc(n);
+    memcpy(STRBYTES(o), tm_bytes(s), n);
+    return o;
+}
+
+static obj_t *tm_build(uint16_t v)
+{
+    obj_t *o, *nm;
+    uint16_t i, n = 0, k;
+    uint64_t b;
+    switch (tm_kind(v)) {
+    case TM_TABLE:
+        tm_sort(v);
+        for (i = tm_first(v); i; i = tm_next(i)) ++n;
+        o = attrs_alloc(n);
+        for (i = tm_first(v), k = 0; i; i = tm_next(i), ++k) {
+            nm = tm_str(tm_key(i));
+            HASHES(o)[k] = hash_str(nm);
+            ANAMES(o, n)[k] = nm;
+            AVALUES(o, n)[k] = tm_build(tm_val(i));
+        }
+        return o;
+    case TM_ARRAY:
+        for (i = tm_first(v); i; i = tm_next(i)) ++n;
+        o = list_alloc(n);
+        for (i = tm_first(v), k = 0; i; i = tm_next(i), ++k) ELEMS(o)[k] = tm_build(tm_val(i));
+        return o;
+    case TM_STRING: return tm_str(v);
+    case TM_INT:
+        memcpy(&b, tm_bytes(v), 8);
+        return new_int((int64_t)b);
+    case TM_FLOAT:
+        memcpy(&b, tm_bytes(v), 8);
+        return new_float(b);
+    default:
+        if (tm_bool(v)) return obj_true;
+        return obj_false;
+    }
+}
+
+void prim_fromtoml(void)
+{
+    obj_t *s;
+    uint16_t root;
+    uint32_t total;
+    force_top();
+    s = deref(peek());
+    if (s->tag != T_STRING || CTX(s)) type_err();      /* forceStringNoCtx */
+    root = tm_parse(STRBYTES(s), AUX16(s));
+    total = tm_size(root, 0);
+    if (total > 0xFFFFUL) nomem();
+    nursery_reserve((uint16_t)total);
+    (void)pop();
+    push(tm_build(root));
 }

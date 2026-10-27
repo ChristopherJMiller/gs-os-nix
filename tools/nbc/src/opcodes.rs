@@ -166,6 +166,7 @@ pub const PRIMOPS: &[(&str, u8, u8)] = &[
     ("findFile", 0x5D, 2),
     ("import", 0x5E, 1),
     ("scopedImport", 0x5F, 2),
+    ("fromTOML", 0x60, 1),
 ];
 
 /// The builtins Nix also exposes unqualified.

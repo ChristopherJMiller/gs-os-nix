@@ -160,6 +160,7 @@
 #define PRIM_FINDFILE             0x5D /* 2 */
 #define PRIM_IMPORT               0x5E /* 1 */
 #define PRIM_SCOPEDIMPORT         0x5F /* 2 */
+#define PRIM_FROMTOML             0x60 /* 1 */
 #define PRIM_COUNT              0x32
 
 /* Constant kinds are heap tags (docs/HEAP.md). */
@@ -187,5 +188,6 @@
 #define E_DUPATTR       0x10    /* a computed attribute name already in its set */
 #define E_REGEX         0x11    /* not a regular expression (match, split): Nix's "invalid regular expression" */
 #define E_GSOS          0x12    /* a builtin that needs GS/OS -- files, the environment, the network (D26) */
+#define E_TOML          0x13    /* not TOML for fromTOML, or a date or time: Nix's "while parsing TOML" */
 
 #endif

@@ -363,6 +363,7 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$5D` | `findFile` | 2 | `path name`, and `<name>`, which nbc lowers as Nix's parser does to `__findFile __nixPath "name"` (`nixPath` is `[ ]`: D26): the list forced, then each element -- a set, its `prefix` if present a string without context, its `path` (`E_NOATTR` if missing) coerced as `"${}"` does but a path is its text -- then `name`, a string without context; an element whose prefix fits (Nix's separator rule) is a directory to search, `E_GSOS`, as is a path with context; `nix/...` (corepkgs) `E_UNSUP`; otherwise `E_THROW` "file 'name' was not found in the Nix search path (add it using $NIX_PATH or -I)", which `tryEval` catches |
 | `$5E` | `import` | 1 | the primop, for an import the generator cannot resolve (not a path literal, or `import` as a value; "Imports"): its argument forced, then `E_GSOS` -- reading the file is GS/OS's (D26) |
 | `$5F` | `scopedImport` | 2 | `scope p`: the scope forced, a set (`E_TYPE`), then `p`, then `E_GSOS` (D26) |
+| `$60` | `fromTOML` | 1 | a string without context (`E_TYPE`), parsed as Nix's toml11 4.4.0 parses it, TOML 1.0 ([TOML.md](TOML.md), `toml.c`): a table a set, an array a list; not TOML, a date or a time (no `parse-toml-timestamps`), or a NUL in a key or a string is `E_TOML`; past the bank or 32 nested arrays and inline tables, `E_NOMEM` |
 | `$38` | `toFile` | 2 | `name contents` → the text store path of the contents and the plain paths of their context; its context is itself ([DERIVATION.md](DERIVATION.md) "builtins.toFile") |
 
 Arity is intrinsic to the id and lives in all three tables (`checks.nbc-opcodes`
@@ -563,7 +564,9 @@ evaluation error, which `tryEval` does not catch, never a wraparound),
 attribute already defined", which `tryEval` does not catch either), `E_REGEX $11`
 (a pattern `match` or `split` cannot compile: Nix's "invalid regular
 expression", uncatchable too), `E_GSOS $12` (a builtin that needs GS/OS,
-refused at run time by name; D26). The harness (`a2min --run-nbc`) prints the value in
+refused at run time by name; D26), `E_TOML $13` (`fromTOML`'s document is not
+TOML, or holds a date, a time or a NUL: Nix's "while parsing TOML", which
+`tryEval` does not catch). The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.
 

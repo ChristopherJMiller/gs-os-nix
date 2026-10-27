@@ -683,3 +683,17 @@ list is empty, and `<x>` is `findFile [ ] "x"`: not found, a throw that
 Nix's redefine-builtin tests ask exactly that). A search path given in the
 program -- `findFile [ { path = ...; } ] "x"`, or a `__nixPath` of its own --
 names directories, and looking in them is GS/OS's again.
+
+## D27 — fromTOML is a port of toml11 4.4.0, as regex is of libstdc++
+
+**Decided 2026-10-26, as D25 was.** Nix's answers are toml11's, the version
+the host's Nix was built with (4.4.0, TOML 1.0, no extensions), and toml11
+decides what is TOML by rules of its own. `insert_value` tracks how each
+table was made, and toml11 lets a header extend a dotted table where TOML
+1.0 is silent. So `toml.c` ports `parser.hpp` and `syntax_impl.hpp`
+procedure for procedure, under toml11's MIT licence, and is checked against
+toml11 natively, every document of toml-test's 1.0 suite and fuzzed ones.
+It shares bank 7 with the regex engine: fromTOML runs no bytecode between
+parsing and building its value, and the value is sized from the tree and
+reserved at once, so a collection cannot disturb either. A date or a time
+is an error, as in Nix without `parse-toml-timestamps`.

@@ -16,3 +16,4 @@ numbers.c
 json.c
 regex.c
 match.c
+toml.c

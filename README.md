@@ -59,7 +59,9 @@ nlohmann/json's `to_chars.hpp` (MIT, Florian Loitsch and Niels Lohmann; its noti
 is with the code), and `builtins.match` and `split`'s regular expressions in
 `target/vm/c/regex.c`, ported from the GNU ISO C++ Library's `<regex>` (GPL-3.0
 or later with the GCC Runtime Library Exception, the Free Software Foundation;
-its notice is with the code). Not included at all:
+its notice is with the code), and `builtins.fromTOML`'s parser in
+`target/vm/c/toml.c`, ported from toml11's (MIT, Toru Niina; its notice is with
+the code). Not included at all:
 ORCA/C, which every build fetches from Byte Works under its own
 non-redistributable licence, and the Apple IIgs ROMs, which you supply
 ([docs/SOURCES.md](docs/SOURCES.md)).

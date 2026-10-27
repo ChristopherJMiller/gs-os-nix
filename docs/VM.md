@@ -38,7 +38,8 @@ bank 4+ further code segments        ORCA/C `segment "prims";` etc., placed by o
 bank 5  WINDOWS   $050000-$05EFFF   the 60 KB copy ring: views of mature objects
         RSET      $05F000-$05F9FF   the remembered set: 256 × (object, offset, scratch)
 bank 7  REGEX     $070000-$07FFFF   the regex engine's NFA, captures, matches and stack
-                                     (REGEX.md): a primop's until it returns
+                                     (REGEX.md), and fromTOML's document and tree
+                                     (TOML.md): a primop's until it returns
 ```
 
 `$0332` is a third harness flag: `A2MIN_RSET_LIMIT` shrinks the remembered set
@@ -181,10 +182,13 @@ target/vm/c/
               depth-first executor, on bank 7; no VM in it (REGEX.md) --
               segment "regex"
   match.c     builtins.match and builtins.split on it -- segment "regex"
+  toml.c      toml11's TOML 1.0 parser, ported, on bank 7; no VM in it
+              (TOML.md) -- segment "toml", which landed in bank 8
 ```
 
-`float`, `json` and `regex` are in bank 6: `prims` fills bank 4 (omf2bin skips
-bank 5, the window ring, and bank 7, the regex engine's).
+`float`, `json` and `regex` are in bank 6, and `toml` in bank 8: `prims` fills
+bank 4, and omf2bin skips bank 5, the window ring, and bank 7, the regex
+engine's (and fromTOML's).
 
 `target/vm/c/SOURCES` is the one list of sources, in link order: the flake's
 `mkOrcaBinary`, `just cvm` and every script that builds the VM read it. Each
