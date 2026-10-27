@@ -732,3 +732,24 @@ The mutation runners keep their own 500M. Speed is not judged by an
 accident of the budget; it gets its own check, a ratchet on cycles a step
 over a few benchmark programs (STATUS.md roadmap, item 4), whose first
 target is tail-call-1 inside 500M again.
+
+## D30 — Files through GS/OS: Nix paths as pathnames, our symlinks, shell variables
+
+**Decided 2026-10-26 by Chris**, for the GS/OS file builtins (GSOS.md), on
+two forks the tests raised. **Symlinks:** GS/OS has none, the `readDir` and
+`readFileType` tests expect `"symlink"`, and a Nix store is full of them, so
+the FST that will hold the store (L7) needs a representation anyway. Chosen:
+define it now -- a file of type `$F1` (ProDOS's first user type) with aux
+type `$4C534E` ("NSL"), its contents the target -- and have a2min report host
+symlinks that way, so both tests pass and the FST inherits a contract rather
+than a guess. Rejected: refusing a symlink by name until L7, which would have
+left two tests in `need GS/OS`. The VM resolves these links itself, as Nix's
+`SourceAccessor::resolveSymlinks` does (1,024 links, `Ancestors` or `Full`),
+because GS/OS will not. **`getEnv`:** GS/OS has no environment; chosen, the
+ORCA shell's variables (`ReadVariable`), real under the ORCA or GNO shell and
+`""` under none, with a2min passing only the variables it is given (the
+scoreboard: `TEST_VAR=foo`, as Nix's `tests/functional/lang.sh`). Rejected:
+always `""` (Nix's pure mode, failing the test) and refusing by name. One
+more choice, not Chris's but recorded here: a Nix path is passed to GS/OS
+as its full pathname unchanged -- `/` is a GS/OS separator -- so
+`/nix/store` is a volume `nix`, and nothing is translated.

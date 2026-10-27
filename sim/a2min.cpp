@@ -51,6 +51,7 @@
 #include "cardbus.h"      // tag constants, for verifying the promoted graph
 #include "heapmem.h"
 #include "cpu65816.h"
+#include "gsos_fs.h"     // A2MIN_MOUNT: GS/OS's file calls, read-only (docs/GSOS.md)
 
 #include <algorithm>
 #include <cctype>
@@ -227,6 +228,9 @@ uint32_t rd24(uint32_t a) { return rd16(a) | (static_cast<uint32_t>(rd8(a + 2)) 
 // the a2min world: 1 MB of RAM, the slot decoder, the Verilated card, and the
 // card clock advancing with every instruction.
 void dump_trace();
+bool gsos_trap();
+GsosFs gsos;
+bool gsos_on = false;                     // A2MIN_MOUNT given: GS/OS answers at $E100B0
 
 struct A2Bus {
     bool halted = false;
@@ -237,6 +241,7 @@ struct A2Bus {
     // RTS from the entry point lands on HALT_ADDR; that ends the run.
     bool trap(uint32_t pcaddr) {
         if (pcaddr == HALT_ADDR || pcaddr == HALT_ADDR + 1) { halted = true; return true; }
+        if (pcaddr == 0xE100B0 && gsos_on) return gsos_trap();
         return false;
     }
 
@@ -249,6 +254,23 @@ A2Bus bus;
 Cpu65816<A2Bus> cpu(bus);
 
 void dump_trace() { cpu.print_trace(stderr); }
+
+// GS/OS's stack entry, as orcarun's: the return address, then the call number,
+// then the parameter block's address on the stack; both are popped, and the
+// error comes back in A with carry set (docs/GSOS.md).
+bool gsos_trap() {
+    const uint32_t ret = rd24(cpu.sp + 1);
+    const uint16_t num = rd16(cpu.sp + 4);
+    const uint32_t pb = (rd16(cpu.sp + 6) | (static_cast<uint32_t>(rd16(cpu.sp + 8)) << 16)) & 0xFFFFFF;
+    const uint16_t err = gsos.call(num, pb);
+    cpu.sp = static_cast<uint16_t>(cpu.sp + 9);
+    cpu.pc = static_cast<uint16_t>((ret & 0xFFFF) + 1);
+    cpu.pbr = static_cast<uint8_t>(ret >> 16);
+    cpu.a = err;
+    cpu.c = err != 0;
+    cpu.z = err == 0;
+    return true;
+}
 
 // --- Harness plumbing ----------------------------------------------------------------
 bool load_image(const char *bin_path, size_t *size_out = nullptr) {
@@ -711,6 +733,16 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     // this is what tests that claim, the way GC stress tests the boundaries.
     if (const char *r = std::getenv("A2MIN_RESERVE_STRESS"))
         ram[0x0333] = (r[0] == '1') ? 1 : 0;
+    // A2MIN_MOUNT=<prefix>=<dir>: GS/OS answers the file calls from <dir>,
+    // mounted at that pathname prefix (docs/GSOS.md); without it there is no
+    // GS/OS (vm.h GSOS_ADDR) and those builtins are E_GSOS by name (D26).
+    if (const char *m = std::getenv("A2MIN_MOUNT"); m && *m) {
+        if (!gsos.mount(m)) { std::fprintf(stderr, "A2MIN_MOUNT must be /prefix=dir\n"); return 2; }
+        gsos.rd = [](uint32_t a) { return rd8(a); };
+        gsos.wr = [](uint32_t a, uint8_t v) { wr8(a, v); };
+        gsos_on = true;
+        ram[0x0334] = 1;
+    }
     {
         std::ifstream f(nbc_path, std::ios::binary);
         if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }
@@ -786,7 +818,7 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
                                        "E_INFREC", "E_NOMEM", "E_BADNBC", "E_NOCARD",
                                        "E_ASSERT", "E_THROW", "E_ABORT", "E_NOATTR",
                                        "E_INDEX", "E_NOVAR", "E_UNSUP", "E_OVERFLOW",
-                                       "E_DUPATTR", "E_REGEX", "E_GSOS", "E_TOML" };
+                                       "E_DUPATTR", "E_REGEX", "E_GSOS", "E_TOML", "E_FILE" };
         const uint8_t code = ram[RESULT_STAT + 1];
         const char *name = code < sizeof(names) / sizeof(names[0]) ? names[code] : "E_?";
         cpu.print_trace(stdout);

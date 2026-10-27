@@ -362,14 +362,14 @@ name, so the scoreboard shows which primop would move the most tests.
 | `$51` | `fetchTree` | 1 | needs GS/OS: as `fetchGit` |
 | `$52` | `fetchurl` | 1 | needs GS/OS: as `fetchGit` |
 | `$53` | `filterSource` | 2 | needs GS/OS: as `fetchGit` |
-| `$54` | `getEnv` | 1 | needs GS/OS: as `fetchGit` |
+| `$54` | `getEnv` | 1 | `s`, a string without context (`E_TYPE`): the ORCA shell's variable `s` (`ReadVariable`), `""` if unset or no shell, where GS/OS answers ([GSOS.md](GSOS.md), D30); where it does not, as `fetchGit` |
 | `$55` | `getFlake` | 1 | needs GS/OS: as `fetchGit` |
-| `$56` | `hashFile` | 2 | needs GS/OS: as `fetchGit` |
+| `$56` | `hashFile` | 2 | `type p`: the type forced and parsed first, as `hashString`'s, then the file `p` names read whole, NULs and all, and hashed; where GS/OS answers ([GSOS.md](GSOS.md), D30); where it does not, as `fetchGit` |
 | `$57` | `path` | 1 | needs GS/OS: as `fetchGit` |
-| `$58` | `pathExists` | 1 | needs GS/OS: as `fetchGit` |
-| `$59` | `readDir` | 1 | needs GS/OS: as `fetchGit` |
-| `$5A` | `readFile` | 1 | needs GS/OS: as `fetchGit` |
-| `$5B` | `readFileType` | 1 | needs GS/OS: as `fetchGit` |
+| `$58` | `pathExists` | 1 | `p` as Nix's `coerceToPath` has it (an absolute path, else `E_TYPE`; a context `E_GSOS` "realise"), its links resolved but the last's -- every link, and a directory required, for a string ending in `/` or `/.`; `GetFileInfo` -- where GS/OS answers ([GSOS.md](GSOS.md), D30); where it does not, as `fetchGit` |
+| `$59` | `readDir` | 1 | `p` as `pathExists`'s, every link resolved: `{ name = type; }`, each entry's own type `"regular"`, `"directory"` or `"symlink"` (`GetDirEntry`); not a directory `E_FILE`; where GS/OS answers ([GSOS.md](GSOS.md), D30); where it does not, as `fetchGit` |
+| `$5A` | `readFile` | 1 | `p` as `readDir`'s: the file's bytes, no context; not there, a directory or a NUL in it `E_FILE`; where GS/OS answers ([GSOS.md](GSOS.md), D30); where it does not, as `fetchGit` |
+| `$5B` | `readFileType` | 1 | `p` as `pathExists`'s with nothing resolved -- a link among its ancestors `E_FILE`, as Nix's `PosixSourceAccessor` -- its own type; where GS/OS answers ([GSOS.md](GSOS.md), D30); where it does not, as `fetchGit` |
 | `$5C` | `storePath` | 1 | needs GS/OS: as `fetchGit` |
 | `$5D` | `findFile` | 2 | `path name`, and `<name>`, which nbc lowers as Nix's parser does to `__findFile __nixPath "name"` (`nixPath` is `[ ]`: D26): the list forced, then each element -- a set, its `prefix` if present a string without context, its `path` (`E_NOATTR` if missing) coerced as `"${}"` does but a path is its text -- then `name`, a string without context; an element whose prefix fits (Nix's separator rule) is a directory to search, `E_GSOS`, as is a path with context; `nix/...` (corepkgs) `E_UNSUP`; otherwise `E_THROW` "file 'name' was not found in the Nix search path (add it using $NIX_PATH or -I)", which `tryEval` catches |
 | `$5E` | `import` | 1 | the primop, for an import the generator cannot resolve (not a path literal, or `import` as a value; "Imports"): its argument forced, then `E_GSOS` -- reading the file is GS/OS's (D26) |
@@ -570,7 +570,7 @@ $07` (`MUL`/`DIV` with no card in any slot), `E_ASSERT $08`, `E_THROW $09`,
 (`head []`, `elemAt` out of range, negative `substring` start), `E_NOVAR $0D`
 (an identifier no `with` set supplies), `E_UNSUP $0E` (valid Nix the VM does not implement
 yet: a `drvPath` in a derivation, an experimental hash mode or `blake3`, a path
-copied into the store, `md5`; [DERIVATION.md](DERIVATION.md)), `E_OVERFLOW $0F`
+copied into the store; [DERIVATION.md](DERIVATION.md)), `E_OVERFLOW $0F`
 (`+`, `-`, unary `-`, `*` or `/` left the 64-bit range -- in Nix 2.34 an
 evaluation error, which `tryEval` does not catch, never a wraparound),
 `E_DUPATTR $10` (a computed attribute name already in its set: Nix's "dynamic
@@ -579,7 +579,10 @@ attribute already defined", which `tryEval` does not catch either), `E_REGEX $11
 expression", uncatchable too), `E_GSOS $12` (a builtin that needs GS/OS,
 refused at run time by name; D26), `E_TOML $13` (`fromTOML`'s document is not
 TOML, or holds a date, a time or a NUL: Nix's "while parsing TOML", which
-`tryEval` does not catch). The harness (`a2min --run-nbc`) prints the value in
+`tryEval` does not catch), `E_FILE $14` (GS/OS could not give a file a
+builtin names -- not there, not readable, a NUL in its contents, a symlink
+loop -- Nix's I/O errors and "cannot be represented as a Nix string", none of
+which `tryEval` catches; [GSOS.md](GSOS.md)). The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.
 

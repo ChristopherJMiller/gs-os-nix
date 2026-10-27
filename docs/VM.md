@@ -40,7 +40,8 @@ bank 5  WINDOWS   $050000-$05EFFF   the 60 KB copy ring: views of mature objects
 bank 7  SCRATCH   $070000-$07FFFF   a primop's while it runs no bytecode: the regex
                                      engine's NFA, captures, matches and stack
                                      (REGEX.md), fromTOML's document and tree
-                                     (TOML.md), listToAttrs' positions (HEAP.md)
+                                     (TOML.md), listToAttrs' positions (HEAP.md),
+                                     the file builtins' paths (GSOS.md)
 ```
 
 `$0332` is a third harness flag: `A2MIN_RSET_LIMIT` shrinks the remembered set
@@ -187,9 +188,12 @@ target/vm/c/
               (TOML.md) -- segment "toml", which landed in bank 8
   hashes.c    hashString's md5, sha1 and sha512 on the CPU, their tables
               string literals -- segment "hashes", in bank 8 after toml
+  gsos.c      pathExists, readFile, readFileType, readDir, hashFile, getEnv
+              through GS/OS's stack entry, Nix's symlink walk on bank 7
+              (GSOS.md) -- segment "gsos", in bank 8 after hashes
 ```
 
-`float`, `json` and `regex` are in bank 6, and `toml` and `hashes` in bank 8: `prims` fills
+`float`, `json` and `regex` are in bank 6, and `toml`, `hashes` and `gsos` in bank 8: `prims` fills
 bank 4, and omf2bin skips bank 5, the window ring, and bank 7, the regex
 engine's (and fromTOML's).
 

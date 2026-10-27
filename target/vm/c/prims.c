@@ -1362,11 +1362,16 @@ void op_prim(void)
     case PRIM_TOPATH:          prim_topath(); break;
     case PRIM_MATCH:           prim_match(); break;
     case PRIM_SPLIT:           prim_split(); break;
+    case PRIM_PATHEXISTS:      prim_pathexists(); break;     /* gsos.c */
+    case PRIM_READFILE:        prim_readfile(); break;
+    case PRIM_READFILETYPE:    prim_readfiletype(); break;
+    case PRIM_READDIR:         prim_readdir(); break;
+    case PRIM_HASHFILE:        prim_hashfile(); break;
+    case PRIM_GETENV:          prim_getenv(); break;
     case PRIM_FETCHGIT: case PRIM_FETCHMERCURIAL: case PRIM_FETCHTARBALL: case PRIM_FETCHTREE:
-    case PRIM_FETCHURL: case PRIM_GETENV: case PRIM_GETFLAKE: case PRIM_PATH: case PRIM_PATHEXISTS:
-    case PRIM_READDIR: case PRIM_READFILE: case PRIM_READFILETYPE: case PRIM_STOREPATH:
+    case PRIM_FETCHURL: case PRIM_GETFLAKE: case PRIM_PATH: case PRIM_STOREPATH:
                                prim_gsos(id, 1);
-    case PRIM_FILTERSOURCE: case PRIM_HASHFILE: prim_gsos(id, 2);
+    case PRIM_FILTERSOURCE:    prim_gsos(id, 2);
     case PRIM_FINDFILE:        prim_findfile(); break;
     case PRIM_IMPORT:          prim_import(0);
     case PRIM_SCOPEDIMPORT:    prim_import(1);

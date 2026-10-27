@@ -39,12 +39,26 @@ import sys
 import time
 
 
-def run(cmd, timeout=120):
+def run(cmd, timeout=120, env=None):
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return -1, "", "timeout"
+
+
+def gsos_env(nix):
+    """GS/OS for a test (docs/GSOS.md): its own directory mounted at /pwd/lang,
+    the fixture convention's, and TEST_VAR=foo as a shell variable, as Nix's
+    tests/functional/lang.sh exports it for eval-okay-getenv. A refuse-gsos-*
+    fixture runs with no GS/OS at all: it tests D26's refusal by name."""
+    env = dict(os.environ)
+    if os.path.basename(nix).startswith("refuse-gsos-"):
+        env.pop("A2MIN_MOUNT", None)
+        return env
+    env["A2MIN_MOUNT"] = "/pwd/lang=" + os.path.dirname(os.path.abspath(nix))
+    env["A2MIN_VAR_TEST_VAR"] = "foo"
+    return env
 
 
 def find_tests(root):
@@ -118,7 +132,7 @@ def main():
         elif rc != 0:
             bucket, got = "error", f"generator rc={rc}: {err.strip()}"
         else:
-            rc, out, err = run([args.a2min, run_mode, args.vm, base + ".nbc"], timeout=600)
+            rc, out, err = run([args.a2min, run_mode, args.vm, base + ".nbc"], timeout=600, env=gsos_env(nix))
             kind, got = vm_result(out)
             if kind == "error":
                 got = "error: " + got

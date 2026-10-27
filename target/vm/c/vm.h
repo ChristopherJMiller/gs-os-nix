@@ -74,6 +74,8 @@
 #define RESERVE_STRESS_ADDR 0x0333UL /* a2min sets it: every nursery_reserve() collects,
                                        needed or not -- so each call site's claim that
                                        nothing live is in a C local is actually tested */
+#define GSOS_ADDR        0x0334UL   /* a2min sets it: GS/OS answers the file calls (GSOS.md);
+                                       0, and the builtins that need it are E_GSOS by name */
 #define VERB_NO_LOOKUP   0x01U
 #define VERB_NO_ALU64    0x02U
 #define VERB_NO_HASH     0x04U   /* SHA-256: HASH_PUSH / HASH_STREAM + HASH_FINAL */

@@ -191,5 +191,6 @@
 #define E_REGEX         0x11    /* not a regular expression (match, split): Nix's "invalid regular expression" */
 #define E_GSOS          0x12    /* a builtin that needs GS/OS -- files, the environment, the network (D26) */
 #define E_TOML          0x13    /* not TOML for fromTOML, or a date or time: Nix's "while parsing TOML" */
+#define E_FILE          0x14    /* GS/OS could not give the file: not there, not readable, a NUL in it, a symlink loop (GSOS.md) */
 
 #endif

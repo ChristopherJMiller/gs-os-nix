@@ -204,22 +204,40 @@ void str_sha256(obj_t *so, uint8_t *dig)
  * (forceString, not a coercion). */
 void prim_hashstring(void)
 {
-    uint8_t dig[64], algo = 0;
-    uint16_t n;
-    obj_t *t, *r;
+    uint8_t algo;
     force_slot(2);                              /* the type, first, as Nix forces it */
-    t = deref(vstack[vsp - 2]);
+    algo = hash_type(vstack[vsp - 2]);
+    force_top();
+    need(deref(peek()), T_STRING);
+    hash_top(algo);
+    vstack[vsp - 2] = vstack[vsp - 1];          /* the digest where the type was */
+    --vsp;
+}
+
+/* The algorithm the forced type t (an original) names, hashString's and
+ * hashFile's: HS_*, or 0 for sha256; a context or any other name E_TYPE */
+uint8_t hash_type(obj_t *to)
+{
+    obj_t *t = deref(to);
     need(t, T_STRING);
     if (CTX(t)) type_err();                     /* forceStringNoCtx */
-    if (is_lit(t, "md5", 3)) algo = HS_MD5;
-    else if (is_lit(t, "sha1", 4)) algo = HS_SHA1;
-    else if (is_lit(t, "sha512", 6)) algo = HS_SHA512;
-    else if (!is_lit(t, "sha256", 6)) type_err();
-    force_top();
+    if (is_lit(t, "md5", 3)) return HS_MD5;
+    if (is_lit(t, "sha1", 4)) return HS_SHA1;
+    if (is_lit(t, "sha512", 6)) return HS_SHA512;
+    if (!is_lit(t, "sha256", 6)) type_err();
+    return 0;
+}
+
+/* The forced STRING on top becomes its digest in lowercase hex, no context */
+void hash_top(uint8_t algo)
+{
+    uint8_t dig[64];
+    uint16_t n;
+    obj_t *r;
     if (algo) str_hash(peek(), algo, dig);
     else str_sha256(peek(), dig);
     n = algo == HS_MD5 ? 16 : algo == HS_SHA1 ? 20 : algo == HS_SHA512 ? 64 : 32;
-    vsp -= 2;
+    --vsp;
     r = str_alloc(n + n);                       /* at most 136 bytes: inside the boundary's margin */
     hex_of(dig, n, STRBYTES(r));
     push(r);
@@ -385,7 +403,7 @@ static obj_t *lit_str(const char *t, uint16_t n)
  * The names are PRIM_FETCHGIT's onward, in order. */
 #define GSOS_NAMES \
     "fetchGit fetchMercurial fetchTarball fetchTree fetchurl filterSource getEnv getFlake hashFile path pathExists readDir readFile readFileType storePath "
-_Noreturn static void gsos_exit(const char *t, uint16_t n)
+_Noreturn void gsos_exit(const char *t, uint16_t n)
 {
     *(obj_t **)RESULT_ADDR = lit_str(t, n);
     err_exit(E_GSOS);

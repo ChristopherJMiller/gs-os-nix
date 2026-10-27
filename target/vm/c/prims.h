@@ -45,6 +45,17 @@ void   str_sha256(obj_t *so, uint8_t *dig);         /* of a forced STRING origin
 #define HS_SHA1     2                       /* 20 */
 #define HS_SHA512   3                       /* 64 */
 void   str_hash(obj_t *so, uint8_t algo, uint8_t *dig);   /* of a forced STRING original, on the CPU */
+uint8_t hash_type(obj_t *t);                        /* strings.c: a hash type's HS_*, 0 for sha256 */
+void   hash_top(uint8_t algo);                      /* strings.c: the STRING on top becomes its hex digest */
+_Noreturn void gsos_exit(const char *t, uint16_t n);  /* strings.c: E_GSOS, the name t[0..n) in RESULT */
+
+/* --- gsos.c: the builtins GS/OS answers (GSOS.md); E_GSOS by name where it cannot ----- */
+void   prim_pathexists(void);
+void   prim_readfile(void);
+void   prim_readfiletype(void);
+void   prim_readdir(void);
+void   prim_hashfile(void);
+void   prim_getenv(void);
 
 /* Building contexts: an element STRING of [pre] ["!<o>!"] s[off..off+n)
  * (n = CTX_REST: to the end), and the sorted set of them on the stack. */
