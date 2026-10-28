@@ -1,0 +1,147 @@
+# SPDX-License-Identifier: CERN-OHL-S-2.0
+#
+# carrier_top's port -> ball assignment (rtl/board/carrier_top.v), for the LFE5U-25F on
+# the iCESugar-Pro module. The LPF is generated from this file. hw-pinmap checks that every
+# ball is a PIO in a 3.3 V bank, that each ball is on a SODIMM pin (hw/carrier/
+# icesugar_pro_v1_3.toml), and that the netlist carries the port's net on that pin.
+#
+# Grouping (a sensible grouping helps placement and routing; it costs nothing here).
+# Each group is one bank, on every other contact of one SODIMM row (the module map puts
+# one bank on a run of odd pins or of even pins), taken in ascending pin order, so a bus
+# is a run of neighbouring contacts and bit i is the i-th ball:
+#   slot_a   16  bank 7, odd pins 77-111    (the address translator, 74ALVC164245)
+#   slot_d    8  bank 1, even pins 86-100   (the data translator, SN74LVC8T245)
+#   slot_dl   8  bank 0, odd pins 51-69     (the data listen buffer, 74LVC541)
+#   control inputs: bank 2, even pins 64-84 (clocks, R/W and the select strobes)
+#   control outputs: bank 3, even pins 42-62 (translator controls and open-drain drivers,
+#     the signals that must be defined at power-up, together)
+#   slot_reset_n, slot_sync_n, safe_n and the two UART lines take spare balls near them.
+# Every one of the 57 slot-side bits is a slot signal, so there is no pin-end preference
+# to honour: the socket's orientation against J1 is the placement task's choice, and
+# nothing here depends on it. Every bank is 3.3 V (the module powers VCCIO from 3V3).
+
+part = "LFE5U-25F-6BG256C"
+io_standard = "LVCMOS33"
+
+# The 25 MHz oscillator is on the module and reaches the FPGA without the SODIMM.
+[ports.clk25]
+dir = "in"
+balls = ["P6"]
+on_module = true
+
+[ports.slot_a]
+dir = "in"
+# SODIMM pins 77 79 81 83 85 87 89 91 93 95 97 99 101 103 109 111
+balls = ["B1", "B2", "C1", "C2", "D1", "D3", "E1", "E2", "F1", "F2", "G1", "G2", "H2", "J1", "J2", "K1"]
+
+[ports.slot_rw]
+dir = "in"
+balls = ["G14"]   # pin 76
+
+[ports.slot_d]
+dir = "inout"
+# SODIMM pins 86 88 90 92 94 96 98 100
+balls = ["E13", "E12", "C13", "D13", "C12", "D12", "C11", "D11"]
+
+[ports.slot_dl]
+dir = "in"
+# SODIMM pins 51 57 59 61 63 65 67 69
+balls = ["A7", "B7", "A6", "B6", "A5", "B5", "A4", "B4"]
+
+[ports.slot_ph0]
+dir = "in"
+balls = ["K14"]   # pin 64
+
+[ports.slot_ph1]
+dir = "in"
+balls = ["J14"]   # pin 68
+
+[ports.slot_q3]
+dir = "in"
+balls = ["J13"]   # pin 70
+
+[ports.slot_7m]
+dir = "in"
+balls = ["H14"]   # pin 72
+
+[ports.slot_devsel_n]
+dir = "in"
+balls = ["G13"]   # pin 78
+
+[ports.slot_iosel_n]
+dir = "in"
+balls = ["F14"]   # pin 80
+
+[ports.slot_iostrb_n]
+dir = "in"
+balls = ["F13"]   # pin 82
+
+[ports.slot_m2sel_n]
+dir = "in"
+balls = ["E14"]   # pin 84
+
+[ports.slot_m2b0]
+dir = "in"
+balls = ["H13"]   # pin 74
+
+[ports.slot_reset_n]
+dir = "in"
+balls = ["A3"]    # pin 71
+
+[ports.slot_sync_n]
+dir = "in"
+balls = ["B3"]    # pin 73
+
+[ports.slot_d_dir]
+dir = "out"
+balls = ["P11"]   # pin 42
+
+[ports.slot_d_oe_n]
+dir = "out"
+balls = ["P12"]   # pin 44
+
+[ports.slot_a_dir]
+dir = "out"
+balls = ["N12"]   # pin 46
+
+[ports.slot_a_oe_n]
+dir = "out"
+balls = ["P13"]   # pin 48
+
+[ports.slot_irq_n_o]
+dir = "out"
+balls = ["N13"]   # pin 50
+
+[ports.slot_nmi_n_o]
+dir = "out"
+balls = ["P14"]   # pin 52
+
+[ports.slot_inh_n_o]
+dir = "out"
+balls = ["M12"]   # pin 54
+
+[ports.slot_dma_n_o]
+dir = "out"
+balls = ["M13"]   # pin 58
+
+[ports.slot_rdy_o]
+dir = "out"
+balls = ["L14"]   # pin 60
+
+[ports.slot_reset_n_o]
+dir = "out"
+balls = ["L13"]   # pin 62
+
+# The SAFE jumper and the UART header: spare 3.3 V PIOs (the module's own JTAG and UART
+# go to its on-module iCELink only, not the SODIMM).
+[ports.safe_n]
+dir = "in"
+balls = ["A2"]    # pin 75
+
+[ports.uart_rx]
+dir = "in"
+balls = ["B8"]    # pin 49
+
+[ports.uart_tx]
+dir = "out"
+balls = ["A8"]    # pin 41

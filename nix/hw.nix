@@ -49,6 +49,16 @@ let
         } | tee "$out"
         ${lib.concatMapStrings (e: "grep -q ${lib.escapeShellArg e} \"$out\"\n") expect}
       '';
+
+  # The carrier's netlist, schematic, LPF and ERC report (hw/carrier/top.py).
+  carrierBuild = pkgs.runCommand "hw-carrier-build"
+    (hwEnv // { nativeBuildInputs = tools; })
+    ''
+      export HOME=$TMPDIR
+      cp -r ${self}/hw ${self}/rtl .
+      chmod -R +w .
+      python3 -m hw.carrier.top --out "$out"
+    '';
 in
 {
   # devShells.<system>.hw must exist on every system, so off Linux it is an
@@ -72,14 +82,38 @@ in
     '' [ "^HW TESTS OK" ];
 
     # The slot bus section's power-up state, daisy chains and rails (what ERC and DRC
-    # cannot see). Task 6 adds the carrier netlist and --module.
+    # cannot see), on the section alone and on the whole carrier, where the module's
+    # power rules (J2's 5V pins, the series diode D1) apply too.
     hw-intent = hwCheck "intent" ''
       mkdir -p build/hw
       python3 -m hw.src.slot_bus --netlist build/hw/slot_bus.net > /dev/null
       python3 hw/tools/check_intent.py --selftest build/hw/slot_bus.net
       python3 hw/tools/check_intent.py build/hw/slot_bus.net
+      python3 hw/tools/check_intent.py --module hw/carrier/icesugar_pro_v1_3.toml \
+        --selftest ${carrierBuild}/carrier.net
+      python3 hw/tools/check_intent.py --module hw/carrier/icesugar_pro_v1_3.toml \
+        ${carrierBuild}/carrier.net
     '' [ "^HW INTENT SELFTEST OK" "^HW INTENT OK" ];
+
+    # SKiDL's electrical rules check on the carrier, and its planted second driver.
+    hw-erc = hwCheck "erc" ''
+      python3 hw/tools/check_erc.py --selftest
+      python3 hw/tools/check_erc.py
+    '' [ "^HW ERC SELFTEST OK" "^HW ERC OK" ];
+
+    # pins.toml <-> carrier_top's ports <-> the carrier netlist <-> the LPF <-> Trellis;
+    # the stub must also lint clean.
+    hw-pinmap = hwCheck "pinmap" ''
+      verilator --lint-only -Wall rtl/board/carrier_top.v && echo 'carrier_top lint clean'
+      args="--pins hw/carrier/pins.toml --module hw/carrier/icesugar_pro_v1_3.toml \
+        --netlist ${carrierBuild}/carrier.net --verilog rtl/board/carrier_top.v \
+        --lpf ${carrierBuild}/carrier.lpf"
+      python3 hw/tools/check_pinmap.py --selftest $args
+      python3 hw/tools/check_pinmap.py $args
+    '' [ "^carrier_top lint clean" "^HW PINMAP SELFTEST OK" "^HW PINMAP OK" ];
   };
 
-  packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux { };
+  packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+    hw-carrier-build = carrierBuild;
+  };
 }

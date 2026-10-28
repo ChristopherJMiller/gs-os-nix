@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Hardware tasks. Run inside `nix develop .#hw`. Every recipe runs from the repo
-# root. netlist, board, route, check, render and fab arrive with later tasks.
+# root. board, route, check, render and fab arrive with later tasks.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -9,9 +9,28 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 test:
     cd {{justfile_directory()}}/.. && python3 -m pytest hw/tests
 
-# The bus section's netlist, then the design-intent gate on it (selftest first).
-netlist:
+# The whole carrier and its gates (recipe `carrier`), then the bus section alone and the
+# design-intent gate on it (selftest first).
+netlist: carrier
     cd {{justfile_directory()}}/.. && mkdir -p build/hw \
       && python3 -m hw.src.slot_bus --netlist build/hw/slot_bus.net \
       && python3 hw/tools/check_intent.py --selftest build/hw/slot_bus.net \
       && python3 hw/tools/check_intent.py build/hw/slot_bus.net
+
+# The whole carrier: netlist, schematic, LPF and ERC report in build/hw/carrier, then the
+# gates on them (each selftest first): ERC, design intent (with the module rules), pin map.
+carrier:
+    cd {{justfile_directory()}}/.. && mkdir -p build/hw \
+      && python3 -m hw.carrier.top --out build/hw/carrier \
+      && python3 hw/tools/check_erc.py --selftest && python3 hw/tools/check_erc.py \
+      && python3 hw/tools/check_intent.py --module hw/carrier/icesugar_pro_v1_3.toml \
+           --selftest build/hw/carrier/carrier.net \
+      && python3 hw/tools/check_intent.py --module hw/carrier/icesugar_pro_v1_3.toml \
+           build/hw/carrier/carrier.net \
+      && verilator --lint-only -Wall rtl/board/carrier_top.v \
+      && python3 hw/tools/check_pinmap.py --selftest --pins hw/carrier/pins.toml \
+           --module hw/carrier/icesugar_pro_v1_3.toml --netlist build/hw/carrier/carrier.net \
+           --verilog rtl/board/carrier_top.v --lpf build/hw/carrier/carrier.lpf \
+      && python3 hw/tools/check_pinmap.py --pins hw/carrier/pins.toml \
+           --module hw/carrier/icesugar_pro_v1_3.toml --netlist build/hw/carrier/carrier.net \
+           --verilog rtl/board/carrier_top.v --lpf build/hw/carrier/carrier.lpf
