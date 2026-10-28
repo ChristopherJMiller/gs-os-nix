@@ -1,0 +1,149 @@
+# SPDX-License-Identifier: CERN-OHL-S-2.0
+# iCESugar-Pro v1.3: which module function or FPGA ball sits on each DDR2
+# SODIMM-200 pin. Transcribed from the module schematic, symbol U2.
+# Pins not listed (13-38, 43, 45, 47, 53, 159-198) are no-connect on the module.
+# Each PIO label on U2 was resolved to a ball through the bank sheets
+# (U1A-U1G) of the same schematic, then cross-checked against the Trellis
+# database and the LiteX platform by hw/tests/test_icesugar_map.py.
+
+[source]
+repo = "https://github.com/wuxx/icesugar-pro"
+commit = "087e48d9e0b0a0168ce165a961cba306335c4cf2"
+schematic = "schematic/iCESugar-Pro-v1.3.pdf"
+sha256 = "767cd3f1ac434a0c54d279bd41c885f86024656cf8da36d733530fb07a232b4a"
+baseboard_map = "doc/iCESugar-pro-pinmap.png"
+
+# Only 5V and GND appear on the connector. The module makes its own 3V3, 2V5
+# and 1V1 (SY8008 U4/U7, XC6206 U6) from 5V; the schematic states no current limit.
+[rails]
+5V = [2, 4, 6, 8, 10, 12]
+GND = [1, 3, 5, 7, 9, 11, 39, 40, 55, 56, 105, 106, 107, 108, 157, 158, 199, 200]
+
+[rail_role]
+5V = "input+usb"
+GND = "return"
+
+[notes]
+5V = "Module 5V net is the SODIMM 5V pins AND the USB-C J4 VBUS pins, joined directly with no diode (sheet 1, USB block, F1 sits between this net and 5V_USB which feeds U4/U6/U7). The carrier must put a series diode in its +5V feed so it cannot back-feed a USB host."
+jtag = "FPGA TCK/TMS/TDI/TDO (T10 T11 R11 M10) go only to the on-module iCELink MCU U8 and module header J1, not to the SODIMM. Program through the module's USB."
+serial = "UART B9/A9 (PT42A/PT16A) go only to the on-module iCELink MCU, not to the SODIMM."
+vccio = "Every VCCIO pin (banks 0 1 2 3 6 7 8) is tied to 3V3 on the SYS sheet; VCCAUX is 2V5, VCC is 1V1."
+
+# bank_vccio: Trellis bank number -> VCCIO volts (LFE5U-25F has banks 0 1 2 3 6 7 8)
+[bank_vccio]
+0 = 3.3
+1 = 3.3
+2 = 3.3
+3 = 3.3
+6 = 3.3
+7 = 3.3
+8 = 3.3
+
+# SODIMM pin -> CABGA256 ball (PIO label on U2 in the comment)
+[balls]
+41 = "A8"  # PT29B
+42 = "P11"  # PR47C
+44 = "P12"  # PR47D
+46 = "N12"  # PR44D
+48 = "P13"  # PR41A
+49 = "B8"  # PT35B
+50 = "N13"  # PR38A
+51 = "A7"  # PT29A
+52 = "P14"  # PR38B
+54 = "M12"  # PR44C
+57 = "B7"  # PT27B
+58 = "M13"  # PR35C
+59 = "A6"  # PT18B
+60 = "L14"  # PR32C
+61 = "B6"  # PT22B
+62 = "L13"  # PR29C
+63 = "A5"  # PT18A
+64 = "K14"  # PR20D
+65 = "B5"  # PT15B
+66 = "K13"  # PR29A
+67 = "A4"  # PT6B
+68 = "J14"  # PR20C
+69 = "B4"  # PT11B
+70 = "J13"  # PR17C
+71 = "A3"  # PT6A
+72 = "H14"  # PR14D
+73 = "B3"  # PT4B
+74 = "H13"  # PR17B
+75 = "A2"  # PT4A
+76 = "G14"  # PR14C
+77 = "B1"  # PL2A
+78 = "G13"  # PR11B
+79 = "B2"  # PL2B
+80 = "F14"  # PR5D
+81 = "C1"  # PL5A
+82 = "F13"  # PR8C
+83 = "C2"  # PL5B
+84 = "E14"  # PR5C
+85 = "D1"  # PL8A
+86 = "E13"  # PT62B
+87 = "D3"  # PL2D
+88 = "E12"  # PT58B
+89 = "E1"  # PL11D
+90 = "C13"  # PT62D
+91 = "E2"  # PL8B
+92 = "D13"  # PT62A
+93 = "F1"  # PL14A
+94 = "C12"  # PT58D
+95 = "F2"  # PL11C
+96 = "D12"  # PT58A
+97 = "G1"  # PL20A
+98 = "C11"  # PT49B
+99 = "G2"  # PL14B
+100 = "D11"  # PT51A
+101 = "H2"  # PL20B
+102 = "C10"  # PT44B
+103 = "J1"  # PL23A
+104 = "D10"  # PT47A
+109 = "J2"  # PL23B
+110 = "C9"  # PT38B
+111 = "K1"  # PL23C
+112 = "D9"  # PT40A
+113 = "K2"  # PL23D
+114 = "C8"  # PT35A
+115 = "L1"  # PL26A
+116 = "D8"  # PT33B
+117 = "L2"  # PL26B
+118 = "C7"  # PT27A
+119 = "M1"  # PL26C
+120 = "D7"  # PT24B
+121 = "M2"  # PL26D
+122 = "C6"  # PT22A
+123 = "N1"  # PL32A
+124 = "D6"  # PT20B
+125 = "N3"  # PL35D
+126 = "C5"  # PT15A
+127 = "P1"  # PL35A
+128 = "D5"  # PT13B
+129 = "P2"  # PL32B
+130 = "C4"  # PT11A
+131 = "R1"  # PL35B
+132 = "D4"  # PT9B
+133 = "R2"  # PL38C
+134 = "C3"  # PL2C
+135 = "T2"  # PL38D
+136 = "E4"  # PT9A
+137 = "R3"  # PL41B
+138 = "E3"  # PL5C
+139 = "T3"  # PL41D
+140 = "F4"  # PL8C
+141 = "R4"  # PL41C
+142 = "F3"  # PL5D
+143 = "T4"  # PL44B
+144 = "G4"  # PL11B
+145 = "R5"  # PL44A
+146 = "G3"  # PL14C
+147 = "R6"  # PB4B
+148 = "H3"  # PL14D
+149 = "T6"  # PB4A
+150 = "J4"  # PL17C
+151 = "P7"  # PB6B
+152 = "J3"  # PL20C
+153 = "R7"  # PB6A
+154 = "K4"  # PL29A
+155 = "R8"  # PB13A
+156 = "K3"  # PL20D
