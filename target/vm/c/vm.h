@@ -11,7 +11,9 @@
  * call; keep it on the root stack (rpush/rpop) and the collector rewrites it.
  * Allocation itself never collects. Collections run at run()'s dispatch, in
  * nursery_reserve(), and in store_field() or a thunk update with the remembered
- * set full (gc.c); so those may collect too.
+ * set full (gc.c); so those may collect too. And any collection may be followed
+ * by one of mature space, which moves mature objects as well (HEAP.md
+ * "Collecting mature space"): the rule is the same for both kinds of pointer.
  */
 #ifndef VM_H
 #define VM_H
@@ -42,8 +44,8 @@
  *
  * Every counter sits on a cold path -- a collection, a promotion, a window
  * copy, a thunk force -- so none of them is on the dispatch loop. */
-#define STATS_ADDR       0x0340UL   /* 8 x u32, live -- see the note above */
-#define STATS_N          8
+#define STATS_ADDR       0x0340UL   /* 9 x u32, live -- see the note above */
+#define STATS_N          9
 /* Counted IN PLACE, at a fixed address, rather than in globals copied out at
  * exit. The first version did the latter and was useless for the one run that
  * mattered: a program stopped by the cycle budget never reaches the copy, so
@@ -59,6 +61,7 @@
 #define ST_TURNOVER      STAT(5)    /* window-ring turnovers */
 #define ST_FORCES        STAT(6)    /* thunks forced */
 #define ST_REMEMBERED    STAT(7)    /* young pointers stored into mature fields */
+#define ST_MATURE        STAT(8)    /* collections of mature space (MARK and COMPACT) */
 
 /* The harness flags. The first two were at $0BF0, which was inside the C stack's
  * range then ($0400..$1FFF): a deep enough recursion would have overwritten them,
@@ -76,6 +79,9 @@
                                        nothing live is in a C local is actually tested */
 #define GSOS_ADDR        0x0334UL   /* a2min sets it: GS/OS answers the file calls (GSOS.md);
                                        0, and the builtins that need it are E_GSOS by name */
+#define MATURE_STRESS_ADDR 0x0335UL /* a2min sets it: k, and every k-th promotion is followed
+                                       by a collection of mature space, needed or not -- with
+                                       GC stress, every fixture tests the moving collector */
 #define VERB_NO_LOOKUP   0x01U
 #define VERB_NO_ALU64    0x02U
 #define VERB_NO_HASH     0x04U   /* SHA-256: HASH_PUSH / HASH_STREAM + HASH_FINAL */
@@ -223,6 +229,18 @@ _Static_assert(sizeof(obj_t) == 4, "a header is four bytes (HEAP.md)");
  * A chunk costs 4 bytes here and 4 in imports[]; 256 is 1 KB of bank 0. The
  * loader refuses an image with more (main.c), loudly. */
 #define CHUNK_MAX  256
+
+/* Mature space (HEAP.md "Collecting mature space"). The card's heap is two
+ * halves of CARD_HALF bytes (rtl/a2nix_card.v SPACE_SIZE: A from $10, B from
+ * CARD_HALF + $10), and a promotion only ever goes into the current one. After
+ * every promotion, if less than MATURE_MARGIN is left in it -- the most the
+ * next promotion can need, a whole nursery, and the largest root list -- the
+ * card's MARK and COMPACT collect it; if that still leaves less, live data has
+ * filled the half, and it is E_NOMEM rather than a collection at every
+ * promotion. */
+#define CARD_HALF     0x00080000UL
+#define ROOTS_MAX     (VSTACK_N + 1 + RSTACK_N + FSTACK_N + CATCH_N + CTAB_N + CHUNK_MAX + 1)
+#define MATURE_MARGIN (0x00010000UL + 4UL * ROOTS_MAX)
 
 struct chunk_info { uint16_t code; uint16_t ctab; };   /* image offset, first constant's index in ctab_pool */
 
@@ -406,6 +424,8 @@ void card_read_at(uint32_t addr, void *dst, uint16_t n);
 void card_read_more(void *dst, uint16_t n);      /* continue from where the last read stopped */
 void card_write_at(uint32_t addr, const void *src, uint16_t n);
 uint32_t card_reserve(uint16_t n);
+void card_mark(uint32_t roots, uint16_t n);   /* MARK: evacuate n roots at `roots`, each rewritten */
+void card_compact(void);                       /* COMPACT: the flip */
 int  card_lookup(uint32_t set, uint32_t h, uint16_t *ix, uint32_t *value);
 /* HASH_PUSH n bytes in RAM, then HASH_FINAL; the 32 bytes of slot psel: P0 the
  * digest, P3 the store-path hash part (the digest folded and in nixbase32). 0 if

@@ -34,6 +34,8 @@ segment "core";
 #define ST_READY  0x10
 #define FIFO_BURST 16                           /* bytes one READY poll licenses (CARD-ISA.md) */
 #define V_RESERVE 0x25
+#define V_MARK    0x40
+#define V_COMPACT 0x41
 #define V_LOOKUP  0x30
 #define V_ALU64   0x50
 #define ST_DONE   0x40
@@ -284,6 +286,28 @@ uint32_t card_reserve(uint16_t n)
     cw8(REG_CMD, V_RESERVE);
     card_wait();
     return get_a1();
+}
+
+/* MARK: the card copies everything the n 32-bit roots at card address `roots`
+ * reach into its to-space and writes each root's new address over it; null,
+ * young and static pointers pass through (CARD-ISA.md). O(survivors), and no
+ * object crosses the bus. Then COMPACT flips the halves. */
+void card_mark(uint32_t roots, uint16_t n)
+{
+    cw8(REG_CTRL, 0x08);                        /* rewind the port indices (CARD-ISA.md) */
+    set_a0(roots);
+    cw8(REG_LEN, n & 0xFF);
+    cw8(REG_LEN, n >> 8);
+    cw8(REG_LEN, 0);
+    cw8(REG_LEN, 0);
+    cw8(REG_CMD, V_MARK);
+    card_wait();
+}
+
+void card_compact(void)
+{
+    cw8(REG_CMD, V_COMPACT);
+    card_wait();
 }
 
 /* LOOKUP: the ATTRS at card address `set`, search hash h. 1 and the index and

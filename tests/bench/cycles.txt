@@ -1,8 +1,8 @@
 # CPU cycles per benchmark (scripts/bench.py; rewritten by --update).
 # a2min is cycle-exact: slower fails the check, faster asks for --update.
-attrs 22515493
-derivations 8803104
-foldl-strict 33878674
-recursion 46239870
-strings 49792449
-tail-calls 48987239
+attrs 22515708
+derivations 8803319
+foldl-strict 33879069
+recursion 46240384
+strings 49793572
+tail-calls 48987753

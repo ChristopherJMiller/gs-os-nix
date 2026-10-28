@@ -103,13 +103,14 @@ static void force_thunk(void)
         vv = deref(v);
         y = update_ptr(vv, v, &yoff);
         if (IS_YOUNG(y) && rs_full()) {
-            ++ST_BARRIER; push(v); gc_collect(); v = pop();
+            /* th waits on the root stack: the collection may move mature space */
+            ++ST_BARRIER; rpush(th); push(v); gc_collect(); v = pop(); th = rpop();
             vv = deref(v);                      /* now nothing it carries is young */
             y = update_ptr(vv, v, &yoff);
         }
         switch (vv->tag) {
         case T_INT: case T_FLOAT: case T_LAMBDA: case T_THUNK:
-            memcpy(buf, vv, 12); card_write_at(PBITS(th), buf, 12); break;   /* gcsafe: mature -- th is on the card */
+            memcpy(buf, vv, 12); card_write_at(PBITS(th), buf, 12); break;
         case T_BOOL: case T_NULL:
             memcpy(buf, vv, 8); card_write_at(PBITS(th), buf, 8); break;
         default:

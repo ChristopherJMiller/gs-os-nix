@@ -43,9 +43,16 @@ Every object starts with a 4-byte header:
 
 ```
 +0   tag        1 byte
-+1   aux        3 bytes, little-endian   (count, or length, as the tag dictates)
++1   aux        2 bytes, little-endian   (count, or length, as the tag dictates)
++3   marks      1 byte: bit 7 visited (a deep force is in it), bit 6 a `with` environment
 +4   payload    tag-dependent
 ```
+
+The marks are the CPU's, and are never part of the count: the card's
+`obj_size`, `is_ptr_field` and `LOOKUP` read 16 bits, as the CPU's `AUX16`
+does. (The card read 23 until 2026-10-27, masking only the visit mark: a
+`with` environment, a 2-element `LIST` with bit 6 set, was four million
+elements long to it -- harmless until `MARK` ran.)
 
 Pointers are 32-bit little-endian byte addresses into the heap. `$00000000` is the
 null pointer, so address 0 is never allocated.
@@ -221,9 +228,9 @@ it. So a collection that leaves less than `NURSERY_LOW` (8 KB) free is now
 `E_NOMEM`, the overhead-limit rule. With a card it cannot fire, because
 promotion empties the nursery every time; it only turns the no-card
 configuration's hang-shaped failure into a loud one. **Under GC stress**, every
-value is promoted before it can die, and nothing collects mature space yet
-(the card-side `MARK` is slice 5), so a stress run fails with `E_NOMEM` once a
-program has allocated about 512 KB in total, half the harness card's heap.
+value is promoted before it can die; until mature space was collected
+(2026-10-27, below) a stress run failed with `E_NOMEM` once a program had
+allocated about 512 KB in total, half the harness card's heap.
 
 **The collection** is `target/heap/nursery.s`'s algorithm on these roots: a Cheney
 copy of the live graph into a staging area in bank 1 (long addressing; the nursery
@@ -298,7 +305,8 @@ on a list) would be a fourth place, because the container they fill could be
 promoted by a callback mid-loop; they collect their results on the value stack
 instead and build the container afterwards, when nothing runs bytecode any more.
 
-**A discrepancy this exposes, to resolve before the card's own collector runs:**
+**A discrepancy this exposes, to resolve before the card's own collector runs**
+(resolved 2026-10-27: "Collecting mature space", below):
 the trace table below says `THUNK`/`LAMBDA` word 0 (the code pointer) is a heap
 pointer, but the VM stores a bank-0 code address and a constant-table address
 there, which the card's `MARK` would chase into the heap. Promotion (this slice)
@@ -381,15 +389,86 @@ pointers:
 
 | Tag | Size | Pointer words |
 |---|---|---|
-| `INT` | 12 | none |
-| `BOOL` | 8 | none |
-| `NULL`, `BLACKHOLE` | 8 | none |
+| `INT`, `FLOAT` | 12 | none |
+| `BOOL`, `NULL` | 8 | none |
 | `STRING` | `4 + round4(len) + 4` | the last word (context) |
 | `PATH` | `4 + round4(len)` (min 8) | none |
-| `LIST` | `4 + 4·count` | all `count` words |
-| `ATTRS` | `4 + 12·count` | words `count`…`3count−1` — the value and name columns. **The hash column is not pointers** and must be skipped |
-| `THUNK`, `LAMBDA` | 12 | both words |
+| `LIST` | `4 + 4·count` (min 8) | all `count` words |
+| `ATTRS` | `4 + 12·count + round4(2·count)` (min 8) | words `count`…`3count−1` — the value and name columns. **The hash column is not pointers** and must be skipped, and nor are the 2-byte positions after the names (D28) |
+| `THUNK`, `LAMBDA`, `BLACKHOLE` | 12 | word 1, the environment. **Word 0 is not a pointer**: the VM's code and constant-table offsets (`CL_CODE`, `CL_CTAB`) |
 | `INDIRECT` | 8 | the one word |
+
+Every count is the header's 16 bits, never its marks byte (the visit and
+`with` marks, "Object header" above), on both sides. Every row
+is the CPU collector's (`gc.c` `obj_size`, `scan_one`) and the card's
+(`rtl/a2nix_card.v` `obj_size`, `is_ptr_field`) alike, and must stay so: a
+disagreement copies the wrong bytes or follows a word that is not a pointer,
+in silence. Mature stress (below) runs every fixture through both.
 
 `ATTRS` is the one that could go silently wrong: its first column is 32-bit hashes
 that *look* like plausible addresses. Tracing them would "evacuate" random memory.
+A closure's word 0 is the other: `(ctab << 16) | code`, which for a constant
+index under 8 falls inside half A (and under 16, half B). The card traced it
+until 2026-10-27, when the VM first called `MARK` -- `regress` now has a canary
+for it -- and it sized a `BLACKHOLE` by the 8-byte default. A `BLACKHOLE` is a
+`THUNK` under evaluation, and the update that ends the force writes 12 bytes
+into it: copied as 8, over the next object's header. Both are RTL mutations.
+
+## Collecting mature space
+
+Until 2026-10-27 nothing did: the card had `MARK` and `COMPACT` (L3) and the VM
+never called them, so a program could promote 512 KB in all -- half the
+harness card's heap -- and a GC-stress run of `eval-okay-tail-call-1` reached
+that. Now a collection of mature space follows a nursery collection, and the
+four things "The VM and the two spaces" listed to resolve first are resolved:
+a closure's word 0 is opaque and a `BLACKHOLE` 12 bytes (the table above);
+the window table is flushed, since every copy is of an old address; the visit
+mark is masked; and `MARK` only runs with the remembered set empty, because it
+only ever follows a promotion, which empties it.
+
+**When.** After every promotion, if the card's current half has less than
+`MATURE_MARGIN` free -- the most the next promotion can need, a whole nursery
+(64 KB), and the largest root list (below, 9.5 KB): ~73 KB. The CPU knows the
+card's allocation pointer exactly without asking: every `RESERVE` returns its
+base and moves it by `max(4, round4(n))`, and a promotion's size is a
+multiple of 4, at least 8; the half's end is `CARD_HALF` (`vm.h`, the RTL's
+`SPACE_SIZE`, 512 KB) after the half's start. Checked after every promotion,
+the margin is there before the next, so its `RESERVE` cannot fail. If a
+collection still leaves less than the margin, live data has filled the half,
+and it is `E_NOMEM` -- the overhead limit, as the nursery's -- rather than a
+collection at every promotion. So the card holds ~439 KB of live data, and
+a program may promote without limit.
+
+**How** (`gc.c` `gc_mature`). The roots are the nursery collector's, in its
+order: the value stack, `env`, the root stack, the force stack, each catch
+frame's `env`, the constant table, the import memo, `drv_table`. They go to a
+block `RESERVE`d in from-space, which the flip abandons, straight from the
+arrays they live in, one `DATA` burst an array; `MARK` copies what they reach
+into to-space and writes each one's new address over it; the block is read
+back into the same arrays; `COMPACT` flips; a `RESERVE` of 4 says where
+allocation resumes; the window ring is turned over. A young pointer, a static
+one (bit 31 set) or null passes through `MARK` unchanged, so the CPU sorts
+nothing out. The bus carries about 8 accesses a root; the copying is the
+card's, O(survivors).
+
+**Where it may run.** Wherever a nursery collection may: a bytecode boundary,
+`nursery_reserve`, and the two places a full remembered set collects,
+`store_field` and the update of a mature thunk. Those two held their mature
+object in a C local across the collection, which was safe only while nothing
+moved mature objects (`gcsafe: mature`, the lint's two exceptions); they keep
+it on the root stack now and read it back, and the exceptions are gone. A
+view is dead after any collection already (vm.h's rule, which the lint
+enforces), so turning the ring over mid-instruction loses nothing.
+
+**Tested by** `A2MIN_MATURE_STRESS=k`, under which every *k*-th promotion is
+followed by a mature collection, needed or not: with GC stress, every fixture
+runs through the moving collector, and with reserve stress every reserve
+does. It found the third disagreement in the table above: five fixtures
+that use `with` were `E_NOMEM`. `eval-okay-mature-collection` promotes 1.45
+MB with little live -- three mature collections in a plain run, both flips,
+where it was `E_NOMEM` at 530 KB. A root left out of `MARK`'s list does not fail at once:
+its old address keeps the old bytes until a later collection copies into
+that half, so a test has to move an object twice and then use it.
+`eval-okay-tryeval-mature` does that for the one root nothing else reached,
+a catch frame's environment: under mature stress, 1,248 collections inside a
+`tryEval`, then a throw, then the `let`'s variables read through the frame.

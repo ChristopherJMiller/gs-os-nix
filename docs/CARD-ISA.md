@@ -215,7 +215,15 @@ measured below, is what stopped `LOOKUP` from paying.
 
 Every pointer the CPU holds into mature space must have been in some root list before
 `COMPACT`, or it dangles. Pointers into to-space (already evacuated by an earlier
-`MARK`) and null are passed through unchanged.
+`MARK`) and null are passed through unchanged, and so is anything else outside
+from-space -- the VM's young and static pointers, which have bit 31 set.
+
+The VM has issued them since 2026-10-27 ([HEAP.md](HEAP.md) "Collecting mature
+space"): one `MARK` of every root, then `COMPACT`, after a promotion that leaves
+the half short of room. The tracer's sizes and pointer words are the VM's
+objects' (HEAP.md "What the collector traces"): a closure's word 0 is opaque, a
+`BLACKHOLE` is 12 bytes, and a count is the header's 16 bits -- its top byte is
+the CPU's marks, which `LOOKUP` and `MARK` alike ignore.
 
 > ### Measured: a collection costs the bus almost nothing
 >
@@ -256,7 +264,7 @@ skip would be a policy decision (D2).
 
 | Op | Name | In | Out |
 |---|---|---|---|
-| `$30` | `LOOKUP` | `A0` = attrset, `P0` = key hash (4 bytes, LSB first) | `A1` = value address, `P1` = attribute index; or ERR `NOTFOUND`. The count is the header's `aux` less bit 23, the CPU's visit mark (HEAP.md) |
+| `$30` | `LOOKUP` | `A0` = attrset, `P0` = key hash (4 bytes, LSB first) | `A1` = value address, `P1` = attribute index; or ERR `NOTFOUND`. The count is the header's 16 bits: its top byte is the CPU's marks (HEAP.md) |
 | `$50` | `ALU64` | `P0`, `P1` operands, `P2` = op selector | `P3` = 64-bit result |
 | `$60` | `DFASTEP` | `A0` = text, `P0` = DFA state | `P1` = token type + length |
 

@@ -241,6 +241,7 @@ fixtures/eval-okay-let-forward
 fixtures/eval-okay-list-builtins
 fixtures/eval-okay-lists
 fixtures/eval-okay-listtoattrs-long-names
+fixtures/eval-okay-mature-collection
 fixtures/eval-okay-misc-builtins
 fixtures/eval-okay-mutual-recursion
 fixtures/eval-okay-nested-let-shadow
@@ -268,6 +269,7 @@ fixtures/eval-okay-tostring-powers
 fixtures/eval-okay-tostring-widths
 fixtures/eval-okay-toxml-rules
 fixtures/eval-okay-tryeval
+fixtures/eval-okay-tryeval-mature
 fixtures/eval-okay-tryeval-restore
 fixtures/eval-okay-versions-names
 fixtures/eval-okay-with

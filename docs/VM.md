@@ -94,9 +94,10 @@ which is what stopped the `LOOKUP` crossover measurement at 128); `WINDOW_MAX` =
 room to raise the first. (The nursery ceiling used to be a fourth, worse one:
 a single operation that allocated more than happened to be free failed even
 when a collection would have made room. `nursery_reserve` removed it; HEAP.md.)
-A fifth is the card's: nothing collects mature space yet, so a program can
-promote at most half the card's heap in total (512 KB in the harness), which
-only GC-stress runs reach. A derivation adds its own: its final ATerm, and
+A fifth is the card's: live mature data must fit its half less a promotion's
+room, ~439 KB in the harness (HEAP.md "Collecting mature space"); until
+2026-10-27 nothing collected mature space, and a program could promote 512 KB
+in all. A derivation adds its own: its final ATerm, and
 everything else its one reserve covers, must fit the nursery (DERIVATION.md
 "Ceilings").
 

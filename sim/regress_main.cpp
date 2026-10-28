@@ -818,16 +818,17 @@ void l3_gc() {
     // Allocating in A again.
 
     // --- (c) a cycle must terminate ---
+    // (a closure's environment is its word 1: word 0 is the VM's code offsets)
     const std::uint32_t T1 = SPACE_A + 0x3000, T2 = SPACE_A + 0x3010;
-    lay(T1, TAG_THUNK, 0, { T2, 0 });
-    lay(T2, TAG_THUNK, 0, { T1, 0 });
+    lay(T1, TAG_THUNK, 0, { 0, T2 });
+    lay(T2, TAG_THUNK, 0, { 0, T1 });
     st = mark({ T1 });
     check((st & (ST_DONE | ST_ERR)) == ST_DONE,
           "MARK terminates on a cyclic graph",
           "the collector chasing a cycle forever; without forwarding it never stops");
     const std::uint32_t T1n = root(0);
-    const std::uint32_t T2n = heap.peek32(T1n + 4);
-    check(heap.peek32(T2n + 4) == T1n,
+    const std::uint32_t T2n = heap.peek32(T1n + 8);
+    check(heap.peek32(T2n + 8) == T1n,
           "the cycle is intact in to-space, pointing at the copies",
           "one arm of the cycle still pointing back into from-space");
     bus->wr(R_CMD, V_COMPACT);
@@ -879,6 +880,66 @@ void l3_gc() {
     bus->wait_verb();
     check(watermark() == SPACE_B + 24, "two MARKs before one COMPACT: 2 x 12 survived",
           "the second MARK restarting to-space and orphaning the first's survivors");
+    // Allocating in B.
+
+    // --- (f) a closure's word 0 is not a pointer ---
+    // The VM keeps its code and constant-table offsets there (HEAP.md CL_CODE,
+    // CL_CTAB): (ctab << 16) | code, which for a constant index under 8 or 16
+    // is an address inside a semispace. A canary sits at the address a THUNK's
+    // and a LAMBDA's word 0 name; only their environments are pointers.
+    const std::uint32_t can = lay(SPACE_B + 0x6000, TAG_INT, 0, { 0xC0DE0FF5, 0 });
+    const std::uint32_t env = lay(SPACE_B + 0x6010, TAG_INT, 0, { 0xE1, 0 });
+    const std::uint32_t Th = lay(SPACE_B + 0x6020, TAG_THUNK, 0, { can, env });
+    const std::uint32_t La = lay(SPACE_B + 0x6030, TAG_LAMBDA, 0, { can, env });
+    st = mark({ Th, La });
+    check((st & ST_ERR) == 0, "MARK of two closures completes", "n/a");
+    check(heap.peek(can) != TAG_FORWARDED && heap.peek32(root(0) + 4) == can && heap.peek32(root(1) + 4) == can,
+          "a closure's word 0 is copied verbatim and the INT it names is not evacuated",
+          "word 0 of a THUNK or LAMBDA -- the VM's code and constant offsets -- traced as a "
+          "pointer: whatever lay at that address copied, and the offsets rewritten");
+    check(heap.peek32(root(0) + 8) == heap.peek32(root(1) + 8) && heap.peek32(root(0) + 8) != env,
+          "their shared environment, word 1, is evacuated once and rewritten in both", "n/a");
+    bus->wr(R_CMD, V_COMPACT);
+    bus->wait_verb();
+    check(watermark() == SPACE_A + 12 + 12 + 12, "two closures and their environment survived, the canary not",
+          "a closure's word 0 traced");
+    // Allocating in A.
+
+    // --- (g) a BLACKHOLE is a THUNK under evaluation: 12 bytes, its environment traced ---
+    const std::uint32_t benv = lay(SPACE_A + 0x7000, TAG_INT, 0, { 0xB1, 0 });
+    const std::uint32_t Bh = lay(SPACE_A + 0x7010, TAG_BLACKHOLE, 0, { 0x00050123, benv });
+    st = mark({ Bh });
+    check((st & ST_ERR) == 0, "MARK of a BLACKHOLE completes", "n/a");
+    const std::uint32_t Bn = root(0);
+    check(heap.peek(Bn) == TAG_BLACKHOLE && heap.peek32(Bn + 4) == 0x00050123 && heap.peek32(Bn + 8) != benv &&
+          heap.peek32(heap.peek32(Bn + 8) + 4) == 0xB1,
+          "a BLACKHOLE keeps its third word, its environment, rewritten to the copy",
+          "a BLACKHOLE copied as 8 bytes: the update that ends its force writes 12, over "
+          "the next object's header");
+    bus->wr(R_CMD, V_COMPACT);
+    bus->wait_verb();
+    check(watermark() == SPACE_B + 12 + 12, "a BLACKHOLE costs 12 bytes, and its environment 12",
+          "a BLACKHOLE sized by the 8-byte default");
+    // Allocating in B.
+
+    // --- (h) the count is 16 bits: the header's top byte is the CPU's marks ---
+    // A `with` environment is a LIST of two (the outer environment and the
+    // set) with bit 6 of the top byte set (HEAP.md). Counted from 23 bits it
+    // was a list of 4,194,306 elements.
+    const std::uint32_t w0 = lay(SPACE_B + 0x7000, TAG_INT, 0, { 0x0E, 0 });
+    const std::uint32_t w1 = lay(SPACE_B + 0x7010, TAG_INT, 0, { 0x5E, 0 });
+    const std::uint32_t We = lay(SPACE_B + 0x7020, TAG_LIST, 2u | (0x40u << 16), { w0, w1 });
+    st = mark({ We });
+    check((st & ST_ERR) == 0, "MARK of a marked `with` environment completes", "n/a");
+    const std::uint32_t Wn = root(0);
+    check(heap.peek32(Wn) == (TAG_LIST | ((2u | (0x40u << 16)) << 8)) &&
+          heap.peek32(heap.peek32(Wn + 4) + 4) == 0x0E && heap.peek32(heap.peek32(Wn + 8) + 4) == 0x5E,
+          "a LIST with a mark in its top byte is copied with its mark and both elements traced", "n/a");
+    bus->wr(R_CMD, V_COMPACT);
+    bus->wait_verb();
+    check(watermark() == SPACE_A + 12 + 12 + 12, "a marked 2-element LIST costs 12 bytes, and its elements 24",
+          "the CPU's marks counted as part of the length: a `with` environment sized as "
+          "four million elements, MARK copying garbage over to-space");
 }
 
 // ---------------------------------------------------------------------------

@@ -85,8 +85,11 @@ The fixtures are the host's own output, never a model's.
   `A2MIN_GC_PERIOD=2` and `=3` with `--gc-stress`, `A2MIN_RESERVE_STRESS=1`,
   `A2MIN_RSET_LIMIT=1`, `A2MIN_VERB_MASK=4` (SHA-256 on the CPU),
   `A2MIN_NO_CARD=1`, each through `scripts/scoreboard.py --corpus
-  tests/fixtures`. (`eval-okay-big-operations` is `E_NOMEM` with no card by
-  design.)
+  tests/fixtures`, and `A2MIN_MATURE_STRESS=1` with `--gc-stress` (`just
+  fixtures-mature`: every promotion followed by a collection of mature space,
+  so every root and every tag goes through the card's moving collector).
+  (`eval-okay-big-operations` and `eval-okay-listtoattrs-long-names` are
+  `E_NOMEM` with no card by design.)
 - Add a mutation per rule to `scripts/mutation-vm.sh` (sed on a copy;
   a pattern that misses fails the run). Dry-check each pattern first:
   `sed "$expr" file | cmp -s - file && echo MISS`. Then `just mutation-vm`.
@@ -107,8 +110,9 @@ The fixtures are the host's own output, never a model's.
    bench-update` (D29). `just stack-stress` (minutes) if a deep path, a big
    frame or `STACK_MIN` changed. Before claiming a collector change safe, the
    corpus too under GC stress (`--gc-stress` with `--corpus tests/corpus/tvix`,
-   periods 1-3): no check runs it, and it found the `LOOKUP` mark bug; only
-   `eval-okay-tail-call-1` fails it (E_NOMEM, the card's half-space).
+   periods 1-3, and `A2MIN_MATURE_STRESS=1`): no check runs it, and it found
+   the `LOOKUP` mark bug; only `eval-okay-tail-call-1` fails it, past the
+   2.5G budget (HEAP.md "Collecting mature space").
 3. `just verb-economics` if hashing or a card verb changed (needs `just
    fixtures` first so the workload is compiled); add the fixture to
    `VERB_WORKLOAD` in both the justfile and flake.nix if it exercises a verb.

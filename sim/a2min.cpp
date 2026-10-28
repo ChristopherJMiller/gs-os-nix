@@ -223,7 +223,7 @@ void wr8(uint32_t a, uint8_t v) {
     }
     if (a >= RAM_BYTES) die("write outside modelled RAM", a);
     if (sp_armed && a < sp_floor &&
-        ((a >= 0x0330 && a < 0x0340) || (a >= 0x0360 && a < 0x03FE) || (a >= 0x0400 && a < 0x2000) || a >= bank0_end))
+        ((a >= 0x0330 && a < 0x0340) || (a >= 0x0364 && a < 0x03FE) || (a >= 0x0400 && a < 0x2000) || a >= bank0_end))
         stack_overflow("a write to", a);
     ram[a] = v;
 }
@@ -438,7 +438,7 @@ void print_symbol_profile() {
 // check saw it. So a2min stops such a run loudly: S in $0200-$6FFF (page 1 is
 // the caller's stack, which the VM returns to), or a write by the VM to bank
 // 0 that is nobody's -- the flags ($0330-$033F, a2min's alone), the gap
-// under them ($0360-$03FD; $03FE holds the caller's S), the old stack
+// over STATS ($0364-$03FD; $03FE holds the caller's S), the old stack
 // ($0400-$1FFF), and the growth room (from the image's end up to the floor).
 // Armed once S has been moved up into the VM's stack (the reset seeds it at
 // $01FF). 0: off (other programs). scripts/bank-gate.py holds these two
@@ -796,6 +796,14 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     // this is what tests that claim, the way GC stress tests the boundaries.
     if (const char *r = std::getenv("A2MIN_RESERVE_STRESS"))
         ram[0x0333] = (r[0] == '1') ? 1 : 0;
+    // A2MIN_MATURE_STRESS=k: every k-th promotion is followed by a collection
+    // of mature space, needed or not (vm.h MATURE_STRESS_ADDR). With GC stress
+    // that is every fixture run through the card's moving collector.
+    if (const char *m = std::getenv("A2MIN_MATURE_STRESS")) {
+        const unsigned k = static_cast<unsigned>(std::strtoul(m, nullptr, 0));
+        if (k > 255) { std::fprintf(stderr, "A2MIN_MATURE_STRESS must be 0..255\n"); return 2; }
+        ram[0x0335] = static_cast<uint8_t>(k);
+    }
     // A2MIN_MOUNT=<prefix>=<dir>: GS/OS answers the file calls from <dir>,
     // mounted at that pathname prefix (docs/GSOS.md); without it there is no
     // GS/OS (vm.h GSOS_ADDR) and those builtins are E_GSOS by name (D26).
@@ -840,15 +848,15 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         const uint32_t c = ram32(STATS), b = ram32(STATS + 4), pb = ram32(STATS + 8),
                        v = ram32(STATS + 12), vb = ram32(STATS + 16),
                        to = ram32(STATS + 20), f = ram32(STATS + 24),
-                       rs = ram32(STATS + 28);
+                       rs = ram32(STATS + 28), mc = ram32(STATS + 32);
         // Printed unconditionally: a run stopped by the budget is the case
         // these exist for, and the counters are live at STATS so they are valid
         // whether or not the VM reached its exit.
         if (true)
             std::printf("  phases: %u collections (%u from a full remembered set), "
-                        "%u bytes promoted; %u window copies moving %u bytes, "
+                        "%u bytes promoted, %u of mature space; %u window copies moving %u bytes, "
                         "%u ring turnovers; %u thunks forced; %u fields remembered\n",
-                        c, b, pb, v, vb, to, f, rs);
+                        c, b, pb, mc, v, vb, to, f, rs);
     }
     if (profile_on) {
         // Top pages by instruction count, so a routine can be identified from the

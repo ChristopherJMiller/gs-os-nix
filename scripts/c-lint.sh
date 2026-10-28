@@ -85,6 +85,8 @@ plant "gcsafe: string + reads a part it did not view" strings.c \
       '/^    o = str_alloc(len);$/,/^    STRCTX(o, len) = pop();$/ s/^        s = deref(vstack\[at + i\]);$/        s = vstack[at + i];/' 2
 plant "gcsafe: removeAttrs keeps the set it forced past" prims.c \
       '/^static void prim_removeattrs(void)/,/^}/ s/^    so = rstack\[b\];$/    \/\* planted \*\//' 2
+plant "gcsafe: store_field keeps its object across a collection" data.c \
+      's/rpush(c); push(v); gc_collect(); v = pop(); c = rpop();/push(v); gc_collect(); v = pop();/' 2
 plant "gcsafe: a collecting call inside push(), then a read" strings.c \
       's/^    case T_FLOAT:  push(float_str(v)); return;/    case T_FLOAT:  push(float_str(v));/' 2
 plant "orcabugs: a cast of an unsigned 64-bit difference in ?:" float.c \

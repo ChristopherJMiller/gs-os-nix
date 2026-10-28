@@ -1,4 +1,5 @@
-/* gc.c -- the nursery collector (HEAP.md, "The VM and the two spaces").
+/* gc.c -- the nursery collector (HEAP.md, "The VM and the two spaces"), and
+ * the collection of mature space it hands to the card (gc_mature, below).
  *
  * Runs where no C local holds an object, so the live pointers are exactly the
  * roots listed below: at a bytecode boundary (run(), before every dispatch);
@@ -22,9 +23,9 @@
  * ignores them: no object is pinned in the nursery, and so a mature object
  * points into it only through a field the write barrier recorded (data.c
  * store_field, the remembered set below; D20). The program's own static
- * objects are in bank 0 and are not young at all. Mature objects never move
- * (the card does not compact yet), so the only card reads here are the
- * recorded fields.
+ * objects are in bank 0 and are not young at all. A nursery collection does
+ * not move mature objects, so its only card reads are the recorded fields;
+ * the mature collection that may follow it moves them all.
  *
  * Roots: the value stack; env; RSTACK; FSTACK; the env of every catch frame;
  * the constant tables; the imported-file thunks (run.c memoises one per file,
@@ -209,6 +210,10 @@ static void scan_one(void)
 
 /* --- promotion --------------------------------------------------------------------- */
 static uint32_t xbase;      /* the RESERVEd block: staging offset gc_water lands here */
+static uint32_t card_next;  /* the card's allocation pointer, as of the last RESERVE */
+static uint32_t card_end;   /* and the end of the half it is in; 0 before the first RESERVE */
+static uint8_t mature_tick; /* promotions since the last mature collection, under stress */
+static void gc_mature(void);
 
 /* A young pointer -> its card address. */
 static obj_t *translate(obj_t *p)
@@ -309,4 +314,60 @@ void gc_collect(void)
     }
     rs_n = 0;
     nfree = gc_water;                           /* the nursery is empty */
+    /* RESERVE moved the card's allocation pointer by exactly size (a multiple
+     * of 4, at least 8), so the CPU knows how full the half is without asking */
+    card_next = xbase + size;
+    if (!card_end) card_end = (xbase & CARD_HALF) + CARD_HALF;   /* the first: then only COMPACT moves it */
+    if (card_end - card_next < MATURE_MARGIN) gc_mature();
+    else if (*(volatile uint8_t *)MATURE_STRESS_ADDR &&
+             ++mature_tick >= *(volatile uint8_t *)MATURE_STRESS_ADDR) {
+        mature_tick = 0;
+        gc_mature();
+    }
+}
+
+/* --- mature space (HEAP.md "Collecting mature space") ------------------------------ */
+/* Straight after a promotion: the nursery is empty, so is the remembered set
+ * (the contract for MARK: no mature field holds a young pointer), and every
+ * live object is on the card. The roots are gc_collect's, in its order. They
+ * go to a block RESERVEd in from-space -- which the flip abandons -- straight
+ * from the arrays they live in; MARK copies what they reach into to-space and
+ * writes each one's new address in place; they come back into the same
+ * arrays; COMPACT flips. Null, young and static pointers (bit 31) pass
+ * through MARK unchanged, so nothing is sorted out here. Every window is a
+ * copy of an old address, and goes: no view is live across a collection. */
+static void roots_xfer(uint32_t at, uint8_t out)
+{
+    uint16_t i;
+#define XFER(p, n) do { uint16_t n_ = (uint16_t)(n); \
+                        if (n_) { if (out) card_write_at(at, (p), n_); else card_read_at(at, (p), n_); \
+                                  at += n_; } } while (0)
+    XFER(vstack, 4 * vsp);
+    XFER(&env, 4);
+    XFER(rstack, 4 * rsp);
+    XFER(fstack, 4 * fstack_n);
+    for (i = 0; i < catch_n; ++i) XFER(&catches[i].env, 4);
+    XFER(ctab_pool, 4 * cnext);
+    XFER(imports, 4 * nchunks);
+    XFER(&drv_table, 4);
+#undef XFER
+}
+
+static void gc_mature(void)
+{
+    uint16_t n = (uint16_t)(vsp + 1 + rsp + fstack_n + catch_n + cnext + nchunks + 1);
+    uint32_t at = card_reserve((uint16_t)(4 * n));
+    ++ST_MATURE;
+    roots_xfer(at, 1);
+    card_mark(at, n);
+    roots_xfer(at, 0);
+    card_compact();
+    at = card_reserve(4);                       /* where allocation resumes, after the survivors */
+    card_next = at + 4;
+    card_end = (at & CARD_HALF) + CARD_HALF;
+    windows_turnover();
+    /* The overhead limit, as the nursery's: live data that leaves less than a
+     * promotion's room would be collected again at every promotion, and the
+     * next one might not fit. A loud E_NOMEM is the honest answer. */
+    if (card_end - card_next < MATURE_MARGIN) nomem();
 }

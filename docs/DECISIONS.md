@@ -794,3 +794,37 @@ program's stack (a direct-page/stack segment in bank 0, of a size the
 program asks for), and its globals need not be in bank 0 at all; how large
 a stack GS/OS can give is not measured. That port makes `STACK_FLOOR` a
 value read at start rather than a constant.
+
+## D32 — Mature space is collected after a promotion that leaves less than a nursery's room
+
+**Decided 2026-10-27** in building item 2 of the capacity roadmap (Chris
+agreed the item; these choices are recorded here, not his). The card had
+`MARK` and `COMPACT` since L3, and the VM never called them, so a program
+could promote 512 KB in all -- half the harness card's heap.
+
+**When.** After every promotion, if the card's current half has less than a
+nursery and the largest root list free (`MATURE_MARGIN`, ~73 KB), the VM
+collects it; if that leaves less, live data fills the half, and it is
+`E_NOMEM`. Rejected: collecting when a `RESERVE` fails. The promotion that
+fails has its survivors half-built in the staging bank, their fields full of
+mature pointers that a `MARK` would have to rewrite too -- the nursery
+would have to be a root -- and recovering mid-promotion is the kind of path
+that is tested least. Rejected too: collecting at a fixed period, which
+costs a `MARK` when nothing is needed and can still run out between two.
+
+**The card's size.** The VM knows the allocation pointer from what `RESERVE`
+returns and the half's size from a constant, `CARD_HALF`, the RTL's
+`SPACE_SIZE`. Rejected for now: a card register that reports its geometry.
+The harness card is the only one, and a wrong constant fails loudly -- too
+large, and a `RESERVE` fails (`E_NOMEM`); too small, and the VM collects
+early. A real board sized to its SDRAM needs the register (L7).
+
+**The layout the card traces is the VM's.** The RTL's tracer, written at L3
+before the C VM, read a closure's word 0 as a pointer, sized a `BLACKHOLE` by
+the 8-byte default, and took counts from 23 bits of the header -- each wrong
+for the VM's objects, and each silent until a `MARK` ran (HEAP.md "What the
+collector traces"). The tracer was changed, not the VM: the VM's layout is
+the one every fixture, the corpus and both collectors' tests run on, and
+HEAP.md's own note had named "teach the tracer that word 0 of a closure is
+opaque" as one of the two ways out. The other, a heap representation for
+code, would have put the image's offsets on the card for nothing.

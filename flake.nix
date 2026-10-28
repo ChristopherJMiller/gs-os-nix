@@ -206,6 +206,16 @@
               --expected tests/corpus/expected-pass.txt \
               | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
 
+            # And through the card's moving collector (HEAP.md "Collecting mature
+            # space"): a nursery collection at every boundary, each followed by
+            # a collection of mature space. A root MARK is not given, or a tag
+            # the card sizes or traces unlike the CPU, answers wrongly here.
+            A2MIN_MATURE_STRESS=1 python3 scripts/scoreboard.py \
+              --nbc nbc --a2min ./build/a2min --vm "$vm" \
+              --corpus tests/fixtures --build build/mature \
+              --expected tests/corpus/expected-pass.txt --gc-stress \
+              | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
+
             # Once more with the remembered set shrunk to one entry (D20), so a
             # second young store finds it full and collects mid-instruction -- a
             # path the fixtures never take otherwise. A normal run, not GC

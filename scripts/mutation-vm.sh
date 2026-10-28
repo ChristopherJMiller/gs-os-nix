@@ -25,7 +25,15 @@
 #             young value and only limit:1 fills the set. K = 4 because it
 #             takes two young stores between collections: measured on the
 #             mutated VM, K = 2 and 3 miss it and every K from 4 to 9 catches it.
+#   mature:K  both:4, and every K-th promotion followed by a collection of mature
+#             space (A2MIN_MATURE_STRESS): the card's moving collector, with a
+#             full set's collections too. Only MATURE_FIXTURES, which between
+#             them catch every mature mutation in it (measured: each mutation
+#             against every fixture), because the mode costs ~6x GC stress.
 #
+# PLAIN_FIXTURES run in no mode that collects at a period: they exist to show
+# a plain run, and under period stress they pass the budget below (measured:
+# eval-okay-mature-collection, 139M cycles plain and over 500M at period 2).
 # MUTATION_ONLY=<substring> runs just the mutations whose name contains it.
 #
 # The mutations are applied to a COPY of the sources in a temporary directory,
@@ -42,8 +50,17 @@ NBC="$2"
 # The derivation fixtures first: they are cheap, and run_suite stops at the
 # first wrong answer, so a mutation they catch costs seconds. The refusal is a
 # fixture too -- its .exp is the error line (scripts/scoreboard.py).
-FIXTURES="eval-okay-deep-nesting eval-okay-listtoattrs-long-names eval-okay-big-constants eval-okay-tostring-powers eval-okay-int-compare eval-okay-gsos-read eval-okay-gsos-exists eval-okay-gsos-types eval-okay-gsos-hash eval-okay-gsos-getenv eval-fail-gsos-readfile-missing eval-fail-gsos-readfile-dir eval-fail-gsos-readfile-nul eval-fail-gsos-readfile-dangling eval-fail-gsos-symlink-loop eval-fail-gsos-readdir-file eval-fail-gsos-relative eval-fail-gsos-hashfile-order eval-fail-gsos-getenv-int eval-fail-gsos-type-through-link refuse-realise-readfile refuse-colon-readfile refuse-root-pathexists eval-okay-hashstring-algos eval-okay-hashstring-context eval-fail-hashstring-md5-int eval-okay-attrpos eval-okay-attrpos-insert eval-okay-attrpos-derivation eval-fail-attrpos-name eval-fail-attrpos-set eval-fail-attrpos-order eval-okay-path-interp eval-fail-path-interp-int eval-fail-path-interp-context eval-fail-path-interp-order eval-okay-fromtoml-rules eval-fail-fromtoml-inline-header eval-fail-fromtoml-aot-inline eval-fail-fromtoml-context eval-fail-fromtoml-date eval-fail-fromtoml-dotted-reopen eval-fail-fromtoml-duplicate eval-fail-fromtoml-escape eval-fail-fromtoml-float-overflow eval-fail-fromtoml-header-dotted eval-fail-fromtoml-header-twice eval-fail-fromtoml-inline-comma eval-fail-fromtoml-inline-extend eval-fail-fromtoml-inline-newline eval-fail-fromtoml-int-overflow eval-fail-fromtoml-leading-zero eval-fail-fromtoml-nul eval-fail-fromtoml-same-line eval-fail-fromtoml-time eval-fail-fromtoml-type eval-fail-fromtoml-uncaught eval-okay-findfile eval-fail-findfile-order eval-fail-findfile-prefix-context eval-fail-findfile-uncaught eval-fail-findfile-noattr refuse-gsos-findfile refuse-findfile-corepkgs eval-okay-import-values eval-fail-scopedimport-scope refuse-gsos-import eval-okay-gsos-builtins refuse-gsos-readfile refuse-gsos-hashfile refuse-gsos-fetchtarball eval-okay-regex-rules eval-fail-regex-first eval-fail-regex-escape eval-fail-regex-signed eval-fail-regex-dash eval-fail-regex-invalid eval-fail-regex-class eval-fail-regex-context eval-fail-regex-path eval-fail-regex-space eval-okay-builtins-corners eval-fail-topath-relative eval-fail-builtins-missing eval-okay-toxml-rules eval-fail-toxml-throw eval-fail-toxml-type-first eval-fail-toxml-drvpath-first eval-okay-fromjson-rules eval-fail-fromjson-after eval-fail-fromjson-context eval-fail-fromjson-control eval-fail-fromjson-empty eval-fail-fromjson-escape eval-fail-fromjson-exponent eval-fail-fromjson-fraction eval-fail-fromjson-high-surrogate eval-fail-fromjson-leading-zero eval-fail-fromjson-literal eval-fail-fromjson-low-surrogate eval-fail-fromjson-nul eval-fail-fromjson-nul-key eval-fail-fromjson-overflow eval-fail-fromjson-partial-bom eval-fail-fromjson-trailing-comma eval-fail-fromjson-unsigned eval-fail-fromjson-unterminated eval-fail-fromjson-utf8 eval-okay-tojson refuse-tojson-path eval-fail-tojson-continuation eval-fail-tojson-function eval-fail-tojson-incomplete eval-fail-tojson-order eval-fail-tojson-tostring-int eval-okay-function-args eval-fail-functionargs-int eval-fail-functionargs-functor eval-okay-versions-names eval-fail-compareversions-context eval-fail-compareversions-order eval-fail-splitversion-int eval-fail-parsedrvname-context eval-fail-replacestrings-from eval-fail-replacestrings-lengths eval-fail-replacestrings-to eval-fail-replacestrings-s-first eval-fail-replacestrings-from-first eval-fail-replacestrings-first-use eval-okay-sort eval-okay-sort-noorder eval-fail-sort-bool eval-fail-sort-elements-first eval-fail-sort-function eval-fail-sort-function-first eval-fail-sort-list eval-okay-attr-primops eval-fail-catattrs-element eval-fail-catattrs-name-context eval-fail-groupby-name eval-fail-groupby-context eval-fail-groupby-function eval-fail-zipattrswith-function eval-fail-mapattrs-set eval-fail-closure-mixed-keys eval-fail-closure-no-key eval-fail-closure-no-operator eval-fail-closure-operator-list eval-fail-closure-set-keys eval-okay-dynamic-attrs eval-fail-dynattr-context eval-fail-dynattr-has-null eval-fail-dynattr-int eval-fail-dynattr-nested eval-fail-dynattr-path eval-fail-dynattr-prefix eval-fail-dynattr-select-context eval-fail-dynattr-select-int eval-fail-dynattr-select-null eval-fail-dynattr-select-or-null eval-fail-dynattr-static eval-fail-dynattr-tostring eval-fail-dynattr-tryeval eval-fail-dynattr-twice eval-okay-floats eval-okay-float-identity eval-fail-float-add-string eval-fail-float-ceil-range eval-fail-float-compare eval-fail-float-concat eval-fail-float-div-zero eval-fail-float-floor-nan eval-fail-float-floor-precision eval-fail-float-interp eval-okay-tofile eval-fail-tofile-contents eval-fail-tofile-name eval-fail-tofile-name-context eval-fail-tofile-output eval-fail-tofile-whole eval-okay-context-builtins eval-fail-context-adddrv-output eval-fail-context-adddrv-source eval-fail-context-adddrv-two eval-fail-context-append-alloutputs eval-fail-context-append-hash eval-fail-context-append-key eval-fail-context-append-output-ctx eval-fail-context-append-outputs eval-fail-context-getattr eval-fail-context-hasattr eval-fail-context-hascontext-path eval-fail-context-hashstring eval-fail-context-listtoattrs eval-fail-context-removeattrs eval-okay-int-limits eval-fail-int-overflow-add eval-fail-int-overflow-sub eval-fail-int-overflow-neg eval-fail-int-overflow-mul eval-fail-int-overflow-mul-min eval-fail-int-overflow-square eval-fail-int-overflow-div eval-fail-int-overflow-uncaught eval-okay-derivation eval-okay-derivation-fixed-output eval-fail-derivation-fixed-bin eval-fail-derivation-fixed-outputs eval-fail-derivation-hash-base16-digit eval-fail-derivation-hash-base64-digit eval-fail-derivation-hash-empty eval-fail-derivation-hash-length eval-fail-derivation-hash-mode eval-fail-derivation-hash-nix32-digit eval-fail-derivation-hash-nix32 eval-fail-derivation-hash-prefix eval-fail-derivation-hash-sri-long eval-fail-derivation-hash-sri-short eval-fail-derivation-hash-type eval-fail-derivation-hash-untyped refuse-derivation-hash-blake3 refuse-derivation-hash-git refuse-derivation-hash-text eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists eval-okay-derivation-deep eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
-MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1 mask:4"
+FIXTURES="eval-okay-tryeval-mature eval-okay-mature-collection eval-okay-deep-nesting eval-okay-listtoattrs-long-names eval-okay-big-constants eval-okay-tostring-powers eval-okay-int-compare eval-okay-gsos-read eval-okay-gsos-exists eval-okay-gsos-types eval-okay-gsos-hash eval-okay-gsos-getenv eval-fail-gsos-readfile-missing eval-fail-gsos-readfile-dir eval-fail-gsos-readfile-nul eval-fail-gsos-readfile-dangling eval-fail-gsos-symlink-loop eval-fail-gsos-readdir-file eval-fail-gsos-relative eval-fail-gsos-hashfile-order eval-fail-gsos-getenv-int eval-fail-gsos-type-through-link refuse-realise-readfile refuse-colon-readfile refuse-root-pathexists eval-okay-hashstring-algos eval-okay-hashstring-context eval-fail-hashstring-md5-int eval-okay-attrpos eval-okay-attrpos-insert eval-okay-attrpos-derivation eval-fail-attrpos-name eval-fail-attrpos-set eval-fail-attrpos-order eval-okay-path-interp eval-fail-path-interp-int eval-fail-path-interp-context eval-fail-path-interp-order eval-okay-fromtoml-rules eval-fail-fromtoml-inline-header eval-fail-fromtoml-aot-inline eval-fail-fromtoml-context eval-fail-fromtoml-date eval-fail-fromtoml-dotted-reopen eval-fail-fromtoml-duplicate eval-fail-fromtoml-escape eval-fail-fromtoml-float-overflow eval-fail-fromtoml-header-dotted eval-fail-fromtoml-header-twice eval-fail-fromtoml-inline-comma eval-fail-fromtoml-inline-extend eval-fail-fromtoml-inline-newline eval-fail-fromtoml-int-overflow eval-fail-fromtoml-leading-zero eval-fail-fromtoml-nul eval-fail-fromtoml-same-line eval-fail-fromtoml-time eval-fail-fromtoml-type eval-fail-fromtoml-uncaught eval-okay-findfile eval-fail-findfile-order eval-fail-findfile-prefix-context eval-fail-findfile-uncaught eval-fail-findfile-noattr refuse-gsos-findfile refuse-findfile-corepkgs eval-okay-import-values eval-fail-scopedimport-scope refuse-gsos-import eval-okay-gsos-builtins refuse-gsos-readfile refuse-gsos-hashfile refuse-gsos-fetchtarball eval-okay-regex-rules eval-fail-regex-first eval-fail-regex-escape eval-fail-regex-signed eval-fail-regex-dash eval-fail-regex-invalid eval-fail-regex-class eval-fail-regex-context eval-fail-regex-path eval-fail-regex-space eval-okay-builtins-corners eval-fail-topath-relative eval-fail-builtins-missing eval-okay-toxml-rules eval-fail-toxml-throw eval-fail-toxml-type-first eval-fail-toxml-drvpath-first eval-okay-fromjson-rules eval-fail-fromjson-after eval-fail-fromjson-context eval-fail-fromjson-control eval-fail-fromjson-empty eval-fail-fromjson-escape eval-fail-fromjson-exponent eval-fail-fromjson-fraction eval-fail-fromjson-high-surrogate eval-fail-fromjson-leading-zero eval-fail-fromjson-literal eval-fail-fromjson-low-surrogate eval-fail-fromjson-nul eval-fail-fromjson-nul-key eval-fail-fromjson-overflow eval-fail-fromjson-partial-bom eval-fail-fromjson-trailing-comma eval-fail-fromjson-unsigned eval-fail-fromjson-unterminated eval-fail-fromjson-utf8 eval-okay-tojson refuse-tojson-path eval-fail-tojson-continuation eval-fail-tojson-function eval-fail-tojson-incomplete eval-fail-tojson-order eval-fail-tojson-tostring-int eval-okay-function-args eval-fail-functionargs-int eval-fail-functionargs-functor eval-okay-versions-names eval-fail-compareversions-context eval-fail-compareversions-order eval-fail-splitversion-int eval-fail-parsedrvname-context eval-fail-replacestrings-from eval-fail-replacestrings-lengths eval-fail-replacestrings-to eval-fail-replacestrings-s-first eval-fail-replacestrings-from-first eval-fail-replacestrings-first-use eval-okay-sort eval-okay-sort-noorder eval-fail-sort-bool eval-fail-sort-elements-first eval-fail-sort-function eval-fail-sort-function-first eval-fail-sort-list eval-okay-attr-primops eval-fail-catattrs-element eval-fail-catattrs-name-context eval-fail-groupby-name eval-fail-groupby-context eval-fail-groupby-function eval-fail-zipattrswith-function eval-fail-mapattrs-set eval-fail-closure-mixed-keys eval-fail-closure-no-key eval-fail-closure-no-operator eval-fail-closure-operator-list eval-fail-closure-set-keys eval-okay-dynamic-attrs eval-fail-dynattr-context eval-fail-dynattr-has-null eval-fail-dynattr-int eval-fail-dynattr-nested eval-fail-dynattr-path eval-fail-dynattr-prefix eval-fail-dynattr-select-context eval-fail-dynattr-select-int eval-fail-dynattr-select-null eval-fail-dynattr-select-or-null eval-fail-dynattr-static eval-fail-dynattr-tostring eval-fail-dynattr-tryeval eval-fail-dynattr-twice eval-okay-floats eval-okay-float-identity eval-fail-float-add-string eval-fail-float-ceil-range eval-fail-float-compare eval-fail-float-concat eval-fail-float-div-zero eval-fail-float-floor-nan eval-fail-float-floor-precision eval-fail-float-interp eval-okay-tofile eval-fail-tofile-contents eval-fail-tofile-name eval-fail-tofile-name-context eval-fail-tofile-output eval-fail-tofile-whole eval-okay-context-builtins eval-fail-context-adddrv-output eval-fail-context-adddrv-source eval-fail-context-adddrv-two eval-fail-context-append-alloutputs eval-fail-context-append-hash eval-fail-context-append-key eval-fail-context-append-output-ctx eval-fail-context-append-outputs eval-fail-context-getattr eval-fail-context-hasattr eval-fail-context-hascontext-path eval-fail-context-hashstring eval-fail-context-listtoattrs eval-fail-context-removeattrs eval-okay-int-limits eval-fail-int-overflow-add eval-fail-int-overflow-sub eval-fail-int-overflow-neg eval-fail-int-overflow-mul eval-fail-int-overflow-mul-min eval-fail-int-overflow-square eval-fail-int-overflow-div eval-fail-int-overflow-uncaught eval-okay-derivation eval-okay-derivation-fixed-output eval-fail-derivation-fixed-bin eval-fail-derivation-fixed-outputs eval-fail-derivation-hash-base16-digit eval-fail-derivation-hash-base64-digit eval-fail-derivation-hash-empty eval-fail-derivation-hash-length eval-fail-derivation-hash-mode eval-fail-derivation-hash-nix32-digit eval-fail-derivation-hash-nix32 eval-fail-derivation-hash-prefix eval-fail-derivation-hash-sri-long eval-fail-derivation-hash-sri-short eval-fail-derivation-hash-type eval-fail-derivation-hash-untyped refuse-derivation-hash-blake3 refuse-derivation-hash-git refuse-derivation-hash-text eval-okay-derivation-context eval-okay-derivation-escapes eval-okay-derivation-nulls eval-okay-derivation-equality eval-okay-tostring-lists eval-okay-derivation-deep eval-fail-path-plus-context eval-okay-remembered-set eval-okay-deep-equality eval-okay-big-operations eval-okay-paths eval-okay-coerce-sets eval-okay-hashstring"
+MODES="limit:0 limit:1 period:2 period:3 both:4 reserve:1 mask:4 mature:1"
+MATURE_FIXTURES="eval-okay-tryeval-mature eval-fail-catattrs-name-context eval-fail-context-adddrv-output
+eval-fail-attrpos-order eval-okay-derivation-context eval-okay-big-constants"
+PLAIN_FIXTURES="eval-okay-mature-collection"
+# applies <mode> <fixture>: whether the fixture runs in the mode
+applies() {
+    case $1 in period:*|both:*|mature:*) case " $PLAIN_FIXTURES " in *" $2 "*) return 1 ;; esac ;; esac
+    case $1 in mature:*) case " $(echo $MATURE_FIXTURES) " in *" $2 "*) return 0 ;; *) return 1 ;; esac ;; esac
+    return 0
+}
 SRCS=$(grep -v '^#' target/vm/c/SOURCES)           # link order: main.c first
 WORK=$(mktemp -d)
 BUDGET=500000000
@@ -73,6 +90,9 @@ run_one() {
                         --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
         mask:*)   got=$(A2MIN_MOUNT="$mnt" A2MIN_VERB_MASK=${mode#*:} A2MIN_BUDGET=$BUDGET "$A2MIN" \
                         --run-nbc "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
+        mature:*) got=$(A2MIN_MOUNT="$mnt" A2MIN_GC_PERIOD=4 A2MIN_RSET_LIMIT=1 A2MIN_MATURE_STRESS=${mode#*:} \
+                        A2MIN_BUDGET=$BUDGET "$A2MIN" \
+                        --run-nbc-gc-stress "$WORK/cvm.bin" "$WORK/$t.nbc" 2>&1 | sed -n 's/^result: //p; /^error: /p') ;;
     esac
     [ "$got" = "$want" ]
 }
@@ -110,7 +130,7 @@ baseline() {
     build || return 2
     for t in $FIXTURES; do
         t0=$(date +%s%N)
-        for mode in $MODES; do run_one "$mode" "$t" || return 1; done
+        for mode in $MODES; do applies "$mode" "$t" || continue; run_one "$mode" "$t" || return 1; done
         costs="$costs$(( ($(date +%s%N) - t0) / 1000000 )) $t
 "
     done
@@ -129,7 +149,7 @@ run_suite() {
     build "$1" || return 2
     for t in $ORDER; do run_one "$first" "$t" || return 1; done
     for t in $ORDER; do
-        for mode in $rest; do run_one "$mode" "$t" || return 1; done
+        for mode in $rest; do applies "$mode" "$t" || continue; run_one "$mode" "$t" || return 1; done
     done
     return 0
 }
@@ -224,6 +244,48 @@ mutate "a recorded field is not evacuated" gc.c \
 
 mutate "a recorded field is not written back" gc.c \
        's/        card_write_at(PBITS(e->obj) + e->off, \&t, 4);/        (void)t;/'
+
+# Mature space (HEAP.md "Collecting mature space"): each root the card's MARK
+# must rewrite, its window table, its trigger, and the two full-set paths that
+# hold a mature object across a collection.
+mutate "a mature collection forgets the value stack" gc.c \
+       '/^    XFER(vstack, 4 \* vsp);$/d'
+
+mutate "a mature collection forgets env" gc.c \
+       '/^    XFER(\&env, 4);$/d'
+
+mutate "a mature collection forgets the root stack" gc.c \
+       '/^    XFER(rstack, 4 \* rsp);$/d'
+
+mutate "a mature collection forgets the force stack" gc.c \
+       '/^    XFER(fstack, 4 \* fstack_n);$/d'
+
+mutate "a mature collection forgets the catch frames" gc.c \
+       's/^    for (i = 0; i < catch_n; ++i) XFER(/    for (i = 0; i < 0; ++i) XFER(/'
+
+mutate "a mature collection forgets the constant table" gc.c \
+       '/^    XFER(ctab_pool, 4 \* cnext);$/d'
+
+mutate "a mature collection forgets the import memo" gc.c \
+       '/^    XFER(imports, 4 \* nchunks);$/d'
+
+mutate "a mature collection forgets drv_table" gc.c \
+       '/^    XFER(\&drv_table, 4);$/d'
+
+mutate "a mature collection does not read its roots back" gc.c \
+       '/^    roots_xfer(at, 0);$/d'
+
+mutate "a mature collection keeps the window table" gc.c \
+       '/^    windows_turnover();$/d'
+
+mutate "the card's half fills and nothing collects it" gc.c \
+       's/^    if (card_end - card_next < MATURE_MARGIN) gc_mature();$/    if (0) gc_mature();/'
+
+mutate "store_field holds its mature object across a collection" data.c \
+       's/rpush(c); push(v); gc_collect(); v = pop(); c = rpop();/push(v); gc_collect(); v = pop();/'
+
+mutate "a thunk update holds its mature thunk across a collection" run.c \
+       's/++ST_BARRIER; rpush(th); push(v); gc_collect(); v = pop(); th = rpop();/++ST_BARRIER; push(v); gc_collect(); v = pop();/'
 
 mutate "store_field ignores a full set" data.c \
        's/    if (IS_YOUNG(v) \&\& rs_full()) {/    if (0) {/'

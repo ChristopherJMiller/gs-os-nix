@@ -315,6 +315,14 @@ fixtures-reserve: build-a2min cvm nbc-build
         --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
         --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt
 
+# The fixtures through the card's moving collector: a nursery collection at
+# every boundary, and every k-th of them followed by a collection of mature
+# space (HEAP.md "Collecting mature space"), needed or not.
+fixtures-mature k="1": build-a2min cvm nbc-build
+    A2MIN_MATURE_STRESS={{k}} python3 scripts/scoreboard.py --nbc {{NBC}} \
+        --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
+        --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress
+
 # The fixtures with a one-entry remembered set, so it fills (D20). Not under GC
 # stress, which promotes every value before it can be stored young.
 fixtures-rset: build-a2min cvm nbc-build

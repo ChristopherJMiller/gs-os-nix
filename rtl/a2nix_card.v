@@ -111,8 +111,8 @@ module a2nix_card (
     localparam [31:0] SPACE_A    = 32'h0000_0010;
     localparam [31:0] SPACE_B    = 32'h0008_0010;
 
-    // Tags the collector needs to size or trace. BOOL, NULL and BLACKHOLE take the
-    // 8-byte default and carry no pointers, so they need no case of their own.
+    // Tags the collector needs to size or trace. BOOL and NULL take the 8-byte
+    // default and carry no pointers, so they need no case of their own.
     localparam [7:0] TAG_INT       = 8'h01,
                      TAG_STRING    = 8'h04,
                      TAG_PATH      = 8'h05,
@@ -121,6 +121,7 @@ module a2nix_card (
                      TAG_THUNK     = 8'h08,
                      TAG_LAMBDA    = 8'h09,
                      TAG_INDIRECT  = 8'h0A,
+                     TAG_BLACKHOLE = 8'h0B,
                      TAG_FORWARDED = 8'h0C,
                      TAG_FLOAT     = 8'h0D;
     localparam integer MAX_FOLLOW = 64;  // chain-length guard; see FOLLOW below
@@ -131,23 +132,33 @@ module a2nix_card (
 
     // Object size in bytes from its header word (docs/HEAP.md, "What the collector
     // traces"). Never less than 8: the forwarding pointer needs a word to live in.
+    // hdr[31:24] is the CPU's marks, which neither the size nor the trace reads
+    /* verilator lint_off UNUSEDSIGNAL */
     function [31:0] obj_size(input [31:0] hdr);
         reg [31:0] aux;
         reg [31:0] s;
         begin
-            aux = {8'd0, hdr[31:8]} & 32'h007F_FFFF;   // less bit 23, the CPU's visit mark (HEAP.md)
+            // The count is 16 bits; the header's top byte is the CPU's marks --
+            // bit 7 visited (deep force), bit 6 a `with` environment (HEAP.md).
+            // A `with` environment is a 2-element LIST read as 4,194,306 when
+            // only the visit mark was masked.
+            aux = {16'd0, hdr[23:8]};
             case (hdr[7:0])
                 TAG_INT, TAG_FLOAT:     s = 32'd12;
                 TAG_STRING:             s = 32'd4 + round4(aux) + 32'd4;
                 TAG_PATH:               s = 32'd4 + round4(aux);
                 TAG_LIST:               s = 32'd4 + (aux << 2);
                 TAG_ATTRS:              s = 32'd4 + (aux << 3) + (aux << 2) + round4(aux << 1);   // 12*aux, then a 2-byte position each
-                TAG_THUNK, TAG_LAMBDA:  s = 32'd12;
-                default:                s = 32'd8;    // BOOL, NULL, BLACKHOLE, INDIRECT...
+                // A BLACKHOLE is a THUNK under evaluation, and the update that
+                // ends the force writes 12 bytes into it: copied as 8, it would
+                // write over the next object's header (HEAP.md).
+                TAG_THUNK, TAG_LAMBDA, TAG_BLACKHOLE: s = 32'd12;
+                default:                s = 32'd8;    // BOOL, NULL, INDIRECT
             endcase
             obj_size = (s < 32'd8) ? 32'd8 : s;
         end
     endfunction
+    /* verilator lint_on UNUSEDSIGNAL */
 
     // Bytes an ALLOC of `payload` bytes actually consumes: header + rounded payload,
     // never less than 8.
@@ -161,20 +172,26 @@ module a2nix_card (
 
     // Is payload word k of this object a pointer the collector must trace?
     // ATTRS is the trap: its first `aux` words are hashes that look like addresses.
+    /* verilator lint_off UNUSEDSIGNAL */
     function is_ptr_field(input [31:0] hdr, input [31:0] k);
         reg [31:0] aux;
         begin
-            aux = {8'd0, hdr[31:8]} & 32'h007F_FFFF;   // less bit 23, the CPU's visit mark (HEAP.md)
+            aux = {16'd0, hdr[23:8]};                  // as obj_size: the marks are not count
             case (hdr[7:0])
                 TAG_STRING:             is_ptr_field = (k == (round4(aux) >> 2));
                 TAG_LIST:               is_ptr_field = (k < aux);
                 TAG_ATTRS:              is_ptr_field = (k >= aux) && (k < aux + (aux << 1));
-                TAG_THUNK, TAG_LAMBDA:  is_ptr_field = (k < 32'd2);
+                // Word 0 of a closure is the VM's code and constant-table offsets,
+                // not a pointer -- with a small constant index it falls inside a
+                // semispace, and tracing it would "evacuate" whatever lay there.
+                // Word 1 is the environment (HEAP.md).
+                TAG_THUNK, TAG_LAMBDA, TAG_BLACKHOLE: is_ptr_field = (k == 32'd1);
                 TAG_INDIRECT:           is_ptr_field = (k == 32'd0);
                 default:                is_ptr_field = 1'b0;
             endcase
         end
     endfunction
+    /* verilator lint_on UNUSEDSIGNAL */
 
     reg [31:0] areg [0:3];
     reg [1:0]  asel;
@@ -679,9 +696,10 @@ module a2nix_card (
                 end
 
                 // --- LOOKUP: the attribute count is the header's aux field, the top
-                // 24 bits of the header word, less bit 23: the CPU's visit mark,
-                // set while it deep-forces the set (HEAP.md) -- and LOOKUP runs
-                // then, from the SELECTs the forced thunks make. One access. ---
+                // 16 bits of the header word: its top byte is the CPU's marks,
+                // and the visit mark is set while it deep-forces the set
+                // (HEAP.md) -- and LOOKUP runs then, from the SELECTs the forced
+                // thunks make. One access. ---
                 M_LK_CNT: begin
                     mem_addr <= lk_base;
                     mret     <= M_LK_CB;
@@ -689,7 +707,7 @@ module a2nix_card (
                 end
 
                 M_LK_CB: begin
-                    lk_count <= mword[31:8] & 24'h7F_FFFF;
+                    lk_count <= {8'd0, mword[23:8]};
                     lk_done  <= 24'd0;
                     mstate   <= M_LK_BATCH;
                 end

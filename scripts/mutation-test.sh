@@ -151,7 +151,7 @@ mutate "L3 LOOKUP reads the wrong column" rtl/a2nix_card.v \
 # part of the attribute count, so a SELECT inside that deep force reads its value
 # from 4 * 2^23 bytes past the set: null, or a real pointer from the wrong object.
 mutate "L3 LOOKUP counts the visit mark" rtl/a2nix_card.v \
-       's/                    lk_count <= mword\[31:8\] \& 24.h7F_FFFF;/                    lk_count <= mword[31:8];/'
+       's/                    lk_count <= {8.d0, mword\[23:8\]};/                    lk_count <= mword[31:8];/'
 
 # ALU64: never add the partial product, so every multiply returns zero -- or, with a
 # multiplicand of 1, the right answer, which is why the tests use awkward operands.
@@ -193,6 +193,15 @@ mutate "GC traces ATTRS hashes as pointers" rtl/a2nix_card.v \
        's/                TAG_ATTRS:              is_ptr_field = (k >= aux) \&\& (k < aux + (aux << 1));/                TAG_ATTRS:              is_ptr_field = (k < aux + (aux << 1));/'
 
 # GC: skip the Cheney scan entirely, so nested pointers keep pointing at from-space.
+mutate "GC traces a closure's word 0, the VM's code offsets" rtl/a2nix_card.v \
+       's/                TAG_THUNK, TAG_LAMBDA, TAG_BLACKHOLE: is_ptr_field = (k == 32.d1);/                TAG_THUNK, TAG_LAMBDA, TAG_BLACKHOLE: is_ptr_field = (k < 32'"'"'d2);/'
+
+mutate "GC counts the CPU's marks as length" rtl/a2nix_card.v \
+       '0,/            aux = {16.d0, hdr\[23:8\]};/ s//            aux = {8'"'"'d0, hdr[31:8]} \& 32'"'"'h007F_FFFF;/'
+
+mutate "GC copies a BLACKHOLE as 8 bytes" rtl/a2nix_card.v \
+       's/                TAG_THUNK, TAG_LAMBDA, TAG_BLACKHOLE: s = 32.d12;/                TAG_THUNK, TAG_LAMBDA: s = 32'"'"'d12;/'
+
 mutate "GC skips the scan" rtl/a2nix_card.v \
        's/                        gc_scan <= gc_scan + sc_size;/                        gc_scan <= gc_free;/'
 

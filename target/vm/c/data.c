@@ -250,8 +250,10 @@ obj_t *deref(obj_t *p)
 void store_field(obj_t *c, uint16_t off, obj_t *v)
 {
     if (IS_RAM(c)) { *(obj_t **)((uint8_t *)c + off) = v; return; }
-    if (IS_YOUNG(v) && rs_full()) { ++ST_BARRIER; push(v); gc_collect(); v = pop(); }
-    card_write_at(PBITS(c) + off, &v, 4);       /* gcsafe: mature -- c is on the card, which no collection moves */
+    /* A collection here may be one of mature space too, which moves c: it waits
+     * on the root stack (it was safe in a C local while nothing moved it) */
+    if (IS_YOUNG(v) && rs_full()) { ++ST_BARRIER; rpush(c); push(v); gc_collect(); v = pop(); c = rpop(); }
+    card_write_at(PBITS(c) + off, &v, 4);
     if (IS_YOUNG(v)) remember(c, off);
     windows_invalidate(c);
 }
