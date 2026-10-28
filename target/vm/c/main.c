@@ -8,6 +8,7 @@
 #pragma optimize 15
 
 #include "vm.h"
+#include "front.h"
 
 struct catch_frame catches[CATCH_N];
 uint16_t catch_n;
@@ -66,10 +67,14 @@ void vm_entry(void)
     card_find();
     memcpy((void *)(IMAGE_BASE + APPLY_CODE_OFF), apply_code, sizeof apply_code);
     if (setjmp(top_jb) == 0) {
-        load();                                 /* its constants are roots, promoted like anything */
-        run();                                  /* the entry chunk; RETURN brings us back */
-        deep_force_top();
-        *(obj_t **)RESULT_ADDR = pop();
+        if (*(volatile uint8_t *)FRONT_MODE_ADDR == FRONT_LEX) {
+            lex_dump();                         /* the on-target compiler's first stage */
+        } else {
+            load();                             /* its constants are roots, promoted like anything */
+            run();                              /* the entry chunk; RETURN brings us back */
+            deep_force_top();
+            *(obj_t **)RESULT_ADDR = pop();
+        }
         *(volatile uint8_t *)RESULT_STAT_ADDR = 1;
     }
     diag_write();

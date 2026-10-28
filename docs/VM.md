@@ -49,6 +49,10 @@ bank 7  SCRATCH   $070000-$07FFFF   a primop's while it runs no bytecode: the re
                                      (REGEX.md), fromTOML's document and tree
                                      (TOML.md), listToAttrs' positions (HEAP.md),
                                      the file builtins' paths (GSOS.md)
+bank 13 SOURCE    $0D0000-$0DFFFF   the on-target compiler's input text (COMPILER.md)
+bank 14 FRONT     $0E0000-$0EFFFF   its working memory: the lexer's contexts
+bank 15 FRONT_OUT $0F0000-$0FFFFF   a2min --lex's token records
+                                     (omf2bin places code only below bank 13)
 ```
 
 `$0332` is a third harness flag: `A2MIN_RSET_LIMIT` shrinks the remembered set

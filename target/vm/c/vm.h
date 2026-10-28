@@ -79,6 +79,10 @@
                                        nothing live is in a C local is actually tested */
 #define GSOS_ADDR        0x0334UL   /* a2min sets it: GS/OS answers the file calls (GSOS.md);
                                        0, and the builtins that need it are E_GSOS by name */
+#define FRONT_MODE_ADDR  0x0336UL   /* a2min sets it: 0 run the image at IMAGE_BASE; FRONT_LEX
+                                       the source's tokens (COMPILER.md, a2min --lex) */
+#define FRONT_LEX        1
+#define SRC_LEN_ADDR     0x0338UL   /* a2min sets it: the source's length (u16), at SRC_BASE */
 #define MATURE_STRESS_ADDR 0x0335UL /* a2min sets it: k, and every k-th promotion is followed
                                        by a collection of mature space, needed or not -- with
                                        GC stress, every fixture tests the moving collector */
@@ -109,6 +113,11 @@ _Static_assert(STACK_MIN - STACK_FLOOR == 0x0400U, "1 KB over the deepest path b
 #define NURSERY_END      0xFFF0U    /* offsets below this are the nursery */
 #define STAGE_BASE       0x00020000UL
 #define IMAGE_BASE       0x00030000UL
+/* The on-target compiler's banks (COMPILER.md): no code lands in them --
+ * omf2bin places code only below bank 13, and bank-gate checks */
+#define SRC_BASE         0x000D0000UL   /* the source text */
+#define FRONT_BASE       0x000E0000UL   /* the front end's working memory: the lexer's contexts */
+#define FRONT_OUT        0x000F0000UL   /* --lex's token records */
 #define IMAGE_MAX        0xFFF0UL   /* the image must fit below APPLY_CODE */
 #define APPLY_CODE_OFF   0xFFF0U    /* main.c copies apply_code[] there at start */
 #define WINDOW_BASE      0x00050000UL   /* bank 5: copies of mature objects (data.c) */

@@ -76,7 +76,8 @@ pointer, give the C code a stack at `$BFFF` (bank 0's top; the VM's runs down
 to `$7000`, over its program: VM.md "The C stack"), `JSL` the entry, restore,
 `RTS` to a2min's halt. Bank 0 ends at `$C000` — the IIgs's I/O space — so a program that
 outgrows it puts code in load segments of its own (ORCA/C's `segment "name";`),
-which `omf2bin` places in banks 4 and up; ORCA/C calls every function with `JSL`,
+which `omf2bin` places in banks 4 to 12 (skipping 5 and 7, the VM's data,
+and stopping below 13, the on-target compiler's); ORCA/C calls every function with `JSL`,
 and absolute addressing still means bank 0 because nothing changes the data bank
 register. Such an image is written in a chunked form — `GSIM`, a count, then
 (address, length, bytes) per chunk — which a2min recognises by its first bytes;

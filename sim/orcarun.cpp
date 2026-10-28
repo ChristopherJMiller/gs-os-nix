@@ -1807,6 +1807,10 @@ int omf2bin(const std::string &in, const std::string &out, uint32_t org,
             // overwritten by the first copy of a mature object, or the first
             // match. scripts/bank-gate.py checks the map for any symbol in them.
             if (code_bank == 5 || code_bank == 7) ++code_bank;
+            // Banks 13-15 are the on-target compiler's source and working
+            // memory (VM.md, docs/COMPILER.md): code stops below them.
+            if (code_bank >= 13)
+                fatal("omf2bin: segment '%s' needs bank %u, and code stops at bank 12", s.segname.c_str(), code_bank);
         }
         const uint32_t at = (code_bank << 16) | bank_cursor;
         bank_cursor = (bank_cursor + size + 0xFF) & ~0xFFu;

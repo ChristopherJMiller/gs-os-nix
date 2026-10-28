@@ -828,3 +828,22 @@ the one every fixture, the corpus and both collectors' tests run on, and
 HEAP.md's own note had named "teach the tracer that word 0 of a closure is
 opaque" as one of the two ways out. The other, a heap representation for
 code, would have put the image's offsets on the card for nothing.
+
+## D33 — The on-target compiler is a C port of nbc, and nbc is its oracle
+
+**Decided 2026-10-28 by Chris**, choosing "C, a port of nbc" for L5 over a
+compiler written in Nix and run by the VM, and over C now with Nix later.
+The four stages -- rnix's tokenizer, its grammar with `front.rs`'s lowering,
+`compiler.rs` and the image writer -- are ported to C in code banks of their
+own, and each is diffed against the host's same stage over the whole corpus,
+the fixtures and a fuzzer: tokens, then the AST, then the image byte for
+byte (COMPILER.md). Rejected: a compiler in Nix. It would be self-hosting in
+the strict sense, but every character would cost a Nix call -- ~20,000
+cycles at today's speed, by estimate minutes to compile a page -- and it
+would churn the heap that mature collection had only just made able to
+turn over. Every gate the VM has (`c-lint`, the bank gate, mutation tests,
+a2min's profiler) applies to C unchanged. (The estimate given with the
+choice, "tens of cycles a character" for a C lexer, was wrong: the first
+port measures ~540 cycles a byte, a few calls a byte -- a 2 KB file in under
+half a second at 2.8 MHz, still ~40x what a Nix call a character would
+cost, and with a byte loop to gain when speed matters.)

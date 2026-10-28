@@ -23,8 +23,9 @@ GSIM image and the symbol map, `orcalink +S` / `omf2bin --syms`):
      and a2min's tripwire (sim/a2min.cpp).
   5. No symbol in a bank the VM uses for data -- 1 the nursery, 2 the
      collector's stage, 3 the .nbc image, 5 the window ring and remembered set,
-     7 the regex engine's (VM.md). omf2bin skips 5 and 7 as code fills the
-     banks after 4; this is the check that it did.
+     7 the regex engine's, 13-15 the on-target compiler's (VM.md, COMPILER.md).
+     omf2bin skips 5 and 7 as code fills the banks after 4, and stops below
+     13; this is the check that it did.
 
 usage: bank-gate.py CVM.bin CVM.map BANK0.txt [--update]
        bank-gate.py --self-test CVM.bin CVM.map BANK0.txt
@@ -40,7 +41,8 @@ import tempfile
 
 VMH, A2MIN = "target/vm/c/vm.h", "sim/a2min.cpp"
 DATA_BANKS = {1: "the nursery", 2: "the collector's stage", 3: "the .nbc image",
-              5: "the window ring and remembered set", 7: "the regex engine's NFA and stack"}
+              5: "the window ring and remembered set", 7: "the regex engine's NFA and stack",
+              13: "the compiler's source", 14: "the compiler's working memory", 15: "the compiler's output"}
 HINT = {"~MOVE": "a struct assignment or a struct passed by value",
         "~SHIFTLEFT": "a variable left shift (shift by constants, or BYTE_OF)",
         "~SHIFTRIGHT": "an unsigned variable right shift",

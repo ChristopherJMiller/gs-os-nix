@@ -219,6 +219,12 @@ bench *flags: build-a2min cvm nbc-build
 
 bench-update: (bench "--update")
 
+# The on-target compiler against nbc, stage by stage (docs/COMPILER.md, D33):
+# every .nix in the repository, `fuzz` mutants of them, then planted bugs.
+front-diff fuzz="20000": build-a2min cvm nbc-build
+    python3 scripts/front-diff.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --fuzz {{fuzz}}
+    python3 scripts/front-diff.py --self-test --nbc {{NBC}} --a2min ./sim/build_a2min/a2min --fuzz 2000
+
 # Every deep program at every stack depth, under a2min's tripwire (VM.md "The C stack").
 stack-stress: build-a2min cvm nbc-build
     ./scripts/stack-stress.sh ./sim/build_a2min/a2min {{NBC}} target/build/cvm.bin

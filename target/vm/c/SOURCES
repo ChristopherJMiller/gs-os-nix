@@ -19,3 +19,4 @@ match.c
 toml.c
 hashes.c
 gsos.c
+lex.c

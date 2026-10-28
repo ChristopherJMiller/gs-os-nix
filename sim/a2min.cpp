@@ -746,6 +746,13 @@ std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &see
 // prints the VM's answer in Nix syntax on a `result:` line (or `error: E_NAME`), which
 // is what scripts/scoreboard.py compares with the corpus's .exp files. The result
 // contract is BYTECODE.md "Result reporting".
+//
+// a2min --lex VM file.nix instead puts the SOURCE in its bank (SRC_BASE) and
+// asks the VM for its tokens (vm.h FRONT_MODE_ADDR): the on-target compiler's
+// first stage, printed as `nbc --tokens` prints rnix's, less the names
+// (docs/COMPILER.md, scripts/front-diff.py).
+constexpr uint32_t SRC_BASE = 0x0D0000, FRONT_OUT = 0x0F0000;
+uint8_t front_mode = 0;                   // 0 run the image; 1 --lex
 int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     if (!load_image(vm_path)) return 2;
     sp_floor = VM_STACK_FLOOR;                  // the C VM's stack floor (docs/VM.md)
@@ -814,7 +821,16 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         gsos_on = true;
         ram[0x0334] = 1;
     }
-    {
+    if (front_mode) {
+        std::ifstream f(nbc_path, std::ios::binary);
+        if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }
+        const std::vector<uint8_t> src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        if (src.size() > 0xFFFF) { std::fprintf(stderr, "%s: %zu bytes; the source bank holds 65,535\n", nbc_path, src.size()); return 2; }
+        for (size_t i = 0; i < src.size(); ++i) ram[SRC_BASE + i] = src[i];
+        ram[0x0336] = front_mode;
+        ram[0x0338] = static_cast<uint8_t>(src.size());
+        ram[0x0339] = static_cast<uint8_t>(src.size() >> 8);
+    } else {
         std::ifstream f(nbc_path, std::ios::binary);
         if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }
         const std::vector<uint8_t> nbc((std::istreambuf_iterator<char>(f)),
@@ -918,6 +934,20 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     }
     if (status != 0x01) { std::printf("error: status $%02X\n", status); return 1; }
 
+    if (front_mode == 1) {                  // a token a line: kind, start, length
+        const uint32_t n = r16at(RESULT, 0);
+        uint32_t start = 0;
+        std::string out;
+        char line[32];
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint32_t len = ram[FRONT_OUT + 3 * i + 1] | (ram[FRONT_OUT + 3 * i + 2] << 8);
+            std::snprintf(line, sizeof line, "%u %u %u\n", ram[FRONT_OUT + 3 * i], start, len);
+            out += line;
+            start += len;
+        }
+        std::fputs(out.c_str(), stdout);
+        return 0;
+    }
     std::printf("result: %s\n", fmt_value(ram32(RESULT), 0).c_str());
     return 0;
 }
@@ -1076,6 +1106,10 @@ int main(int argc, char **argv) {
         return run_nbc(argv[2], argv[3], false);
     if (argc >= 4 && std::string(argv[1]) == "--run-nbc-gc-stress")
         return run_nbc(argv[2], argv[3], true);
+    if (argc >= 4 && std::string(argv[1]) == "--lex") {
+        front_mode = 1;
+        return run_nbc(argv[2], argv[3], false);
+    }
 
     if (argc >= 5 && (std::string(argv[1]) == "--bench-mul64" || std::string(argv[1]) == "--bench-mul64-native"))
         return bench_mul64(argv[2],

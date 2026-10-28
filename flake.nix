@@ -507,6 +507,28 @@
             grep -q "STACK STRESS OK" "$out"
           '';
 
+        # The on-target compiler against nbc, stage by stage (docs/COMPILER.md,
+        # D33). Stage 1, the lexer: every .nix in the repository and 20,000
+        # mutants of them, every token rnix's; then four planted lexer bugs,
+        # each of which must be caught.
+        front = pkgs.runCommandCC "check-front"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ours.nbc ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/target ${self}/scripts ${self}/tools .
+            chmod -R +w .
+            patchShebangs scripts
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            python3 scripts/front-diff.py --nbc nbc --a2min ./build/a2min --vm ${ours.cvm}/cvm.bin \
+              --fuzz 20000 | tee "$out"
+            grep -q "^FRONT-DIFF OK" "$out"
+            python3 scripts/front-diff.py --self-test --nbc nbc --a2min ./build/a2min --fuzz 2000 | tee -a "$out"
+            grep -q "^FRONT-DIFF SELF-TEST OK" "$out"
+          '';
+
         # float.c, built by ORCA/C and run on a2min, against the host's own
         # IEEE-754 arithmetic, printf and toJSON's text (scripts/float-vectors.sh):
         # three seeds of 1,520 vectors, then two planted bugs (D14).
