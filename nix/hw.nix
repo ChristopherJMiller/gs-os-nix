@@ -70,6 +70,15 @@ in
     hw-tests = hwCheck "tests" ''
       python3 -m pytest -q hw/tests && echo 'HW TESTS OK'
     '' [ "^HW TESTS OK" ];
+
+    # The slot bus section's power-up state, daisy chains and rails (what ERC and DRC
+    # cannot see). Task 6 adds the carrier netlist and --module.
+    hw-intent = hwCheck "intent" ''
+      mkdir -p build/hw
+      python3 -m hw.src.slot_bus --netlist build/hw/slot_bus.net > /dev/null
+      python3 hw/tools/check_intent.py --selftest build/hw/slot_bus.net
+      python3 hw/tools/check_intent.py build/hw/slot_bus.net
+    '' [ "^HW INTENT SELFTEST OK" "^HW INTENT OK" ];
   };
 
   packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux { };

@@ -8,3 +8,10 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 # The hardware tests.
 test:
     cd {{justfile_directory()}}/.. && python3 -m pytest hw/tests
+
+# The bus section's netlist, then the design-intent gate on it (selftest first).
+netlist:
+    cd {{justfile_directory()}}/.. && mkdir -p build/hw \
+      && python3 -m hw.src.slot_bus --netlist build/hw/slot_bus.net \
+      && python3 hw/tools/check_intent.py --selftest build/hw/slot_bus.net \
+      && python3 hw/tools/check_intent.py build/hw/slot_bus.net
