@@ -14,6 +14,8 @@
 
 #include "vm.h"
 
+segment "core";
+
 #define REG_CMD   0
 #define REG_CTRL  1
 #define REG_ASEL  2

@@ -72,8 +72,9 @@ just orca-smoke                                            # the smoke test, by 
 `omf2bin` places the load file's first segment (code and, in the small memory
 model, every global) page-aligned from `--org` (default `$2000`, where a2min
 loads) and prefixes a 23-byte stub: enter native mode, save the emulation stack
-pointer, give the C code a stack at `$1FFF`, `JSL` the entry, restore, `RTS` to
-a2min's halt. Bank 0 ends at `$C000` — the IIgs's I/O space — so a program that
+pointer, give the C code a stack at `$BFFF` (bank 0's top; the VM's runs down
+to `$7000`, over its program: VM.md "The C stack"), `JSL` the entry, restore,
+`RTS` to a2min's halt. Bank 0 ends at `$C000` — the IIgs's I/O space — so a program that
 outgrows it puts code in load segments of its own (ORCA/C's `segment "name";`),
 which `omf2bin` places in banks 4 and up; ORCA/C calls every function with `JSL`,
 and absolute addressing still means bank 0 because nothing changes the data bank

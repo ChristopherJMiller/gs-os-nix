@@ -6,6 +6,8 @@
 
 #include "vm.h"
 
+segment "core";
+
 obj_t *vstack[VSTACK_N];
 uint16_t vsp;
 obj_t *rstack[RSTACK_N];

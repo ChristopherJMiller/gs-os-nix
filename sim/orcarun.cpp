@@ -1767,9 +1767,11 @@ int omf2bin(const std::string &in, const std::string &out, uint32_t org,
     std::vector<uint8_t> image;
     if (!read_host_file(in, image)) fatal("cannot read %s", in.c_str());
     // The stub a2min enters in emulation mode: go native with 16-bit registers,
-    // park the 8-bit stack pointer at $03FE, give the C code a stack at $1FFF,
-    // JSL the entry, then put everything back and RTS to a2min's halt.
-    //   clc xce rep #$30 tsc sta $03FE lda #$1FFF tcs jsl entry lda $03FE tcs sec xce rts
+    // park the 8-bit stack pointer at $03FE, give the C code a stack at $BFFF
+    // (the top of bank 0's RAM; the C VM's runs down to $7000, above its
+    // program: docs/VM.md "The C stack"), JSL the entry, then put everything
+    // back and RTS to a2min's halt.
+    //   clc xce rep #$30 tsc sta $03FE lda #$BFFF tcs jsl entry lda $03FE tcs sec xce rts
     const uint32_t stub_len = 23;
     uint32_t cursor = org + stub_len;
     // Bank 0 holds the first segment (code and, in the small model, every global)
@@ -1812,7 +1814,7 @@ int omf2bin(const std::string &in, const std::string &out, uint32_t org,
         segbase[s.segnum] = at;
         return at;
     });
-    const uint8_t stub[stub_len] = { 0x18, 0xFB, 0xC2, 0x30, 0x3B, 0x8D, 0xFE, 0x03, 0xA9, 0xFF, 0x1F, 0x1B,
+    const uint8_t stub[stub_len] = { 0x18, 0xFB, 0xC2, 0x30, 0x3B, 0x8D, 0xFE, 0x03, 0xA9, 0xFF, 0xBF, 0x1B,
                                      0x22, static_cast<uint8_t>(L.entry), static_cast<uint8_t>(L.entry >> 8), static_cast<uint8_t>(L.entry >> 16),
                                      0xAD, 0xFE, 0x03, 0x1B, 0x38, 0xFB, 0x60 };
     for (uint32_t i = 0; i < stub_len; ++i) w8(org + i, stub[i]);

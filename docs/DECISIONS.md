@@ -753,3 +753,44 @@ always `""` (Nix's pure mode, failing the test) and refusing by name. One
 more choice, not Chris's but recorded here: a Nix path is passed to GS/OS
 as its full pathname unchanged -- `/` is a GS/OS separator -- so
 `/nix/store` is a volume `nix`, and nothing is translated.
+
+## D31 — The C stack is bank 0's top; bank 0 is a ledger
+
+**Decided 2026-10-27 by Chris**, who agreed to stop the speed work at -37.5%
+and take capacity first: this, then mature-space collection, then L5 (the
+roadmap in STATUS.md). The C stack ran down from `$1FFF` to `$0400`, under
+the program at `$2000`: 6 KB over its check, which ended a chain of
+derivations at 5 levels and non-tail recursion at 83 -- a call costs ~72
+bytes of C stack a level, a derivation ~1.1 KB. The 65816's stack must be in
+bank 0. Speed step 3 and moving `data.c`, `gc.c` and `card.c` into `core`
+(no cycles) left bank 0 at 15 KB, `$2000-$5BA2`. **Chosen:** the program
+stays at `$2000`, and the stack runs down from `STACK_TOP` (`$BFFF`, under the
+I/O page) to a fixed `STACK_FLOOR` (`$7000`), checked at `STACK_MIN`
+(`$7400`, the same 1 KB margin): 19 KB over the check, three times as much.
+The root and force stacks grow with it, so the C stack stays what ends the
+costly kinds of nesting (VM.md "The C stack" has the table). `$0400-$1FFF`
+is nobody's now -- a2min ends a run that writes there -- and is where
+fixed-address bank-0 data can go later. Every benchmark is the same to the
+cycle.
+
+**Rejected:** moving the program up instead (`--org $8000`, the stack
+`$0400-$7FFF`, ~30 KB). It uses all of bank 0, but every script that builds
+the VM would have to pass the org, and one that forgot would build a VM that
+works -- at the old layout -- so the miss would go unseen. **Rejected too:** a
+floor that follows bank 0's end. Every bank-0 byte would move every depth
+limit, and the fixtures that sit near one.
+
+Bank 0's room to grow is now the floor less its end (4 KB), so the gate that
+holds bank 0 got stricter in the same change. `scripts/bank-gate.py`:
+bank 0 ends at or under `STACK_FLOOR`; the stub in the image starts S at
+`STACK_TOP`; a2min's tripwire uses `vm.h`'s numbers; and a ledger in
+`target/vm/bank0.txt` lists every bank-0 symbol with its size, so the commit
+that grows bank 0 says which symbol did. And `c-lint` refuses a VM source
+other than `main.c` with a function outside a `segment`, the way bank 0
+filled up the first time. Each rule has a planted failure.
+
+This is a2min's memory map. On a real IIgs the System Loader allocates a
+program's stack (a direct-page/stack segment in bank 0, of a size the
+program asks for), and its globals need not be in bank 0 at all; how large
+a stack GS/OS can give is not measured. That port makes `STACK_FLOOR` a
+value read at start rather than a constant.

@@ -479,8 +479,9 @@
 
         # The C stack's checks are never too late (docs/VM.md "The C stack"):
         # the deepest program of each kind runs with its stack starting at
-        # every 64-byte step down to $0800, under a2min's tripwire, and must
-        # answer or E_NOMEM every time; a VM with the old margin must fail.
+        # every 64-byte step from over its own depth down to STACK_MIN, under
+        # a2min's tripwire, and must answer or E_NOMEM every time; a VM with
+        # the old margin must fail.
         stack-stress = pkgs.runCommandCC "check-stack-stress"
           { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ours.nbc ]; }
           ''
@@ -532,14 +533,17 @@
             cp lint.txt "$out"
           '';
 
-        # Where the VM's code lands (scripts/bank-gate.py): bank 0's size is
-        # exactly the committed target/vm/bank0.txt, only allowlisted runtime
-        # routines are linked into it, and no symbol is in a bank the VM uses
-        # for data. Then the same rules, each broken on purpose (D14).
+        # Where the VM's code lands (scripts/bank-gate.py): bank 0's size, and
+        # every symbol in it with its size, are exactly the committed
+        # target/vm/bank0.txt; only allowlisted runtime routines are linked
+        # into it; it ends under the C stack's floor, and the stub and a2min's
+        # tripwire agree with vm.h on the stack (D31); and no symbol is in a
+        # bank the VM uses for data. Then the same rules, each broken on
+        # purpose (D14).
         bank-gate = pkgs.runCommand "check-bank-gate"
           { nativeBuildInputs = [ pkgs.python3 ours.orca-toolchain ]; }
           ''
-            cp -r ${self}/target ${self}/scripts .
+            cp -r ${self}/target ${self}/scripts ${self}/sim .
             chmod -R +w .
             python3 scripts/bank-gate.py ${ours.cvm}/cvm.bin ${ours.cvm}/cvm.map \
               target/vm/bank0.txt > gate.txt || { cat gate.txt; exit 1; }

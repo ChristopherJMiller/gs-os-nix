@@ -38,15 +38,19 @@ The fixtures are the host's own output, never a model's.
 
 ## 2. The VM's rules (target/vm/c)
 
-- **Bank 0 is nearly full.** Every static, and every ORCA/C library routine the
-  code links, lands in bank 0 whatever its segment; string literals stay with
-  their code. Put new code in a `segment "prims"` file (bank 4): `prims.c`
-  (helpers, lists, sets), `strings.c` (strings, context), `derivation.c`,
-  `sha256.c`; what they share goes in `prims.h`. A new file goes in
-  `target/vm/c/SOURCES`, the one list every build reads. `just bank-gate` holds bank 0 to the exact size in
-  `target/vm/bank0.txt` and to an allowlist of runtime routines: when it
-  changes, find out why in `target/build/cvm.map`, say so in the commit, and
-  `just bank-gate --update`. ORCA/C's lint is on (`vm.h`): an unused variable
+- **Bank 0 is shared with the C stack** (D31): it holds `main.c`, every
+  global and static, and every ORCA/C library routine the code links, whatever
+  its segment (string literals stay with their code), and must end under
+  `STACK_FLOOR` (`$7000`, ~4 KB of room). Every other file puts its functions
+  in a segment -- `c-lint` refuses one that does not. Put new code in a
+  `segment "prims"` file (bank 6): `prims.c` (helpers, lists, sets),
+  `strings.c` (strings, context), `derivation.c`, `sha256.c`; what they share
+  goes in `prims.h`. A new file goes in `target/vm/c/SOURCES`, the one list
+  every build reads, with a `segment` line before its first function. `just
+  bank-gate` holds bank 0 to the exact size in `target/vm/bank0.txt`, to an
+  allowlist of runtime routines, and to a ledger of every other symbol with
+  its size: when it changes, the failure names the symbol; say why in the
+  commit, and `just bank-gate --update`. ORCA/C's lint is on (`vm.h`): an unused variable
   or an unprototyped call is a build error. A struct copy links
   `~MOVE`, a variable left shift `~SHIFTLEFT`, 64-bit `/` `%` are `~UDIV8`
   (~4,000 cycles); 32-bit shifts are ~300-cycle calls -- use `BYTE_OF`/`HI16`.
@@ -63,7 +67,7 @@ The fixtures are the host's own output, never a model's.
   from strings must unite their contexts (`ctx_join`) or a dependent
   derivation silently loses an input.
 - Valid Nix not implemented yet is `E_UNSUP`, never a guess.
-- **The C stack has a 1 KB margin above `$0400`** (VM.md "The C stack"):
+- **The C stack has a 1 KB margin above `STACK_FLOOR`** (VM.md "The C stack"):
   every path between two `stack_check()`s must fit it. A new path deeper than
   ~700 bytes -- a big local array, a call into `float.c` or `toml.c`, which
   have no checks of their own -- calls `stack_need(n)` first. Frame sizes are

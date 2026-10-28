@@ -200,6 +200,7 @@ void card_write(uint8_t off, uint8_t v) {
 
 // The C-stack tripwire (run_to_halt, below)
 extern uint16_t sp_floor;
+extern uint32_t bank0_end;
 extern bool sp_armed;
 [[noreturn]] void stack_overflow(const char *how, uint32_t a);
 
@@ -221,7 +222,9 @@ void wr8(uint32_t a, uint8_t v) {
         return;
     }
     if (a >= RAM_BYTES) die("write outside modelled RAM", a);
-    if (sp_armed && ((a >= 0x0330 && a < 0x0340) || (a >= 0x0360 && a < 0x03FE))) stack_overflow("a write to", a);
+    if (sp_armed && a < sp_floor &&
+        ((a >= 0x0330 && a < 0x0340) || (a >= 0x0360 && a < 0x03FE) || (a >= 0x0400 && a < 0x2000) || a >= bank0_end))
+        stack_overflow("a write to", a);
     ram[a] = v;
 }
 
@@ -307,12 +310,14 @@ bool load_image(const char *bin_path, size_t *size_out = nullptr) {
             p += 8;
             if (p + len > image.size() || addr + len > RAM_BYTES) { std::fprintf(stderr, "%s: GSIM chunk at $%06X (%u bytes) does not fit\n", bin_path, addr, len); return false; }
             std::memcpy(&ram[addr], &image[p], len);
+            if (addr < 0x10000) bank0_end = addr + len;
             p += len; total += len;
         }
         if (size_out) *size_out = total;
         return true;
     }
     for (size_t i = 0; i < image.size(); ++i) ram[LOAD_ADDR + i] = image[i];
+    bank0_end = LOAD_ADDR + static_cast<uint32_t>(image.size());
     if (size_out) *size_out = image.size();
     return true;
 }
@@ -424,16 +429,24 @@ void print_symbol_profile() {
     if (unattributed) std::printf("    %5.1f%% outside every symbol\n", 100.0 * unattributed / (total ? total : 1));
 }
 
-// The C VM's stack is $0400-$1FFF (docs/VM.md); below it are the harness's
-// RESULT, DIAG, flags and STATS. A VM run that takes S under $0400 has
-// written over them -- silently: flags flipped GC stress and verb masks on
-// mid-run, and STATS read 80 MB promoted, before the VM's own check saw it.
-// So a2min stops such a run loudly: S in $0200-$03FF (page 1 is the caller's
-// stack, which the VM returns to), or a write by the VM to the flags
-// ($0330-$033F, a2min's alone) or to the gap under the stack ($0360-$03FD;
-// $03FE holds the caller's S). Armed once S has been moved up into the VM's
-// stack (the reset seeds it at $01FF). 0: off (other programs).
+// The C VM's stack runs down from $BFFF to its floor at $7000, above the
+// program (docs/VM.md "The C stack", DECISIONS.md D31); under the floor is
+// bank 0's room to grow, then its globals. A VM run that takes S under the
+// floor has written over something -- silently: when the stack was
+// $0400-$1FFF, over the harness's flags, which turned GC stress and verb
+// masks on mid-run, and STATS, which read 80 MB promoted, before the VM's own
+// check saw it. So a2min stops such a run loudly: S in $0200-$6FFF (page 1 is
+// the caller's stack, which the VM returns to), or a write by the VM to bank
+// 0 that is nobody's -- the flags ($0330-$033F, a2min's alone), the gap
+// under them ($0360-$03FD; $03FE holds the caller's S), the old stack
+// ($0400-$1FFF), and the growth room (from the image's end up to the floor).
+// Armed once S has been moved up into the VM's stack (the reset seeds it at
+// $01FF). 0: off (other programs). scripts/bank-gate.py holds these two
+// numbers to vm.h's STACK_TOP and STACK_FLOOR, and the stub's to STACK_TOP.
+constexpr uint16_t VM_STACK_TOP = 0xBFFF, VM_STACK_FLOOR = 0x7000;
 uint16_t sp_floor = 0;
+uint16_t sp_low = 0xFFFF;                 // the lowest S of the VM's run
+uint32_t bank0_end = 0x10000;             // where the image's bank-0 part ends
 bool sp_armed = false;
 
 // The default budget is a hang detector. It was 50M cycles when the card was
@@ -458,8 +471,10 @@ bool run_to_halt(uint64_t budget = 2'500'000'000) {
     sp_armed = false;
     while (!bus.halted && cpu.cycles < budget) {
         if (sp_floor) {
-            if (cpu.sp >= sp_floor) sp_armed = true;   // in the VM's stack
-            else if (sp_armed && cpu.sp < sp_floor && cpu.sp >= 0x0200) stack_overflow("S", cpu.sp);
+            if (cpu.sp >= sp_floor) {                   // in the VM's stack
+                sp_armed = true;
+                if (cpu.sp < sp_low) sp_low = cpu.sp;
+            } else if (sp_armed && cpu.sp >= 0x0200) stack_overflow("S", cpu.sp);
         }
         if (trace_on)
             std::fprintf(stderr, "%06X %02X %02X %02X %02X A=%04X X=%04X Y=%04X S=%04X D=%04X P=%02X\n", cpu.pcaddr(),
@@ -733,17 +748,19 @@ std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &see
 // contract is BYTECODE.md "Result reporting".
 int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     if (!load_image(vm_path)) return 2;
-    sp_floor = 0x0400;                          // the C VM's stack floor (docs/VM.md)
-    // A2MIN_STACK_TOP=<hex>: start the VM's stack there instead of $1FFF, by
-    // patching omf2bin's stub (CLC XCE REP TSC STA $03FE, then LDA #$1FFF TCS
+    sp_floor = VM_STACK_FLOOR;                  // the C VM's stack floor (docs/VM.md)
+    sp_low = 0xFFFF;
+    // A2MIN_STACK_TOP=<hex>: start the VM's stack there instead of $BFFF, by
+    // patching omf2bin's stub (CLC XCE REP TSC STA $03FE, then LDA #$BFFF TCS
     // at $2008). Stepping it down puts every operation of a program at every
     // depth near the floor: scripts/stack-stress.sh, which the tripwire above
     // turns into a test that a check is never too late.
     if (const char *t = std::getenv("A2MIN_STACK_TOP"); t && *t) {
         const unsigned top = static_cast<unsigned>(std::strtoul(t, nullptr, 16));
-        if (ram[0x2008] != 0xA9 || ram[0x2009] != 0xFF || ram[0x200A] != 0x1F || ram[0x200B] != 0x1B ||
-            top < 0x0800 || top > 0x1FFF) {
-            std::fprintf(stderr, "A2MIN_STACK_TOP: no stub to patch, or $%04X is outside $0800-$1FFF\n", top);
+        if (ram[0x2008] != 0xA9 || ram[0x2009] != (VM_STACK_TOP & 0xFF) || ram[0x200A] != (VM_STACK_TOP >> 8) ||
+            ram[0x200B] != 0x1B || top <= VM_STACK_FLOOR || top > VM_STACK_TOP) {
+            std::fprintf(stderr, "A2MIN_STACK_TOP: no stub to patch, or $%04X is outside $%04X-$%04X\n", top,
+                         VM_STACK_FLOOR + 1, VM_STACK_TOP);
             return 2;
         }
         ram[0x2009] = static_cast<uint8_t>(top & 0xFF);
@@ -810,6 +827,12 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
                 nbc_path, static_cast<unsigned long long>(cpu.instructions),
                 static_cast<unsigned long long>(cpu.cycles),
                 static_cast<unsigned long long>(slot_accesses));
+    // How deep the C stack went, from the stub's top: what stack-stress.sh
+    // sweeps over, and what a program's nesting costs (VM.md "The C stack").
+    {
+        const unsigned top = ram[0x2009] | (ram[0x200A] << 8);
+        if (sp_low <= top) std::printf("  stack: lowest S $%04X, %u bytes under the top\n", sp_low, top - sp_low);
+    }
     // The VM's phase counters (target/vm/c/vm.h STATS_ADDR): how many times each
     // expensive thing happened. Printed even when the run did not halt, which is
     // when they matter most -- a cycle total alone cannot say WHERE it went.

@@ -22,10 +22,17 @@ bank 0
   $0310  DIAG                            the VM's state on error: pc, chunk, vsp, rsp, nfree, depth
   $0330  GC_STRESS / VERB_MASK           a2min sets them: collect at every boundary;
                                          refuse a card verb and do it on the CPU
-  $0400  C stack, growing down from $1FFF   7 KB: frames and direct-page locals
-  $2000  the program                     code + globals, from omf2bin; ≤ $BFFF
-         globals: value stack (4 KB), RSTACK (768 B), FSTACK (512 B), CATCH (12 × 16 B),
-                  CTAB (2 KB), CHUNK_INFO (128 × 4 B), the window table (64 sets × 2 ways × 8 B)
+  $0340  STATS                           the phase counters, live
+  $0400  free                            the C stack's until 2026-10-27 (D31); a2min's
+                                         tripwire ends a run that writes here
+  $2000  the program                     omf2bin's stub, main.c, every global, the runtime
+                                         routines: 16 KB, every symbol in target/vm/bank0.txt
+         globals: value stack (4 KB), RSTACK (320 × 4 B), FSTACK (256 × 4 B), CATCH (12),
+                  CTAB (2 KB), CHUNK_INFO (256 × 4 B), the window table (64 sets × 2 ways × 8 B)
+         ...                             bank 0's room to grow, up to the floor
+  $7000  STACK_FLOOR                     nothing at or under it is the C stack's
+  $BFFF  C stack, growing down           20 KB: frames and direct-page locals, checked
+                                         at STACK_MIN ($7400)
   $C000  never used: slot I/O, the card at $C0nX, then language-card RAM/ROM
 
 bank 1  NURSERY   $010000-$01FFFF   64 KB, bump-allocated
@@ -55,7 +62,14 @@ code lives in load segments from the start: the primop files are `segment "prims
 and since 2026-10-27 `run.c` is `segment "core"` -- 10 KB out of bank 0, at no
 cost in cycles (ORCA/C calls everything with `JSL` and reaches globals through
 the data bank, wherever the code is: measured, every benchmark to the cycle).
-`main`, `data`, `gc` and `card`, and every global, stay in bank 0. `omf2bin` refuses a bank-0 segment past `$C000` rather than
+`data`, `gc` and `card` followed when the C stack moved over the program
+(D31): -13,547 bytes, again no cycles. What is left in bank 0 is `main.c`,
+whose first function is the load file's entry point, every global and static,
+and the runtime routines ORCA/C links: `c-lint` refuses a VM source other than
+`main.c` with a function outside a `segment` (`scripts/hostlint/segments.py`),
+and `scripts/bank-gate.py` keeps a ledger of every bank-0 symbol and its size
+in `target/vm/bank0.txt`, so the commit that grows bank 0 says which symbol
+did. `omf2bin` refuses a bank-0 segment past `$C000` rather than
 letting code land on the I/O page — the first time it did, the program ran as
 far as `$C0CF` and read the card's registers as instructions.
 
@@ -89,18 +103,21 @@ everything else its one reserve covers, must fit the nursery (DERIVATION.md
 The C stack is the 65816 stack: ORCA/C allocates a function's locals below the
 stack pointer and points the direct-page register at them (`tsc / sbc / tcs / phd
 / tcd`), so `FORCE`'s recursion through `run()` costs one C frame per nesting
-level, as the assembly's did through `jsr run`. `E_NOMEM` when it nears `$0400`.
+level, as the assembly's did through `jsr run`. `E_NOMEM` when it nears its floor.
 
 ### The C stack
 
-The stack runs down from `$1FFF` to `$0400`, and under it are the harness's
-`RESULT`, `DIAG`, flags (`$0330`) and `STATS` (`$0340`). Nothing below `$0400`
-may ever be written by a frame. `stack_check()` -- at every force and call --
-refuses (`E_NOMEM`) once S is under `STACK_MIN`, which is only safe if every
-path from one check to the next fits in the margin `STACK_MIN` leaves above
-`$0400`.
+The stack is bank 0's top (since 2026-10-27, D31): omf2bin's stub starts S
+at `STACK_TOP` (`$BFFF`, under the I/O page), and nothing at or under
+`STACK_FLOOR` (`$7000`) is the stack's -- under it is bank 0's room to grow,
+then its globals. `stack_check()` -- at every force and call -- refuses
+(`E_NOMEM`) once S is under `STACK_MIN` (`$7400`), which is only safe if
+every path from one check to the next fits in the margin `STACK_MIN` leaves
+above the floor.
 
-**It did not** (found 2026-10-27, building the speed benchmarks): the margin
+Until then it ran down from `$1FFF` to `$0400`, under the program, over the
+harness's `RESULT`, `DIAG`, flags (`$0330`) and `STATS` (`$0340`), and **the
+margin was not enough** (found 2026-10-27, building the speed benchmarks): it
 was 256 bytes, and a chain of seven derivations, each a level of
 `derivationStrict` (a 486-byte frame) under the previous, took S to `$0351`.
 That wrote over the flags -- GC stress every sixth boundary and three verbs
@@ -119,21 +136,48 @@ two checks (a2min, from each check's S to the lowest S before the next):
 | everything else | under 560 | |
 
 (The frame sizes are read from each function's prologue, `TSC SEC SBC #n
-TCS`, in `cvm.bin`.) So `STACK_MIN` is `$0800`: a 1 KB margin over the 682
-bytes of the deepest ordinary path. The paths through `float.c` and `toml.c`,
+TCS`, in `cvm.bin`.) So `STACK_MIN` is the floor and 1 KB: a margin over the
+682 bytes of the deepest ordinary path. The paths through `float.c` and `toml.c`,
 which have no VM in them and so no checks, call `stack_need(n)` first, at
 each of their five VM-side entries: `FLOAT_STACK` (1,600) and `TOML_STACK`
 (2,600) bytes above `STACK_MIN`. The cost is 1 KB of stack -- a derivation
 nests about 1 KB deep a level -- for a margin that is now measured, not hoped.
 
-Two things hold it: a2min's tripwire, which ends any VM run whose S or whose
-writes go under `$0400` (outside page 1, the caller's stack) as "C stack
-overflow", in every run of every check; and `scripts/stack-stress.sh`
-(`just stack-stress`, `checks.stack-stress`), which runs the deepest program
-of each kind with its stack starting at every 64-byte step from `$1FFF`
-down to `$0800` (`A2MIN_STACK_TOP` patches omf2bin's stub), so that each of
-its operations meets the floor somewhere. Every run must give the answer or
-`E_NOMEM`. A VM built with the old margin must fail it.
+**How deep a program can nest**, measured -- the deepest each kind of
+nesting answers at before `E_NOMEM`, with the 6 KB the stack had over its
+check under the program, and the 19 KB it has now:
+
+| Nesting | C stack a level | Before | Now | What ends it |
+|---|---|---|---|---|
+| a call in an operand, `1 + f (n - 1)` | ~72 bytes | 83 | 270 | the C stack |
+| a walk down nested sets | ~73 | 81 | 269 | the C stack |
+| a thunk forced inside a thunk (a lazy `foldl`) | ~130 | 46 | 151 | the C stack |
+| `deepSeq` of lists in lists | ~21 | 188 | 316 | the root stack |
+| a chain of derivations | ~1,100 | 5 | 17 | the C stack |
+
+Each level also holds a root (`rstack`, 4 bytes) and, for a thunk, a force
+(`fstack`), so those grew with the stack -- `RSTACK_N` 192 to 320 and
+`FSTACK_N` 128 to 256, +1 KB of bank 0 -- to keep the C stack what ends the
+costly shapes. (The old 192 roots was already the next wall: with the bigger
+stack alone, calls stopped at 190.) `deepSeq` spends so little C stack a level
+that ending it there too would take ~900 roots, 3.6 KB more of bank 0.
+`eval-okay-deep-nesting` takes the first four to about nine-tenths of these,
+and `eval-okay-derivation-chain` the last to 16; two mutations put the old
+array sizes back.
+
+Two things hold the floor: a2min's tripwire, which ends any VM run as "C
+stack overflow" if its S goes under the floor (outside page 1, the caller's
+stack) or it writes to bank 0 that is nobody's -- the flags, the gap under
+them, the old stack's `$0400-$1FFF`, and the growth room -- in every run of
+every check; and `scripts/stack-stress.sh` (`just stack-stress`,
+`checks.stack-stress`), which runs the deepest program of each kind with its
+stack starting at every 64-byte step from over its own depth (a2min prints
+every run's lowest S; the start adds the largest `stack_need`) down to
+`STACK_MIN` (`A2MIN_STACK_TOP` patches omf2bin's stub), so that each check
+meets the floor somewhere. Every run must give the answer or `E_NOMEM`. A VM
+built with the old 256-byte margin must fail it, and does: it writes `$6FFF`.
+`scripts/bank-gate.py` holds bank 0's end under the floor, and the stub's S
+and a2min's two numbers to `vm.h`'s.
 
 ### Speed (D29)
 

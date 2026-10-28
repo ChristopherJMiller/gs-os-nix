@@ -2,7 +2,7 @@
  *
  * vm_entry is the first function in the first file of the link, so it is the
  * load file's entry point: omf2bin's stub JSLs here in native mode with the
- * stack at $1FFF, and RTL returns to a2min's halt. No ORCALib start-up, no OS.
+ * stack at STACK_TOP, and RTL returns to a2min's halt. No ORCALib start-up, no OS.
  */
 #pragma noroot
 #pragma optimize 15

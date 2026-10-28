@@ -38,6 +38,8 @@
 
 #include "vm.h"
 
+segment "core";
+
 static uint16_t gfree;      /* to-space bump pointer (offset; bank STAGE) */
 static uint16_t gscan;      /* Cheney scan pointer */
 

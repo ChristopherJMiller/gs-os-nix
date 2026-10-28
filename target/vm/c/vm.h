@@ -60,8 +60,8 @@
 #define ST_FORCES        STAT(6)    /* thunks forced */
 #define ST_REMEMBERED    STAT(7)    /* young pointers stored into mature fields */
 
-/* The harness flags. The first two were at $0BF0, which is inside the C stack's
- * range ($0400..$1FFF): a deep enough recursion would have overwritten them,
+/* The harness flags. The first two were at $0BF0, which was inside the C stack's
+ * range then ($0400..$1FFF): a deep enough recursion would have overwritten them,
  * silently turning GC stress off or a masked verb back on -- the second of
  * which would quietly corrupt a measurement. $0330 is below the stack floor. */
 #define GC_STRESS_ADDR   0x0330UL   /* a2min sets it: collect at every boundary */
@@ -80,12 +80,19 @@
 #define VERB_NO_ALU64    0x02U
 #define VERB_NO_HASH     0x04U   /* SHA-256: HASH_PUSH / HASH_STREAM + HASH_FINAL */
 #define verb_off(bit)    (*(volatile uint8_t *)VERB_MASK_ADDR & (bit))
-#define STACK_MIN        0x0800U    /* the C stack (S) must stay above this at every check,
-                                       which leaves 1 KB above $0400, under which are the
-                                       harness's RESULT, DIAG, flags and STATS: the deepest
+/* The C stack is bank 0's top, above the program (VM.md "The C stack", D31):
+ * omf2bin's stub starts S at STACK_TOP, and nothing under STACK_FLOOR is the
+ * stack's -- under it is bank 0's room to grow, then its globals. bank-gate
+ * holds bank 0's end under STACK_FLOOR, the stub to STACK_TOP, and a2min's
+ * tripwire to both. */
+#define STACK_TOP        0xBFFFU
+#define STACK_FLOOR      0x7000U
+#define STACK_MIN        0x7400U    /* the C stack (S) must stay above this at every check,
+                                       which leaves 1 KB above STACK_FLOOR: the deepest
                                        stack measured between two checks is 682 bytes
                                        (a fixed-output derivation; VM.md "The C stack").
                                        Deeper paths ask for their own room: stack_need */
+_Static_assert(STACK_MIN - STACK_FLOOR == 0x0400U, "1 KB over the deepest path between two checks");
 #define FLOAT_STACK      1600U      /* float.c's parsing and formatting, under one call:
                                        f_strtod's frame alone is 1,068 bytes, g_digits' 1,038 */
 #define TOML_STACK       2600U      /* tm_parse: 32 nested arrays or tables, then f_strtod */
@@ -201,8 +208,13 @@ _Static_assert(sizeof(obj_t) == 4, "a header is four bytes (HEAP.md)");
 
 /* --- the VM's registers and tables (BYTECODE.md) --------------------------------- */
 #define VSTACK_N   1024     /* 4 KB of 32-bit slots */
-#define RSTACK_N   192
-#define FSTACK_N   128
+/* One root and, for a thunk, one force a level of nesting: 320 and 256 are
+ * above what the C stack holds of the shapes that cost it least per level --
+ * a call ~72 bytes, 270 levels; a thunk forced inside a thunk ~130, 151 -- so
+ * it is the C stack that ends those (VM.md "The C stack"). A deepSeq of nested
+ * lists spends ~21 bytes a level and is ended here, at ~316. */
+#define RSTACK_N   320
+#define FSTACK_N   256
 #define CATCH_N    12
 #define CTAB_N     512      /* constant pointers, all chunks together */
 /* `builtins` used as a value materialises a lambda per primop, and the 47

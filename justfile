@@ -192,9 +192,11 @@ float-vectors *seeds: build-a2min
 c-lint:
     ./scripts/c-lint.sh
 
-# Where the VM's code lands: bank 0's size must equal target/vm/bank0.txt
-# exactly (after accounting for a change, `just bank-gate --update`), only the
-# allowlisted runtime routines may be in it, and no symbol in a data bank.
+# Where the VM's code lands: bank 0's size, and every symbol in it with its
+# size, must equal target/vm/bank0.txt exactly (after accounting for a change,
+# `just bank-gate --update`); only the allowlisted runtime routines may be in
+# it; it must end under the C stack's floor, which the stub and a2min's
+# tripwire must agree on with vm.h (D31); and no symbol in a data bank.
 bank-gate *flags: cvm
     python3 scripts/bank-gate.py target/build/cvm.bin target/build/cvm.map target/vm/bank0.txt {{flags}}
 
