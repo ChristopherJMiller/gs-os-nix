@@ -21,7 +21,6 @@ segment "front";
 #define XA_END   0x00030000UL
 #define SCRATCH  ((uint8_t *)FRONT_SCRATCH)         /* a string or a path being built */
 #define CHAIN    ((uint8_t *)FRONT_CHAIN)           /* the files being lowered: [u16 length][path] each */
-#define FIXTURE_PWD  "/pwd/lang"
 #define FIXTURE_HOME "/fake-home"
 
 static uint32_t xa;                                 /* the arena's next free byte */
@@ -924,7 +923,7 @@ static struct xn *lx_if(const struct el *e)
 
 static void chain_push(const uint8_t *p, uint16_t n)
 {
-    if ((uint16_t)(0x3FFEU - ch_n) < n) nomem();
+    if ((uint16_t)(FRONT_CHAIN_MAX - ch_n) < n) nomem();
     *(uint16_t *)(CHAIN + ch_n) = n;
     memcpy(CHAIN + ch_n + 2, p, n);
     ch_cur = ch_n;
@@ -1124,6 +1123,38 @@ struct xn *lower_file(const uint8_t *text, uint16_t n)
     e = nth_expr(cst_root(), 0);
     if (!e) refuse();                                   /* empty file */
     return lx_expr(e);
+}
+
+/* The arena after the AST, for the compiler (compile.c): what it builds
+ * lives as long as the AST it compiles. */
+void *front_alloc(uint16_t n) { return xalloc(n); }
+
+/* A text with no file -- derivation.nix, which the compiler embeds and
+ * lowers when a program first names `derivation` (front.rs parse) -- its
+ * tree after the trees built, its AST after the arena's, the lowering's
+ * state as it was after. */
+struct xn *lower_text(const uint8_t *text, uint16_t n)
+{
+    const uint8_t *s_src = lsrc;
+    uint16_t s_llen = llen, s_off = p_off, s_line = p_line, s_bol = p_bol, s_cur = ch_cur, s_n = ch_n;
+    struct cst_mark m;
+    const struct el *e;
+    struct xn *x;
+    chain_push((const uint8_t *)"", 0);                 /* no file: no directory, no name */
+    cst_mark(&m);
+    lsrc = text;
+    llen = n;
+    p_off = 0;
+    p_line = 1;
+    p_bol = 0;
+    parse_file_at(text, n);
+    e = nth_expr(cst_root(), 0);
+    if (!e) refuse();                                   /* empty file */
+    x = lx_expr(e);
+    cst_release(&m);
+    lsrc = s_src; llen = s_llen; p_off = s_off; p_line = s_line; p_bol = s_bol;
+    ch_cur = s_cur; ch_n = s_n;
+    return x;
 }
 
 /* --- the S-expression (sexp.rs) ------------------------------------------------------------------- */

@@ -137,6 +137,11 @@
             python3 scripts/check-opcodes.py | tee -a "$out"
             grep -q "^NBC OPCODES SELFTEST OK" "$out"
             grep -q "^NBC OPCODES OK" "$out"
+            # compile.c's copy of nbc's tables and derivation.nix (nbc_tables.h)
+            python3 scripts/gen-nbc-tables.py --selftest | tee -a "$out"
+            python3 scripts/gen-nbc-tables.py --check | tee -a "$out"
+            grep -q "^NBC TABLES SELFTEST OK" "$out"
+            grep -q "^nbc_tables.h: nbc's tables and derivation.nix, exactly" "$out"
           '';
 
         # D7 made mechanical: the generator contains no hashing or store-path code,
@@ -508,10 +513,11 @@
           '';
 
         # The on-target compiler against nbc, stage by stage (docs/COMPILER.md,
-        # D33): the lexer's tokens and the parser's syntax tree, rnix's, and
-        # the lowering's AST, nbc's, for every .nix in the repository and
-        # 20,000 mutants and generated programs each; then planted lexer,
-        # parser and lowering bugs, each of which must be caught.
+        # D33): the lexer's tokens and the parser's syntax tree, rnix's, the
+        # lowering's AST and the compiler's image, nbc's, byte for byte, for
+        # every .nix in the repository and 20,000 mutants and generated
+        # programs each; then planted lexer, parser, lowering and compiler
+        # bugs, each of which must be caught.
         front = pkgs.runCommandCC "check-front"
           { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ours.nbc ]; }
           ''
@@ -532,6 +538,9 @@
             python3 scripts/front-diff.py --stage ast --nbc nbc --a2min ./build/a2min --vm ${ours.cvm}/cvm.bin \
               --fuzz 20000 | tee -a "$out"
             grep -q "^FRONT-DIFF OK (ast)" "$out"
+            python3 scripts/front-diff.py --stage compile --nbc nbc --a2min ./build/a2min --vm ${ours.cvm}/cvm.bin \
+              --fuzz 20000 | tee -a "$out"
+            grep -q "^FRONT-DIFF OK (compile)" "$out"
             python3 scripts/front-diff.py --self-test --nbc nbc --a2min ./build/a2min --fuzz 2000 | tee -a "$out"
             grep -q "^FRONT-DIFF SELF-TEST OK" "$out"
           '';

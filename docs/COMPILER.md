@@ -203,10 +203,96 @@ statics. Lowering recurses as the AST nests, ~55 bytes of C stack a level:
 alone went to 511 and 1,022 (lambdas and parentheses still end at the
 parser's 80).
 
+## Stage 3: the compiler
+
+`compiler.rs` and the image writer `nbc.rs` over the AST: the same chunks,
+in the same order, with the same constants and the same code, written as
+the same image, byte for byte. What has to carry over exactly:
+
+- **Chunk order.** A chunk is claimed when its first use is compiled -- a
+  thunk's before its body, an import's before the file, the `builtins`
+  set's and each primop's lambda the first time they are named -- and the
+  image lists chunks in that order, so the port compiles in the same order,
+  case for case, `strict` and `lazy` and `binding` as nbc does.
+- **Constants**, per chunk, deduplicated by value -- a string is not a path
+  of the same text -- in first-use order.
+- **The peephole**: a RETURN right after a CALL makes it a TAIL_CALL.
+- **Names**: scopes as nbc's, lexical first, then `true`/`false`/`null`,
+  then -- a `with` in scope -- a run-time lookup with the global as its
+  fallback, then the globals, `__NAME`, `builtins` itself. A closed thunk
+  (an import, the `builtins` set) is compiled with no scopes around it.
+- **The tables**: the primops (name, id, arity), the unqualified globals,
+  every name in Nix 2.34.9's `builtins`, the value builtins. In C they are
+  string literals in code -- a static array would be bank 0's -- generated
+  from `opcodes.rs` into `nbc_tables.h` by `scripts/gen-nbc-tables.py`,
+  which `checks.nbc-opcodes` runs with `--check` (and `--selftest`, a drift
+  planted in each source). An entry is a length byte, the name and a NUL,
+  so that a lookup steps over an entry without scanning it.
+- **Sorting**: a set's names by bytes, stably, as Rust's `sort_by` sorts.
+- **`derivation`**: `derivation.nix`'s text, embedded (in `nbc_tables.h`
+  too), lexed, parsed and lowered the first time a program names it -- a
+  newline before it, as Nix embeds it, so its positions are a line on --
+  then compiled as an import keyed `<nix/derivation-internal.nix>`. The
+  lowering is re-entered for it (`lower_text`), its tree after the trees
+  built, its AST after the arena's, as nbc lowers it mid-compile.
+- **Positions**: the files and (file, line, column) triples
+  `unsafeGetAttrPos` reads, a file named by the fixture convention, its path
+  from the compiled file's directory (`strip_prefix`, a component at a
+  time) or its name alone.
+
+Memory: the chunks' code in bank 7 in 32-byte blocks, a block's number and
+30 bytes (GS/OS's path work there is over once the lowering has read every
+import); the chunk table, 512 entries of 32 bytes, so that an index is a
+shift, the constants, scopes, maps and positions in the AST's arena; the
+compiler's registers in the top 256 bytes of bank 12, above the import
+chain, so they cost bank 0 nothing. The image is written into bank 3,
+where the VM loads one; `a2min --compile <vm> <in.nix> <out.nbc>` writes
+it to a host file.
+
+The gate: `front-diff --stage compile` compiles every file with `nbc -o`
+and `a2min --compile` and compares the images byte for byte, or both must
+refuse. The fuzzer's generated programs are closed for it -- a `let`, a
+`with { }`, lambdas, `with builtins;` or formals around them -- since the
+compiler refuses a free variable as nbc does, and draw on the names the
+compiler resolves specially (`builtins.NAME`, `derivation`, `__findFile`,
+a self-reference). Ten planted compiler bugs must be caught: a CALL before
+a RETURN left a CALL, a name sorted after its extensions, the `builtins`
+set unsorted, a number constant not shared, a float lazy without a thunk, a
+binding that names itself copied, positions for a set Nix builds without
+them, an imported file's positions named for its importer, `derivation.nix`
+without its newline, a `with`'s miss on `builtins` without the fallback.
+
+**Done** (2026-10-28): `compile.c`, ~25 KB of code in bank 10 (segment
+`compile`; bank 9 is the front end's). Every file nbc compiles, 720 of the
+723, gives nbc's image byte for byte, and the three it refuses the target
+refuses too; so do the 20,000 mutants and generated programs `checks.front`
+makes, 4,901 of which nbc compiles, and 5,000 more on another seed (1,262). End to end -- lexed, parsed, lowered,
+compiled and written -- `derivation.nix` alone is 3.6M cycles (1.3 s at
+2.8 MHz), a derivation fixture 17.1M (6.1 s), a `with builtins;` file of
+1.9 KB 14.9M, the 35 KB `eval-okay-big-constants` 29.6M. That last but one
+was 26.6M as first written: `A2MIN_PROFILE` put 29% of it in scanning the
+tables (an entry's length now leads it), 2.5% in `~CUMUL2` indexing a
+22-byte chunk entry (now 32, a shift), and the rest in the `builtins` set
+looking up each primop it had just walked past (now handed its entry) and
+the linear constant search (a key a constant, compared first). Bank 0 +1,
+its alignment; a 32-bit product in the image writer had linked `~UMUL4`
+(111 bytes) before it was taken out. The compiler recurses as the AST
+nests: lists end at 220 levels, where the lowering went to 333; every
+other shape still ends at the parser's or the lowering's limit.
+
+**Found on the way**, in stage 2a: the parser told `__curPos` from an
+identifier by reading `SRC_BASE`, the compiled file's bytes, where an
+imported file's token is in its own text -- `__curPos` in an imported file
+was a variable. It reads the lexer's text now (`lex_text`), and
+`eval-okay-import-curpos` imports one.
+
 ## Later stages
 
-Each is designed here before its code, when it starts. What is known
-already: stage 3's image layout is BYTECODE.md's, and `nbc --dump`
-disassembles either side's; stage 4 needs a printer on the target -- today
-a2min reads the result from the heap and prints it, which is host
-involvement -- and a way to read a line.
+Stage 4 is designed here before its code, when it starts. What is known
+already: it needs the compiler and the VM in one run -- today `a2min
+--compile` hands the image back to the host, and `--run-nbc` loads one --
+a printer on the target -- a2min reads the result from the heap and prints
+it, which is host involvement -- and a way to read a line. The image is in
+bank 3 when the compiler is done, where the VM loads one, and the compiler's
+memory (banks 1, 2 and 7, the AST's arena and the code blocks) is the VM's
+to take back.

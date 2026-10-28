@@ -407,10 +407,11 @@ static int is_cur_pos(void)
 {
     const char *w = "__curPos";                     /* a literal stays with its code */
     const struct tk *t = &BUF[bhead];
+    const uint8_t *s = lex_text();                  /* an import's, not SRC_BASE's */
     uint16_t i;
     if (t->len != 8) return 0;
     for (i = 0; i < 8; ++i)
-        if (((const uint8_t *)SRC_BASE)[t->start + i] != (uint8_t)w[i]) return 0;
+        if (s[t->start + i] != (uint8_t)w[i]) return 0;
     return 1;
 }
 
@@ -755,6 +756,7 @@ void front_run(void)
     case FRONT_LEX: lex_dump(); break;
     case FRONT_CST: cst_dump(); break;
     case FRONT_AST: ast_dump(); break;
+    case FRONT_COMPILE: compile_dump(); break;
     default: err_exit(E_BADNBC);
     }
 }

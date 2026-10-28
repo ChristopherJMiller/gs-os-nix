@@ -230,6 +230,7 @@ fixtures/eval-okay-hashstring
 fixtures/eval-okay-hashstring-algos
 fixtures/eval-okay-hashstring-context
 fixtures/eval-okay-import
+fixtures/eval-okay-import-curpos
 fixtures/eval-okay-import-values
 fixtures/eval-okay-inherit-and-escapes
 fixtures/eval-okay-int-compare

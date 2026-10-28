@@ -6,7 +6,10 @@ they must be the same -- every token's kind, start and length -- or both
 must refuse the file (it is not UTF-8). Stage 2a, the parser: `nbc --cst`
 prints rnix's syntax tree, `a2min --cst` the VM's (parse.c), node for node
 and token for token, or both refuse the file (rnix reports an error, which
-nbc refuses; the VM's E_PARSE).
+nbc refuses; the VM's E_PARSE). Stage 2b, the lowering: `nbc --ast` prints
+nbc's AST as an S-expression, `a2min --ast` the VM's (lower.c). Stage 3,
+the compiler: `nbc -o` writes the image, `a2min --compile` the VM's
+(compile.c), and they must be the same byte for byte.
 
 Over every .nix in the repository -- the corpus, the fixtures, the
 benchmarks, derivation.nix -- and then over a fuzzer's mutations of them:
@@ -17,7 +20,7 @@ inputs nobody writes on purpose are where a port goes wrong.
 Then it proves it can fail (D14): VMs built from copies of lex.c with a
 bug planted must each be caught.
 
-usage: front-diff.py --nbc NBC --a2min A2MIN --vm CVM.BIN [--stage lex|cst] [--fuzz N] [--seed S] [-j J]
+usage: front-diff.py --nbc NBC --a2min A2MIN --vm CVM.BIN [--stage lex|cst|ast|compile] [--fuzz N] [--seed S] [-j J]
        front-diff.py --self-test --nbc NBC --a2min A2MIN [--fuzz N]
 """
 import argparse
@@ -42,11 +45,30 @@ def sources():
 # compare (lex drops the kind's name), and a2min's flag.
 STAGES = {"lex": ("--tokens", lambda f: (f[0], f[2], f[3]), "--lex", 3),
           "cst": ("--cst", lambda f: tuple(f), "--cst", 4),
-          "ast": ("--ast", None, "--ast", 0)}     # the AST: one S-expression line
+          "ast": ("--ast", None, "--ast", 0),     # the AST: one S-expression line
+          "compile": (None, None, "--compile", 0)}   # the image: its bytes
+
+
+def image(cmd, out):
+    """Run cmd, which writes an image to out: its result, and the bytes or None"""
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=600)
+        data = open(out, "rb").read() if os.path.exists(out) and p.returncode == 0 else None
+        return p, data
+    finally:
+        if os.path.exists(out):
+            os.unlink(out)
 
 
 def host(stage, nbc, path):
     flag, pick, _, _ = STAGES[stage]
+    if stage == "compile":
+        fd, out = tempfile.mkstemp(suffix=".nbc")
+        os.close(fd)
+        p, data = image([nbc, path, "-o", out], out)
+        if p.returncode == 2:
+            return "refused"
+        return [data] if data is not None else f"nbc failed: {p.stderr.decode(errors='replace').strip()[:100]}"
     p = subprocess.run([nbc, flag, path], capture_output=True)
     if p.returncode == 2:
         return "refused"
@@ -59,7 +81,13 @@ def host(stage, nbc, path):
 
 def target(stage, a2min, vm, path):
     _, _, flag, width = STAGES[stage]
-    p = subprocess.run([a2min, flag, vm, path], capture_output=True, timeout=600)
+    data = None
+    if stage == "compile":
+        fd, out = tempfile.mkstemp(suffix=".nbc")
+        os.close(fd)
+        p, data = image([a2min, flag, vm, path, out], out)
+    else:
+        p = subprocess.run([a2min, flag, vm, path], capture_output=True, timeout=600)
     out, err = [], None
     for l in p.stdout.decode(errors="replace").splitlines():
         f = l.split()
@@ -73,15 +101,26 @@ def target(stage, a2min, vm, path):
         return "refused"
     if err:
         return f"error {err}"
+    if stage == "compile":
+        return [data] if data is not None else "no image"
     return out
 
 
 def compare(args, path):
-    h, t = host(args.stage, args.nbc, path), target(args.stage, args.a2min, args.vm, path)
+    """None if the two agree, else what differs; and whether nbc accepted it"""
+    h = host(args.stage, args.nbc, path)
+    return differs(args, path, h, target(args.stage, args.a2min, args.vm, path)), not isinstance(h, str)
+
+
+def differs(args, path, h, t):
     if h == t:
         return None
     if isinstance(h, str) or isinstance(t, str):
         return f"{path}: host {h if isinstance(h, str) else 'tokens'}, target {t if isinstance(t, str) else 'tokens'}"
+    if args.stage == "compile":
+        a, b = h[0], t[0]
+        i = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+        return f"{path}: the images differ at byte {i} (host {len(a)} bytes, target {len(b)})"
     for i, (a, b) in enumerate(zip(h, t)):
         if a != b:
             return f"{path}: token {i}: host {a}, target {b}"
@@ -139,6 +178,24 @@ LEAVES = ["1", "0", "01", "1.5", ".5", "1e3", "2.5E-1", "http://x.y/z", "a", "b"
           "rec { a = { inherit b; }; a = rec { inherit c; }; }", "{ a = 1; a = 2; }"]
 STRBITS = ["x", " ", "\\\"", "$", "$$", "''$", "'''", "\n  ", "\\${"]
 
+# The compiler refuses a free variable, as nbc does: a generated program for
+# it is closed by one of these, binding every name the generator uses --
+# lexically, through a `with` (a run-time lookup and its fallback), or with
+# `builtins` in scope -- and draws on the names a compiler resolves specially.
+CLOSERS = ["let a = 1; b = 2; c = 3; x = 4; y = 5; x1 = 6; _y = 7; a-b = 8; a' = 9; in ", "with { }; ",
+           "a: b: c: x: y: x1: _y: a-b: a': ", "with builtins; ", "{ a, b ? 1, c ? a, x, y, x1, _y, a-b, a', ... }@s: ",
+           "let a = 1; in with { b = 2; }; let c = a; x = c; y = x; x1 = 6; _y = 7; a-b = 8; a' = 9; in "]
+COMPILE_LEAVES = ["builtins.map", "builtins", "map", "(builtins.foo or 1)", "derivation", "builtins.derivation",
+                  "builtins.currentSystem", "builtins.langVersion", "builtins.nixPath", "__findFile", "toString",
+                  "(x: x)", "(rec { a = b; b = 1; })", "{ ${a} = 1; }", "(let x = x; in x)", "({ a, b ? a }: b)",
+                  "builtins.builtins", "__typeOf", "(with builtins; map)", '(builtins.unsafeGetAttrPos "a" { a = 1; })',
+                  "(import ./m0.nix)", "(f: f f)", "(x: y: x y)", "(builtins.foldl' (a: b: a) 0 [])"]
+compile_leaves = False      # set for the compile stage: the generator draws on COMPILE_LEAVES too
+
+
+def leaf(rng):
+    return rng.choice(LEAVES + COMPILE_LEAVES) if compile_leaves else rng.choice(LEAVES)
+
 
 def gen(rng, d=0):
     def ws():
@@ -159,7 +216,7 @@ def gen(rng, d=0):
         return "".join(path() + ws() + "=" + ws() + gen(rng, d + 1) + ";" + ws() for _ in range(rng.randint(0, 3)))
 
     if d > 6:
-        return rng.choice(LEAVES)
+        return leaf(rng)
     r = rng.random()
     if r < 0.12:
         op = rng.choice(BINOPS + ["?"])
@@ -192,18 +249,19 @@ def gen(rng, d=0):
         return q + body + q
     if r < 0.86:
         return gen(rng, d + 1) + ws() + gen(rng, d + 1)
-    return rng.choice(LEAVES)
+    return leaf(rng)
 
 
 def run(args, quiet=False):
     files = sources()
-    bad = []
+    bad, took = [], 0
     with ThreadPoolExecutor(args.j) as ex:
-        for r in ex.map(lambda f: compare(args, f), files):
+        for r, ok in ex.map(lambda f: compare(args, f), files):
+            took += ok
             if r:
                 bad.append(r)
     if not quiet:
-        print(f"  {len(files)} files: {len(files) - len(bad)} the same")
+        print(f"  {len(files)} files: {len(files) - len(bad)} the same ({took} accepted by nbc)")
     if args.fuzz:
         rng = random.Random(args.seed)
         texts = [open(f, "rb").read() for f in files]
@@ -214,13 +272,15 @@ def run(args, quiet=False):
                 p = os.path.join(tmp, f"m{k}.nix")
                 with open(p, "wb") as f:
                     if rng.random() < 0.3:
-                        f.write(gen(rng).encode())
+                        closer = rng.choice(CLOSERS) if args.stage == "compile" else ""
+                        f.write((closer + gen(rng)).encode())
                     else:
                         f.write(mutate(rng, rng.choice(texts), texts))
                 mutants.append(p)
-            fbad = []
+            fbad, took = [], 0
             with ThreadPoolExecutor(args.j) as ex:
-                for r in ex.map(lambda f: compare(args, f), mutants):
+                for r, ok in ex.map(lambda f: compare(args, f), mutants):
+                    took += ok
                     if r:
                         fbad.append(r)
             if fbad and not quiet:
@@ -230,7 +290,8 @@ def run(args, quiet=False):
                     shutil.copy(r.split(":")[0], keep)
                 print(f"  (the first failing mutants are kept in {keep})")
             if not quiet:
-                print(f"  {args.fuzz} mutants (seed {args.seed}): {args.fuzz - len(fbad)} the same")
+                print(f"  {args.fuzz} mutants (seed {args.seed}): {args.fuzz - len(fbad)} the same "
+                      f"({took} accepted by nbc)")
             bad += fbad
         finally:
             shutil.rmtree(tmp)
@@ -238,8 +299,31 @@ def run(args, quiet=False):
 
 
 def self_test(args):
-    """Each plant is a real way a port of rnix's tokenizer or parser goes wrong."""
+    """Each plant is a real way a port of rnix's tokenizer, its parser, nbc's
+    lowering or its compiler goes wrong."""
     plants = [
+        ("a CALL before a RETURN stays a CALL", "compile.c",
+         "    if (c->len && c->last_call == c->len) *code_at", "    if (0) *code_at"),
+        ("a name sorts after its extensions", "compile.c",
+         "    return c < 0 || (c == 0 && a->len < b->len);", "    return c < 0;"),
+        ("the builtins set's names are not sorted", "compile.c",
+         '        names = sorted(push_name(names, "builtins", 8, 0));', '        names = push_name(names, "builtins", 8, 0);'),
+        ("a number constant is not shared", "compile.c",
+         "            if (memcmp(k->a, v, 8) == 0) return i;", "            if (0) return i;"),
+        ("a float is lazy without a thunk", "compile.c",
+         "    case X_INT: case X_PATH: case X_LAMBDA: strict(e, ch); return;",
+         "    case X_INT: case X_FLOAT: case X_PATH: case X_LAMBDA: strict(e, ch); return;"),
+        ("a binding that names itself is a pointer copy", "compile.c",
+         "r.kind == R_ENV && r.depth == 0 && r.index > idx)", "r.kind == R_ENV && r.depth == 0 && r.index > idx + 1)"),
+        ("a set Nix builds without positions has them", "compile.c",
+         "        if (p->line == 0) return 0;\n", ""),
+        ("an imported file's positions name its importer", "compile.c",
+         "        if (outer_file >= 0) CS.cur_file = file_index(file_name(path));", ""),
+        ("derivation.nix without Nix's newline before it", "compile.c",
+         '(const uint8_t *)("\\n" DERIVATION_NIX), (uint16_t)(DERIVATION_NIX_LEN + 1)',
+         '(const uint8_t *)(DERIVATION_NIX), (uint16_t)(DERIVATION_NIX_LEN)'),
+        ("a with's miss on `builtins` has no fallback", "compile.c",
+         '    if (!g && !IS(name, "builtins")) {', '    if (!g) {'),
         ("an indented string keeps a space too many", "lower.c",
          "if (cur_dropped >= min_indent) SCRATCH[o++] = ch;", "if (cur_dropped > min_indent) SCRATCH[o++] = ch;"),
         ("a merged rec set's inherit stays an inherit", "lower.c",
@@ -277,6 +361,8 @@ def self_test(args):
     work = tempfile.mkdtemp()
     try:
         for name, f, old, new in plants:
+            if args.plants and f not in args.plants.split(","):
+                continue
             src = os.path.join(work, "src")
             shutil.rmtree(src, ignore_errors=True)
             shutil.copytree("target/vm/c", src)
@@ -291,7 +377,9 @@ def self_test(args):
             r = subprocess.run(["orcabuild", "-o", vm, "-O", *srcs], capture_output=True, text=True)
             if r.returncode != 0:
                 print(f"  {name:<44} DID NOT BUILD"); print(r.stdout[-600:], r.stderr[-600:]); ok = False; continue
-            stage = {"lex.c": "lex", "parse.c": "cst"}.get(f, "ast")
+            stage = {"lex.c": "lex", "parse.c": "cst", "compile.c": "compile"}.get(f, "ast")
+            global compile_leaves
+            compile_leaves = stage == "compile"
             caught = run(argparse.Namespace(**{**vars(args), "vm": vm, "stage": stage}), quiet=True)
             print(f"  {name:<44} {'caught' if caught else 'SURVIVED -- the diff is decorative'}")
             ok &= bool(caught)
@@ -310,14 +398,17 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("-j", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--plants", help="the self-test's plants in these files only (lex.c,compile.c)")
     args = ap.parse_args()
+    global compile_leaves
+    compile_leaves = args.stage == "compile"
     if args.self_test:
-        print("=== front-diff self-test (D14): planted lexer and parser bugs ===")
+        print("=== front-diff self-test (D14): planted lexer, parser, lowering and compiler bugs ===")
         ok = self_test(args)
         print("FRONT-DIFF SELF-TEST OK" if ok else "FRONT-DIFF SELF-TEST FAILED")
         return 0 if ok else 1
     what = {"lex": "1, the lexer, against rnix's", "cst": "2a, the parser, against rnix's",
-            "ast": "2b, the lowering, against nbc's"}[args.stage]
+            "ast": "2b, the lowering, against nbc's", "compile": "3, the compiler, against nbc's"}[args.stage]
     print(f"=== front-diff: stage {what} ===")
     bad = run(args)
     for b in bad[:20]:
@@ -325,7 +416,8 @@ def main():
     if bad:
         print(f"FRONT-DIFF FAILED: {len(bad)} input(s) differ")
         return 1
-    print(f"FRONT-DIFF OK ({args.stage}): every {dict(lex='token', cst='node and token', ast='AST')[args.stage]} the same")
+    print(f"FRONT-DIFF OK ({args.stage}): every "
+          f"{dict(lex='token', cst='node and token', ast='AST', compile='image')[args.stage]} the same")
     return 0
 
 

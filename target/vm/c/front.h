@@ -45,6 +45,9 @@ struct el { uint8_t kind, pad; uint16_t a, b; };
  * bytes, the imports' after it). */
 #define SRC_NAME  0x000DFF00UL
 
+/* The directory the fixtures' paths and positions name (front.rs FIXTURE_PWD) */
+#define FIXTURE_PWD "/pwd/lang"
+
 /* The compiler's own bank (bank 12; no code lands there either): scratch for
  * a string or a path being built, a canonical path, and the import chain. */
 #define FRONT_SCRATCH 0x000C0000UL
@@ -77,6 +80,7 @@ enum xbin { B_ADD, B_SUB, B_MUL, B_DIV, B_EQ, B_NE, B_LT, B_LE, B_GT, B_GE };
 void lex_init(const uint8_t *text, uint16_t n);
 int utf8_ok(const uint8_t *text, uint16_t n);
 uint8_t lex_next(uint16_t *start);
+const uint8_t *lex_text(void);
 extern uint16_t lex_off;
 
 /* --lex (a2min): every token of the source at SRC_BASE, as (kind, length)
@@ -101,6 +105,22 @@ void cst_dump(void);
 struct xn *lower_file(const uint8_t *text, uint16_t n);
 /* --ast (a2min): the AST as nbc --ast prints it, an S-expression */
 void ast_dump(void);
+/* for compile.c: the arena after the AST, and a text with no file lowered */
+void *front_alloc(uint16_t n);
+struct xn *lower_text(const uint8_t *text, uint16_t n);
+
+/* --- compile.c ---------------------------------------------------------------------- */
+/* compiler.rs and nbc.rs write_program over the AST: the image nbc writes,
+ * at IMAGE_BASE; its length */
+uint16_t compile_file(const struct xn *program);
+/* --compile (a2min): the source at SRC_BASE compiled, the image's length at
+ * RESULT_ADDR */
+void compile_dump(void);
+
+/* The compiler's registers: the top of bank 12, above the import chain,
+ * so they cost bank 0 nothing */
+#define FRONT_CSTATE  0x000CFF00UL
+#define FRONT_CHAIN_MAX 0x3EFEU                 /* the chain's bytes, below FRONT_CSTATE */
 
 /* The stage FRONT_MODE_ADDR names (vm_entry's one test of it: the dispatch
  * is here, in "front", so that a stage costs bank 0 nothing) */

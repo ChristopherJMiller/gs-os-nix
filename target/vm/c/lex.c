@@ -471,6 +471,9 @@ int utf8_ok(const uint8_t *text, uint16_t n)
     return 1;
 }
 
+/* The text being lexed: the parser reads a token's bytes from it */
+const uint8_t *lex_text(void) { return src; }
+
 void lex_init(const uint8_t *text, uint16_t n)
 {
     if (!utf8_ok(text, n)) err_exit(E_UNSUP);       /* nbc's read_to_string refuses it */

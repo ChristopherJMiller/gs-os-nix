@@ -752,7 +752,8 @@ std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &see
 // first stage, printed as `nbc --tokens` prints rnix's, less the names
 // (docs/COMPILER.md, scripts/front-diff.py).
 constexpr uint32_t SRC_BASE = 0x0D0000, FRONT_OUT = 0x0F0000;
-uint8_t front_mode = 0;                   // 0 run the image; 1 --lex; 2 --cst; 3 --ast
+uint8_t front_mode = 0;                   // 0 run the image; 1 --lex; 2 --cst; 3 --ast; 4 --compile
+const char *compile_out = nullptr;       // --compile's image file
 int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     if (!load_image(vm_path)) return 2;
     sp_floor = VM_STACK_FLOOR;                  // the C VM's stack floor (docs/VM.md)
@@ -815,7 +816,7 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     // mounted at that pathname prefix (docs/GSOS.md); without it there is no
     // GS/OS (vm.h GSOS_ADDR) and those builtins are E_GSOS by name (D26).
     const char *mount = std::getenv("A2MIN_MOUNT");
-    if (front_mode == 3 && !(mount && *mount)) mount = "/h=/";     // --ast's imports (SRC_NAME, below)
+    if (front_mode >= 3 && !(mount && *mount)) mount = "/h=/";     // --ast's and --compile's imports (SRC_NAME, below)
     if (const char *m = mount; m && *m) {
         if (!gsos.mount(m)) { std::fprintf(stderr, "A2MIN_MOUNT must be /prefix=dir\n"); return 2; }
         gsos.rd = [](uint32_t a) { return rd8(a); };
@@ -834,7 +835,7 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
             // resolve against it, wherever they lead -- else its last component
             std::string name(nbc_path);
             char real[4096];
-            if (front_mode == 3 && realpath(nbc_path, real)) name = std::string("/h") + real;
+            if (front_mode >= 3 && realpath(nbc_path, real)) name = std::string("/h") + real;
             else name = name.substr(name.find_last_of('/') + 1);
             if (name.size() > 255) { std::fprintf(stderr, "%s: a pathname of 256 bytes or more\n", nbc_path); return 2; }
             for (size_t i = 0; i < name.size(); ++i) ram[SRC_BASE + 0xFF00 + i] = static_cast<uint8_t>(name[i]);
@@ -978,6 +979,16 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         const uint32_t n = r16at(RESULT, 0);
         std::string out(reinterpret_cast<const char *>(&ram[NBC_BASE]), n);
         std::printf("%s\n", out.c_str());
+        return 0;
+    }
+    if (front_mode == 4) {                  // the image, as nbc -o writes it
+        const uint32_t n = r16at(RESULT, 0);
+        if (compile_out) {
+            std::ofstream f(compile_out, std::ios::binary);
+            f.write(reinterpret_cast<const char *>(&ram[NBC_BASE]), n);
+            if (!f) { std::fprintf(stderr, "cannot write %s\n", compile_out); return 2; }
+        }
+        std::printf("image: %u bytes\n", n);
         return 0;
     }
     std::printf("result: %s\n", fmt_value(ram32(RESULT), 0).c_str());
@@ -1148,6 +1159,11 @@ int main(int argc, char **argv) {
     }
     if (argc >= 4 && std::string(argv[1]) == "--ast") {
         front_mode = 3;
+        return run_nbc(argv[2], argv[3], false);
+    }
+    if (argc >= 4 && std::string(argv[1]) == "--compile") {    // [out.nbc]: the image written there
+        front_mode = 4;
+        compile_out = argc >= 5 ? argv[4] : nullptr;
         return run_nbc(argv[2], argv[3], false);
     }
 
