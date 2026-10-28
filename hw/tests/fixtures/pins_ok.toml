@@ -1,0 +1,19 @@
+part = "LFE5U-25F-6BG256C"
+io_standard = "LVCMOS33"
+
+[ports.clk25]
+dir = "in"
+balls = ["P6"]
+on_module = true
+
+[ports.slot_a]
+dir = "in"
+balls = ["B3", "A3", "C4", "B4", "A4", "C5", "B5", "A5", "C6", "B6", "A6", "C7", "B7", "A7", "C8", "B8"]
+
+[ports.slot_d]
+dir = "inout"
+balls = ["D3", "D4", "D5", "D6", "D7", "D8", "E3", "E4"]
+
+[ports.uart_tx]
+dir = "out"
+balls = ["F3"]

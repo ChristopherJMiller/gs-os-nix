@@ -23,7 +23,8 @@ def test_symbol_libraries_reachable():
         assert (d / f"{lib}.kicad_sym").is_file(), lib
 
 
-def test_skidl_writes_a_netlist(tmp_path):
+def test_skidl_writes_a_netlist(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # SKiDL drops .erc/.log/_sklib.py in the cwd
     from skidl import Part, Net, generate_netlist, reset, set_default_tool, KICAD10
     reset()
     set_default_tool(KICAD10)

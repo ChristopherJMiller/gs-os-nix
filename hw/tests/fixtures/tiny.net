@@ -1,0 +1,37 @@
+(export (version "D")
+  (design (source "tiny.py") (tool "SKiDL (3.0.0)"))
+  (components
+    (comp
+      (ref "R1")
+      (value "1k")
+      (description "Resistor")
+      (footprint "Resistor_SMD:R_0603_1608Metric")
+      (fields
+        (field
+          (name "LCSC") "C21190")
+        (field
+          (name "Datasheet"))
+        (field
+          (name "Note") "has (parens) and \"quotes\""))
+      (libsource (lib "Device") (part "R")))
+    (comp
+      (ref "R2")
+      (value "2k")
+      (footprint "Resistor_SMD:R_0603_1608Metric")
+      (fields
+        (field
+          (name "Datasheet")))
+      (libsource (lib "Device") (part "R"))))
+  (nets
+    (net
+      (code 1)
+      (name "GND")
+      (class "Default")
+      (node (ref "R1") (pin "2") (pintype "PASSIVE"))
+      (node (ref "R2") (pin "2") (pintype "PASSIVE")))
+    (net
+      (code 2)
+      (name "N1")
+      (class "Default")
+      (node (ref "R1") (pin "1") (pintype "PASSIVE"))
+      (node (ref "R2") (pin "1") (pintype "PASSIVE")))))
