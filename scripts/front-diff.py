@@ -3,7 +3,10 @@
 (docs/COMPILER.md, D33). Stage 1, the lexer: `nbc --tokens` prints rnix's
 token stream for a file, `a2min --lex` the VM's (target/vm/c/lex.c), and
 they must be the same -- every token's kind, start and length -- or both
-must refuse the file (it is not UTF-8).
+must refuse the file (it is not UTF-8). Stage 2a, the parser: `nbc --cst`
+prints rnix's syntax tree, `a2min --cst` the VM's (parse.c), node for node
+and token for token, or both refuse the file (rnix reports an error, which
+nbc refuses; the VM's E_PARSE).
 
 Over every .nix in the repository -- the corpus, the fixtures, the
 benchmarks, derivation.nix -- and then over a fuzzer's mutations of them:
@@ -14,7 +17,7 @@ inputs nobody writes on purpose are where a port goes wrong.
 Then it proves it can fail (D14): VMs built from copies of lex.c with a
 bug planted must each be caught.
 
-usage: front-diff.py --nbc NBC --a2min A2MIN --vm CVM.BIN [--fuzz N] [--seed S] [-j J]
+usage: front-diff.py --nbc NBC --a2min A2MIN --vm CVM.BIN [--stage lex|cst] [--fuzz N] [--seed S] [-j J]
        front-diff.py --self-test --nbc NBC --a2min A2MIN [--fuzz N]
 """
 import argparse
@@ -35,33 +38,41 @@ def sources():
     return sorted(out)
 
 
-def host(nbc, path):
-    p = subprocess.run([nbc, "--tokens", path], capture_output=True, text=True)
+# Each stage: nbc's flag and how many numbers a line of its output has to
+# compare (lex drops the kind's name), and a2min's flag.
+STAGES = {"lex": ("--tokens", lambda f: (f[0], f[2], f[3]), "--lex", 3),
+          "cst": ("--cst", lambda f: tuple(f), "--cst", 4)}
+
+
+def host(stage, nbc, path):
+    flag, pick, _, _ = STAGES[stage]
+    p = subprocess.run([nbc, flag, path], capture_output=True, text=True)
     if p.returncode == 2:
         return "refused"
     if p.returncode != 0:
         return f"nbc failed: {p.stderr.strip()[:100]}"
-    return [tuple(int(x) for x in (f[0], f[2], f[3])) for f in (l.split() for l in p.stdout.splitlines())]
+    return [tuple(int(x) for x in pick(f)) for f in (l.split() for l in p.stdout.splitlines())]
 
 
-def target(a2min, vm, path):
-    p = subprocess.run([a2min, "--lex", vm, path], capture_output=True, text=True, timeout=600)
-    toks, err = [], None
+def target(stage, a2min, vm, path):
+    _, _, flag, width = STAGES[stage]
+    p = subprocess.run([a2min, flag, vm, path], capture_output=True, text=True, timeout=600)
+    out, err = [], None
     for l in p.stdout.splitlines():
         f = l.split()
-        if len(f) == 3 and all(x.isdigit() for x in f):
-            toks.append(tuple(int(x) for x in f))
+        if len(f) == width and all(x.isdigit() for x in f):
+            out.append(tuple(int(x) for x in f))
         elif l.startswith("error: "):
             err = l[len("error: "):]
-    if err == "E_UNSUP":
+    if err in ("E_UNSUP", "E_PARSE"):
         return "refused"
     if err:
         return f"error {err}"
-    return toks
+    return out
 
 
 def compare(args, path):
-    h, t = host(args.nbc, path), target(args.a2min, args.vm, path)
+    h, t = host(args.stage, args.nbc, path), target(args.stage, args.a2min, args.vm, path)
     if h == t:
         return None
     if isinstance(h, str) or isinstance(t, str):
@@ -101,6 +112,75 @@ def mutate(rng, text, others):
     return bytes(b)
 
 
+# A generator of Nix, for the parser: the corners mutants seldom reach --
+# every operator, pipes, legacy let, the contextual `or`, __curPos,
+# interpolated paths, the `{` lookahead's patterns -- with trivia at token
+# boundaries.
+TRIVIA = ["", " ", "  ", "\n", " # c\n", " /* c */ ", "\t"]
+BINOPS = ["+", "-", "*", "/", "++", "//", "==", "!=", "<", "<=", ">", ">=", "&&", "||", "->", "|>", "<|"]
+PATTERNS = ["a", "{ }", "{ a, b }", "{ a ? 1, ... }", "{ ... }", "x @ { a }", "{ a }@x", "{a,}", "{a?b,c}",
+            "x @ { a } @ y", "{ a } @ x @ y"]
+LEAVES = ["1", "0", "01", "1.5", ".5", "1e3", "2.5E-1", "http://x.y/z", "a", "b", "x1", "_y", "a-b", "a'",
+          "or", "__curPos", "true", "null", "a or", "./a", "/a/b", "~/c", "a/b", "./a/${x}", "/${y}/z",
+          "<nixpkgs>", "<a/b>", "./a${b}c", "[]", "{}", '"s"']
+STRBITS = ["x", " ", "\\\"", "$", "$$", "''$", "'''", "\n  ", "\\${"]
+
+
+def gen(rng, d=0):
+    def ws():
+        return rng.choice(TRIVIA) if rng.random() < 0.5 else " "
+
+    def attr():
+        r = rng.random()
+        if r < 0.7:
+            return rng.choice(["a", "b", "c", "or", "x-y"])
+        if r < 0.85:
+            return '"s' + rng.choice(["", "${a}"]) + '"'
+        return "${" + gen(rng, d + 1) + "}"
+
+    def path():
+        return ".".join(attr() for _ in range(rng.randint(1, 3)))
+
+    def binds():
+        return "".join(path() + ws() + "=" + ws() + gen(rng, d + 1) + ";" + ws() for _ in range(rng.randint(0, 3)))
+
+    if d > 6:
+        return rng.choice(LEAVES)
+    r = rng.random()
+    if r < 0.12:
+        op = rng.choice(BINOPS + ["?"])
+        rhs = path() if op == "?" else gen(rng, d + 1)
+        return gen(rng, d + 1) + ws() + op + ws() + rhs
+    if r < 0.2:
+        return "(" + gen(rng, d + 1) + ")" + ws() + gen(rng, d + 1)
+    if r < 0.27:
+        return rng.choice(["-", "!", "- -"]) + ws() + gen(rng, d + 1)
+    if r < 0.34:
+        inherit = rng.choice(["", "inherit a b;", "inherit (x) a;", 'inherit "q";'])
+        return rng.choice(["{", "rec {", "let {"]) + ws() + binds() + inherit + ws() + "}"
+    if r < 0.4:
+        return "let" + ws() + binds() + "in" + ws() + gen(rng, d + 1)
+    if r < 0.48:
+        return rng.choice(PATTERNS) + ws() + ":" + ws() + gen(rng, d + 1)
+    if r < 0.54:
+        return ("if" + ws() + gen(rng, d + 1) + ws() + "then" + ws() + gen(rng, d + 1) + ws() + "else" + ws() +
+                gen(rng, d + 1))
+    if r < 0.58:
+        return rng.choice(["with", "assert"]) + ws() + gen(rng, d + 1) + ";" + ws() + gen(rng, d + 1)
+    if r < 0.66:
+        return "[" + ws() + " ".join(gen(rng, d + 1) for _ in range(rng.randint(0, 3))) + ws() + "]"
+    if r < 0.72:
+        default = (ws() + "or" + ws() + gen(rng, d + 1)) if rng.random() < 0.4 else ""
+        return gen(rng, d + 1) + "." + path() + default
+    if r < 0.78:
+        q = rng.choice(['"', "''"])
+        body = "".join(rng.choice(STRBITS + ["${" + gen(rng, d + 1) + "}"]) for _ in range(rng.randint(0, 4)))
+        return q + body + q
+    if r < 0.86:
+        return gen(rng, d + 1) + ws() + gen(rng, d + 1)
+    return rng.choice(LEAVES)
+
+
 def run(args, quiet=False):
     files = sources()
     bad = []
@@ -119,7 +199,10 @@ def run(args, quiet=False):
             for k in range(args.fuzz):
                 p = os.path.join(tmp, f"m{k}.nix")
                 with open(p, "wb") as f:
-                    f.write(mutate(rng, rng.choice(texts), texts))
+                    if rng.random() < 0.3:
+                        f.write(gen(rng).encode())
+                    else:
+                        f.write(mutate(rng, rng.choice(texts), texts))
                 mutants.append(p)
             fbad = []
             with ThreadPoolExecutor(args.j) as ex:
@@ -141,8 +224,19 @@ def run(args, quiet=False):
 
 
 def self_test(args):
-    """Each plant is a real way a port of rnix's tokenizer goes wrong."""
+    """Each plant is a real way a port of rnix's tokenizer or parser goes wrong."""
     plants = [
+        ("- is right-associative", "parse.c",
+         "static uint16_t parse_add(void) { return parse_left_assoc(parse_mul, S_ADD); }",
+         "static uint16_t parse_add(void) { return parse_right_assoc(parse_mul, S_ADD); }"),
+        ("{ a ? 1 } looks like a set, not a pattern", "parse.c",
+         "(p1 == TK_COMMA || p1 == TK_QUESTION || p1 == TK_R_BRACE)", "(p1 == TK_COMMA || p1 == TK_R_BRACE)"),
+        ("a checkpoint leaves its trivia outside", "parse.c",
+         "static uint16_t checkpoint(void)\n{\n    eat_trivia();", "static uint16_t checkpoint(void)\n{\n    tpeek();"),
+        ("a b or c is not (a (b or)) c", "parse.c",
+         "    } else if (k == TK_OR) {\n        /* \"a b or c\"", "    } else if (0) {\n        /* \"a b or c\""),
+        ("x @ { a } @ y is no error", "parse.c",
+         "        if (bound) parse_err();                     /* UnexpectedDoubleBind */\n", ""),
         ("NBSP is not whitespace", "lex.c", "(b1 == 0x85 || b1 == 0xA0) ? 2 : 0", "(b1 == 0x85) ? 2 : 0"),
         ("a path may contain //", "lex.c",
          "            if (src[i] == '/' && src[i + 1] == '/') return TK_ERROR;   /* contains \"//\" */", ""),
@@ -169,7 +263,8 @@ def self_test(args):
             r = subprocess.run(["orcabuild", "-o", vm, "-O", *srcs], capture_output=True, text=True)
             if r.returncode != 0:
                 print(f"  {name:<44} DID NOT BUILD"); print(r.stdout[-600:], r.stderr[-600:]); ok = False; continue
-            caught = run(argparse.Namespace(**{**vars(args), "vm": vm}), quiet=True)
+            stage = "lex" if f == "lex.c" else "cst"
+            caught = run(argparse.Namespace(**{**vars(args), "vm": vm, "stage": stage}), quiet=True)
             print(f"  {name:<44} {'caught' if caught else 'SURVIVED -- the diff is decorative'}")
             ok &= bool(caught)
     finally:
@@ -182,24 +277,25 @@ def main():
     ap.add_argument("--nbc", required=True)
     ap.add_argument("--a2min", required=True)
     ap.add_argument("--vm")
+    ap.add_argument("--stage", choices=sorted(STAGES), default="lex")
     ap.add_argument("--fuzz", type=int, default=0)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("-j", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     if args.self_test:
-        print("=== front-diff self-test (D14): planted lexer bugs ===")
+        print("=== front-diff self-test (D14): planted lexer and parser bugs ===")
         ok = self_test(args)
         print("FRONT-DIFF SELF-TEST OK" if ok else "FRONT-DIFF SELF-TEST FAILED")
         return 0 if ok else 1
-    print("=== front-diff: stage 1, the lexer, against rnix's ===")
+    print(f"=== front-diff: stage {'1, the lexer' if args.stage == 'lex' else '2a, the parser'}, against rnix's ===")
     bad = run(args)
     for b in bad[:20]:
         print("  DIFFERS:", b)
     if bad:
         print(f"FRONT-DIFF FAILED: {len(bad)} input(s) differ")
         return 1
-    print("FRONT-DIFF OK: every token the same")
+    print(f"FRONT-DIFF OK ({args.stage}): every {'token' if args.stage == 'lex' else 'node and token'} the same")
     return 0
 
 

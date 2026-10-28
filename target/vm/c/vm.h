@@ -80,8 +80,10 @@
 #define GSOS_ADDR        0x0334UL   /* a2min sets it: GS/OS answers the file calls (GSOS.md);
                                        0, and the builtins that need it are E_GSOS by name */
 #define FRONT_MODE_ADDR  0x0336UL   /* a2min sets it: 0 run the image at IMAGE_BASE; FRONT_LEX
-                                       the source's tokens (COMPILER.md, a2min --lex) */
+                                       the source's tokens, FRONT_CST its syntax tree
+                                       (COMPILER.md, a2min --lex and --cst) */
 #define FRONT_LEX        1
+#define FRONT_CST        2
 #define SRC_LEN_ADDR     0x0338UL   /* a2min sets it: the source's length (u16), at SRC_BASE */
 #define MATURE_STRESS_ADDR 0x0335UL /* a2min sets it: k, and every k-th promotion is followed
                                        by a collection of mature space, needed or not -- with

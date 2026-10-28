@@ -20,3 +20,4 @@ toml.c
 hashes.c
 gsos.c
 lex.c
+parse.c

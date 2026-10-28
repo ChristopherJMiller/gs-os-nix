@@ -508,9 +508,10 @@
           '';
 
         # The on-target compiler against nbc, stage by stage (docs/COMPILER.md,
-        # D33). Stage 1, the lexer: every .nix in the repository and 20,000
-        # mutants of them, every token rnix's; then four planted lexer bugs,
-        # each of which must be caught.
+        # D33): the lexer's tokens and the parser's syntax tree, rnix's, for
+        # every .nix in the repository and 20,000 mutants and generated
+        # programs each; then planted lexer and parser bugs, each of which
+        # must be caught.
         front = pkgs.runCommandCC "check-front"
           { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ours.nbc ]; }
           ''
@@ -522,9 +523,12 @@
               -Wall -Wno-DECLFILENAME \
               --Mdir build -o a2min \
               rtl/a2nix_card.v sim/a2min.cpp
-            python3 scripts/front-diff.py --nbc nbc --a2min ./build/a2min --vm ${ours.cvm}/cvm.bin \
+            python3 scripts/front-diff.py --stage lex --nbc nbc --a2min ./build/a2min --vm ${ours.cvm}/cvm.bin \
               --fuzz 20000 | tee "$out"
-            grep -q "^FRONT-DIFF OK" "$out"
+            grep -q "^FRONT-DIFF OK (lex)" "$out"
+            python3 scripts/front-diff.py --stage cst --nbc nbc --a2min ./build/a2min --vm ${ours.cvm}/cvm.bin \
+              --fuzz 20000 | tee -a "$out"
+            grep -q "^FRONT-DIFF OK (cst)" "$out"
             python3 scripts/front-diff.py --self-test --nbc nbc --a2min ./build/a2min --fuzz 2000 | tee -a "$out"
             grep -q "^FRONT-DIFF SELF-TEST OK" "$out"
           '';

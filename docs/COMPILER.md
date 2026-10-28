@@ -14,7 +14,8 @@ compiled by ORCA/C into code banks of their own, as the VM is:
 | Stage | Host source | Target | Gate: diffed against the host, stage by stage |
 |---|---|---|---|
 | 1. lexer | rnix 0.14.0 `tokenizer.rs` (566 lines) | `lex.c` | every token: kind, start, length |
-| 2. parser and lowering | rnix `parser.rs` (834) and `front.rs` (1,116) | `parse.c` | the AST, as an S-expression both sides print |
+| 2a. parser | rnix `parser.rs` (834) | `parse.c` | rnix's syntax tree: every node and token, in preorder |
+| 2b. lowering | rnix's typed accessors (`ast/*.rs`) and `front.rs` (1,116) | `lower.c` | the AST, as an S-expression both sides print |
 | 3. compiler and image | `compiler.rs` (1,220) and `nbc.rs` (294) | `compile.c` | the `.nbc` image, byte for byte |
 | 4. M3 | -- | `repl.c` | a typed line evaluates and the VM prints it |
 
@@ -26,12 +27,16 @@ judge of what the bytecode means. Where rnix differs from Nix's own parser,
 the port follows rnix; such a difference is a bug in the oracle, reported
 there, not fixed here first.
 
-**Stage 2 builds `nbc`'s AST directly.** rnix builds a lossless syntax tree
-(trivia, error nodes) that `front.rs` then walks; the target has no use for
-the tree, so its parser follows rnix's grammar -- precedence, associativity,
-the contextual `or`, every error case -- but makes `ast::Expr` nodes as
-`front.rs` would, its desugarings included. The AST dump is what keeps that
-merge honest.
+**Stage 2 builds rnix's tree, then lowers it** (revised 2026-10-28, before
+its code: the first plan merged the parser into the lowering, building
+`ast::Expr` nodes directly). `front.rs` does not read a parse; it reads
+rnix's syntax tree through rnix's typed accessors -- "the first child node
+that casts to an expression", "the first token of this kind" -- and those
+accessors are what decide what an error-free but odd tree means: a `(` whose
+closing token is whatever followed the expression, a path with whitespace
+inside its interpolation. Merging would mean re-deriving each accessor's
+answer for every such tree by hand; building the same tree and porting the
+accessors over it is mechanical, and each half has a diff of its own.
 
 ## Where it runs
 
@@ -92,6 +97,47 @@ instructions: a few calls a byte, `at()` and `next()`, each with ORCA/C's
 MHz. Bank 0 +42: the lexer's four statics and `vm_entry`'s mode test (+40
 cycles a run). Not yet the parser's: the token stream is pulled one token at
 a time, so stage 2 needs no buffer of them.
+
+## Stage 2a: the parser
+
+A function-for-function port of rnix 0.14.0's `parser.rs` over rowan's
+builder (a stack of finished children, a stack of open parents, checkpoints
+that open a parent at a child count): the same nodes, tokens and trivia in
+the same places -- rnix's token buffer and trivia buffer included, and its
+`{` lookahead, which reads straight from the lexer after whatever the buffer
+holds. **One deliberate difference:** rnix recovers from an error and
+parses on, and nbc refuses anything with an error, so the tree after one
+never matters; the port stops at the first, `E_PARSE`, having taken the same
+steps up to it -- so the two agree on whether there is an error at all, and
+on the whole tree when there is not. Error nodes are never built.
+
+The gate: `nbc --cst` prints rnix's tree in preorder (depth, kind, start,
+length a line) or refuses; `a2min --cst` the VM's. The fuzzer adds, to the
+mutants, a generator of Nix that reaches the grammar's corners -- every
+operator, pipes, legacy `let`, the contextual `or`, `__curPos`, interpolated
+paths, the lookahead's six patterns, patterns bound twice -- with trivia at
+token boundaries; 37% of what it writes parses, against 32% of mutants.
+Five planted parser bugs must be caught (`-` right-associative, `{ a ? 1 }`
+taken for a set, a checkpoint that leaves its trivia outside, `a b or c` not
+`((a (b or)) c)`, a pattern bound twice accepted).
+
+**Done** (2026-10-28): `parse.c`, ~7 KB of code in bank 9. All 721 files
+give rnix's tree on the first run, and 100,000 mutants and generated
+programs over five seeds; every plant caught (the double bind only once the
+generator wrote such patterns: nothing in the corpus does). Lexing and
+parsing together, ~1,430-1,640 cycles a byte: `derivation.nix` in 2.8M
+cycles, about a second at 2.8 MHz. Bank 0 +16, the parser's eight statics;
+its token sets are code, not tables, and the dispatch to each stage is in
+"front" too (`front_run`), so that a stage costs `vm_entry` nothing.
+
+**How deep it nests**, measured: 511 `let`s or `else if`s -- rnix's own limit
+of 512 levels of `parse_expr`, which the port keeps -- and 1,022 nested
+lists, where rnix has none (the dump's walk stack ends it). But only **80**
+parentheses or lambda bodies: an expression nested through all fourteen
+precedence levels costs ~240 bytes of C stack a level, and the C stack ends
+it (`E_NOMEM`) where rnix goes on to 511. Precedence climbing -- one
+function for the binary operators instead of fourteen -- would cut that
+several-fold; the diff would hold it to rnix's trees.
 
 ## Later stages
 

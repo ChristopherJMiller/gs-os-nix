@@ -582,7 +582,9 @@ TOML, or holds a date, a time or a NUL: Nix's "while parsing TOML", which
 `tryEval` does not catch), `E_FILE $14` (GS/OS could not give a file a
 builtin names -- not there, not readable, a NUL in its contents, a symlink
 loop -- Nix's I/O errors and "cannot be represented as a Nix string", none of
-which `tryEval` catches; [GSOS.md](GSOS.md)). The harness (`a2min --run-nbc`) prints the value in
+which `tryEval` catches; [GSOS.md](GSOS.md)), `E_PARSE $15` (the on-target
+compiler's: the source has an error rnix's parser reports, so nbc refuses it
+too; [COMPILER.md](COMPILER.md)). The harness (`a2min --run-nbc`) prints the value in
 Nix syntax (`42`, `true`, `null`) so the scoreboard can compare it with the corpus's
 `.exp` files, and prints `error: <name>` otherwise.
 

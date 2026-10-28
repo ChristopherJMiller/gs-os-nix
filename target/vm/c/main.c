@@ -67,8 +67,8 @@ void vm_entry(void)
     card_find();
     memcpy((void *)(IMAGE_BASE + APPLY_CODE_OFF), apply_code, sizeof apply_code);
     if (setjmp(top_jb) == 0) {
-        if (*(volatile uint8_t *)FRONT_MODE_ADDR == FRONT_LEX) {
-            lex_dump();                         /* the on-target compiler's first stage */
+        if (*(volatile uint8_t *)FRONT_MODE_ADDR) {
+            front_run();                        /* the on-target compiler's stages: in "front" */
         } else {
             load();                             /* its constants are roots, promoted like anything */
             run();                              /* the entry chunk; RETURN brings us back */

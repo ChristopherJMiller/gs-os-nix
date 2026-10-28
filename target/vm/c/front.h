@@ -22,6 +22,21 @@ enum tok {
     TK_EOF = 0xFF                       /* not rnix's: the end, where its iterator stops */
 };
 
+/* and its node kinds, after the tokens */
+enum node {
+    NODE_APPLY = TK_WITH + 1, NODE_ASSERT, NODE_ATTR_SET, NODE_ATTRPATH, NODE_ATTRPATH_VALUE,
+    NODE_BIN_OP, NODE_CUR_POS, NODE_DYNAMIC, NODE_ERROR, NODE_HAS_ATTR, NODE_IDENT,
+    NODE_IDENT_PARAM, NODE_IF_ELSE, NODE_INHERIT, NODE_INHERIT_FROM, NODE_INTERPOL, NODE_LAMBDA,
+    NODE_LEGACY_LET, NODE_LET_IN, NODE_LIST, NODE_LITERAL, NODE_PAREN, NODE_PAT_BIND,
+    NODE_PAT_ENTRY, NODE_PATTERN, NODE_PATH_ABS, NODE_PATH_HOME, NODE_PATH_REL,
+    NODE_PATH_SEARCH, NODE_ROOT, NODE_SELECT, NODE_STRING, NODE_UNARY_OP, NODE_WITH
+};
+#define NODE_FIRST NODE_APPLY
+
+/* A tree element: a token (a = its start, b = its length) or a node (a =
+ * its first child in the store, b = how many). Six bytes. */
+struct el { uint8_t kind, pad; uint16_t a, b; };
+
 /* --- lex.c ----------------------------------------------------------------------- */
 /* The source is n bytes at `text`, which must be UTF-8 (E_UNSUP otherwise, as
  * nbc refuses it). Each lex_next() is one rnix token: its kind, and it spans
@@ -33,5 +48,18 @@ extern uint16_t lex_off;
 /* --lex (a2min): every token of the source at SRC_BASE, as (kind, length)
  * records at FRONT_OUT, their count at RESULT_ADDR. */
 void lex_dump(void);
+
+/* --- parse.c ----------------------------------------------------------------------- */
+/* rnix's syntax tree of the source; the first error rnix would report is
+ * E_PARSE. Then the root and its descendants: */
+void parse_file(const uint8_t *text, uint16_t n);
+const struct el *cst_root(void);
+const struct el *cst_child(const struct el *node, uint16_t i);
+/* --cst (a2min): the tree in preorder, as nbc --cst prints rnix's */
+void cst_dump(void);
+
+/* The stage FRONT_MODE_ADDR names (vm_entry's one test of it: the dispatch
+ * is here, in "front", so that a stage costs bank 0 nothing) */
+void front_run(void);
 
 #endif

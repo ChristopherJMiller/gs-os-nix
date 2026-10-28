@@ -752,7 +752,7 @@ std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &see
 // first stage, printed as `nbc --tokens` prints rnix's, less the names
 // (docs/COMPILER.md, scripts/front-diff.py).
 constexpr uint32_t SRC_BASE = 0x0D0000, FRONT_OUT = 0x0F0000;
-uint8_t front_mode = 0;                   // 0 run the image; 1 --lex
+uint8_t front_mode = 0;                   // 0 run the image; 1 --lex; 2 --cst
 int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     if (!load_image(vm_path)) return 2;
     sp_floor = VM_STACK_FLOOR;                  // the C VM's stack floor (docs/VM.md)
@@ -911,7 +911,8 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
                                        "E_INFREC", "E_NOMEM", "E_BADNBC", "E_NOCARD",
                                        "E_ASSERT", "E_THROW", "E_ABORT", "E_NOATTR",
                                        "E_INDEX", "E_NOVAR", "E_UNSUP", "E_OVERFLOW",
-                                       "E_DUPATTR", "E_REGEX", "E_GSOS", "E_TOML", "E_FILE" };
+                                       "E_DUPATTR", "E_REGEX", "E_GSOS", "E_TOML", "E_FILE",
+                                       "E_PARSE" };
         const uint8_t code = ram[RESULT_STAT + 1];
         const char *name = code < sizeof(names) / sizeof(names[0]) ? names[code] : "E_?";
         cpu.print_trace(stdout);
@@ -944,6 +945,18 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
             std::snprintf(line, sizeof line, "%u %u %u\n", ram[FRONT_OUT + 3 * i], start, len);
             out += line;
             start += len;
+        }
+        std::fputs(out.c_str(), stdout);
+        return 0;
+    }
+    if (front_mode == 2) {                  // the tree in preorder: depth, kind, start, length
+        const uint32_t n = r16at(RESULT, 0);
+        std::string out;
+        char line[40];
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint32_t r = NBC_BASE + 7 * i;
+            std::snprintf(line, sizeof line, "%u %u %u %u\n", r16at(r, 0), ram[r + 2], r16at(r, 3), r16at(r, 5));
+            out += line;
         }
         std::fputs(out.c_str(), stdout);
         return 0;
@@ -1108,6 +1121,10 @@ int main(int argc, char **argv) {
         return run_nbc(argv[2], argv[3], true);
     if (argc >= 4 && std::string(argv[1]) == "--lex") {
         front_mode = 1;
+        return run_nbc(argv[2], argv[3], false);
+    }
+    if (argc >= 4 && std::string(argv[1]) == "--cst") {
+        front_mode = 2;
         return run_nbc(argv[2], argv[3], false);
     }
 

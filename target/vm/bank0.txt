@@ -1,11 +1,13 @@
 # Bank 0 of the VM (scripts/bank-gate.py): its size, exactly, the runtime
 # routines allowed in it, and every other symbol in it with its size.
 # Rewritten by `just bank-gate --update`.
-bank0 16341
+bank0 16357
 lib longjmp memcmp memcpy memset memset_explicit setjmp ~CUMUL2 ~LSHR4 ~LSHR8 ~SCMP8 ~SHL4 ~SHL8 ~SSHIFTRIGHT ~UDIV2 ~UDIV4 ~UDIV8 ~UMOD4 ~UMUL8
 sym K 256
 sym apply_code 12
 sym badnbc 9
+sym bhead 2
+sym bn 2
 sym card_end 4
 sym card_next 4
 sym catch_n 2
@@ -13,9 +15,11 @@ sym catches 288
 sym chunk_info 1024
 sym cnext 2
 sym const_alloc 107
+sym consumed 2
 sym csp 2
 sym ctab 2
 sym ctab_pool 2048
+sym depth 2
 sym diag_write 88
 sym drv_table 4
 sym env 4
@@ -43,12 +47,14 @@ sym obj_false 4
 sym obj_null 4
 sym obj_true 4
 sym pc 4
+sym pn 2
 sym rd16 48
 sym rs_n 2
 sym rsp 2
 sym rstack 1280
 sym slen 2
 sym slot_x 2
+sym sn 2
 sym src 4
 sym str_bool 4
 sym str_bool_s 20
@@ -92,14 +98,16 @@ sym str_value 4
 sym str_wrong 4
 sym str_wrong_s 20
 sym success_s 16
+sym tn 2
 sym top_jb 8
 sym true_s 8
 sym type_err 9
 sym value_s 16
-sym vm_entry 427
+sym vm_entry 426
 sym vsp 2
 sym vstack 4096
 sym win_lru 64
 sym win_ring 2
 sym wins 1024
+sym wn 2
 sym xbase 4
