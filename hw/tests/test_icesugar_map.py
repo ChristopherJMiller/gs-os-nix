@@ -98,6 +98,47 @@ def test_known_pins(m):
         module.pin_for_ball(m, "B9")
 
 
+def site_names(c, max_row, max_col):
+    """ECP5 site names of a package ball from its (row, col, pio).
+
+    Left/right edges are numbered by row. Top/bottom edges are numbered by col,
+    except that Lattice names the second PIO pair of a 4-PIO group C/D at the
+    group's number while Trellis puts it two columns lower as A/B: PT62D is
+    Trellis (col 60, B). Both forms are accepted; each is one specific name.
+    """
+    if c["col"] == 0:
+        return {f"PL{c['row']}{c['pio']}"}
+    if c["col"] == max_col:
+        return {f"PR{c['row']}{c['pio']}"}
+    for edge, hit in (("T", c["row"] == 0), ("B", c["row"] == max_row)):
+        if hit:
+            alias = "CD"["AB".index(c["pio"])]
+            return {f"P{edge}{c['col']}{c['pio']}", f"P{edge}{c['col'] + 2}{alias}"}
+    raise ValueError(f"{c} is not on an edge")
+
+
+def _extent(iodb):
+    p = iodb["packages"]["CABGA256"]
+    return p, max(v["row"] for v in p.values()), max(v["col"] for v in p.values())
+
+
+def test_site_name_convention(iodb):
+    p, mr, mc = _extent(iodb)
+    for ball, label in {"C2": "PL5B", "E13": "PT62B", "P13": "PR41A", "R8": "PB13A"}.items():
+        assert label in site_names(p[ball], mr, mc)
+    # the C/D alias on the top edge, seen on the schematic's bank sheet
+    assert "PT62D" in site_names(p["C13"], mr, mc)
+    assert "PT58D" in site_names(p["C12"], mr, mc)
+
+
+def test_pin_label_ball_agree(m, iodb):
+    """pin -> schematic label (data) must equal a label derived from the ball."""
+    p, mr, mc = _extent(iodb)
+    assert set(m.pio) == set(m.balls)
+    for pin, ball in m.balls.items():
+        assert m.pio[pin] in site_names(p[ball], mr, mc), f"pin {pin}: {ball} vs {m.pio[pin]}"
+
+
 def test_notes_and_source(m):
     raw = TOML.read_text()
     assert "087e48d9e0b0a0168ce165a961cba306335c4cf2" in raw

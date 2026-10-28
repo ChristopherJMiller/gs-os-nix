@@ -11,6 +11,7 @@ class ModuleMap:
     rail_role: dict[str, str]
     balls: dict[int, str]
     bank_vccio: dict[int, float]
+    pio: dict[int, str] = field(default_factory=dict)  # pin -> schematic PIO label
     notes: dict[str, str] = field(default_factory=dict)
 
 
@@ -21,6 +22,7 @@ def load(path: Path) -> ModuleMap:
         rail_role=dict(d["rail_role"]),
         balls={int(k): v for k, v in d["balls"].items()},
         bank_vccio={int(k): float(v) for k, v in d["bank_vccio"].items()},
+        pio={int(k): v for k, v in d.get("pio", {}).items()},
         notes=dict(d.get("notes", {})),
     )
 
