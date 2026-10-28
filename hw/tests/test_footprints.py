@@ -155,6 +155,13 @@ def test_sodimm_not_mirrored(sodimm):
     assert all((p.y - y0) * (sig["2"].y - y0) > 0 for p in pegs)
     assert (sig["1"].y - y0) * (sig["2"].y - y0) < 0
     assert abs((sig["2"].x - sig["1"].x) - g.SODIMM_PITCH_MM / 2) <= TOL
+    # The checks above are all relative, so a mirror image passes them. Handedness:
+    # looking down on the mounting side, walking from pin 1 to pin 199, the even
+    # row is on the left, as sheets 1 and 2 draw it. In KiCad's y-down frame that
+    # cross product is negative; a rotation keeps its sign, a mirror flips it.
+    ax, ay = sig["199"].x - sig["1"].x, sig["199"].y - sig["1"].y
+    bx, by = sig["2"].x - sig["1"].x, sig["2"].y - sig["1"].y
+    assert ax * by - ay * bx < 0, "land pattern is mirrored"
 
 
 def test_library_is_regenerated(tmp_path):
