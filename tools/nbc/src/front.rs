@@ -13,6 +13,7 @@
 
 use crate::ast::{unsupported, BinOp, Expr, Key, Param, Pos, StrPart, Unsupported};
 use rnix::ast::{self, AstNode, BinOpKind, HasEntry, LiteralKind, UnaryOpKind};
+use rnix::SyntaxKind;
 use std::path::{Path, PathBuf};
 
 /// Where relative and home path VALUES resolve: the convention Nix's own
@@ -205,6 +206,13 @@ impl<'a> Lower<'a> {
             }
         }
         Ok(Expr::PathInterp(out))
+    }
+
+    /// Whether a node has whitespace or a comment among its own tokens.
+    fn has_trivia(node: &impl AstNode) -> bool {
+        node.syntax().children_with_tokens().any(|c| {
+            c.as_token().is_some_and(|t| matches!(t.kind(), SyntaxKind::TOKEN_WHITESPACE | SyntaxKind::TOKEN_COMMENT))
+        })
     }
 
     fn refuse<T>(&self, node: &impl AstNode, what: &str) -> Result<T, Unsupported> {
@@ -607,6 +615,13 @@ impl<'a> Lower<'a> {
             // A path VALUE resolves against the fixture convention (FIXTURE_PWD,
             // FIXTURE_HOME), never the disk: the expected outputs are written
             // that way, and a fixture must not carry this machine's paths (D7).
+            // rnix's parser can leave whitespace inside an interpolated path
+            // (`./a ${b}`: peek() skipped it), and its parts() then panics on
+            // the whitespace token. Nix rejects the input: refused, by name,
+            // before parts() is called (docs/COMPILER.md "Stage 2b").
+            ast::Expr::PathAbs(_) | ast::Expr::PathRel(_) | ast::Expr::PathHome(_) if Self::has_trivia(e) => {
+                self.refuse(e, "whitespace inside an interpolated path")
+            }
             ast::Expr::PathAbs(n) if n.parts().len() > 1 => self.path_interp(n.parts(), PathKind::Abs),
             ast::Expr::PathRel(n) if n.parts().len() > 1 => self.path_interp(n.parts(), PathKind::Rel),
             ast::Expr::PathHome(n) if n.parts().len() > 1 => self.path_interp(n.parts(), PathKind::Home),

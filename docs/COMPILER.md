@@ -139,6 +139,70 @@ it (`E_NOMEM`) where rnix goes on to 511. Precedence climbing -- one
 function for the binary operators instead of fourteen -- would cut that
 several-fold; the diff would hold it to rnix's trees.
 
+## Stage 2b: the lowering
+
+`front.rs` and the rnix accessors it calls, over the tree stage 2a builds:
+`Expr` nodes as `ast.rs` defines them, in an arena in the front end's banks
+that lives for one compilation. What the port has to carry over exactly:
+
+- **The accessors' answers.** `nth(parent, n)` -- the n-th child *node*
+  that casts to the wanted kind (`Expr` covers 24 node kinds, `NODE_ERROR`
+  and `NODE_ROOT` among them); `token_u` -- the first child token of a
+  kind. Every `None` they can give is a refusal `front.rs` names.
+- **Strings**: `normalized_parts`, rnix's two passes over an indented
+  string (the least indentation of any line, a first line of spaces
+  dropped, a last line of spaces dropped) and `unescape`, with every quirk
+  of both -- `''\x` and a lone `'` included.
+- **Positions**: `pos()` is the line, and the column in characters, of a
+  node's first byte. `front.rs` counts from the start of the file each
+  time; the port keeps a table of line starts, built once a file.
+- **Numbers**: an integer literal past `i64` is refused; a float literal is
+  `f_strtod`'s double (correctly rounded, as Rust's parse is) and refused
+  where Nix says "invalid float": infinite, or below 2^-1022 but for the
+  exact decimal comparison with the midpoint under it that `float_literal`
+  makes.
+- **Imports**: `import ./f.nix` reads the file then and there (through
+  GS/OS on the target: `gsos_import`, every link resolved as `canonicalize`
+  resolves them, a directory's `default.nix`) and lowers it into an `Import`
+  node keyed by its canonical path; a file that is not there, not a file or
+  not UTF-8 is the `import` primop, applied at run time, as nbc compiles it.
+  The importer's tree stays while the imported file's is built after it
+  (`parse_file_at`, `cst_mark`), and its source after the importer's in the
+  source bank. The dump prints the key relative to the compiled file's
+  directory, `..` and all, so that a host path and a GS/OS pathname
+  compare; `a2min --ast` mounts the host's root at `/h` and names the file
+  `/h` and its real path, so every import the host can reach, it can.
+
+**One rnix bug** the port does not copy: its parser can leave whitespace
+inside a path node -- `./a ${b}`, where `peek()` skipped the space before
+the interpolation -- and its own `extract_path_parts` then panics on the
+whitespace token (nbc exits 101). Nix rejects the input. nbc is changed to
+refuse such a tree by name before calling `parts()`, and the target
+refuses it the same way.
+
+The gate: `nbc --ast` prints the lowered `Expr` as an S-expression -- a node
+a parenthesis, names and string parts quoted with every byte outside
+printable ASCII, `"` and `\` as `\xNN`, positions as `L:C` -- and
+`a2min --ast` the target's, through a printer of its own. They must be
+equal, or both refuse. Six planted lowering bugs must be caught (an indented
+string keeping a space too many, a merged `rec` set's `inherit` left an
+`inherit`, a column in bytes, a float under the midpoint taken, an import
+that cannot be read refused, a directory import without its
+`default.nix`); the generator writes the floats at Nix's edges for them.
+
+**Done** (2026-10-28): `lower.c`, ~33 KB of code in bank 9, the AST in an
+arena in banks 1 and 2 (the nursery and the stage, which nothing uses
+before the image runs), the compiler's scratch and import chain in bank 12
+(code now stops below it). All 721 files give nbc's AST on the first run
+that had imports -- 695 before them, the other 26 all importing -- and
+60,000 mutants and generated programs over three seeds, of which nbc lowers
+about 30%. Lexing, parsing and lowering `derivation.nix`: 5.1M cycles, the
+lowering 2.3M of them, about 1.8 s at 2.8 MHz. Bank 0 +29, the lowering's
+statics. Lowering recurses as the AST nests, ~55 bytes of C stack a level:
+`else if` chains, `let` chains and lists now end at ~320, where the parser
+alone went to 511 and 1,022 (lambdas and parentheses still end at the
+parser's 80).
+
 ## Later stages
 
 Each is designed here before its code, when it starts. What is known

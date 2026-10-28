@@ -21,3 +21,4 @@ hashes.c
 gsos.c
 lex.c
 parse.c
+lower.c

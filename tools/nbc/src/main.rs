@@ -5,6 +5,7 @@
 //!   nbc --tokens <in.nix>         rnix's tokens: the on-target lexer's oracle
 //!                                 (docs/COMPILER.md "Stage 1")
 //!   nbc --cst <in.nix>            rnix's syntax tree: the on-target parser's
+//!   nbc --ast <in.nix>            the lowered AST: the on-target lowering's
 //!
 //! Exit status 2 means "outside the supported subset" -- the scoreboard counts
 //! that as UNSUPPORTED rather than as a VM failure. Per docs/DECISIONS.md D7 this
@@ -16,11 +17,12 @@ mod compiler;
 mod front;
 mod nbc;
 mod opcodes;
+mod sexp;
 
 use std::process::ExitCode;
 
 fn usage() -> ExitCode {
-    eprintln!("usage: nbc <in.nix> -o <out.nbc>\n       nbc --dump <file.nbc>\n       nbc --tokens <in.nix>\n       nbc --cst <in.nix>");
+    eprintln!("usage: nbc <in.nix> -o <out.nbc>\n       nbc --dump <file.nbc>\n       nbc --tokens <in.nix>\n       nbc --cst <in.nix>\n       nbc --ast <in.nix>");
     ExitCode::from(1)
 }
 
@@ -90,11 +92,30 @@ fn cst(path: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The lowered AST as an S-expression (sexp.rs): what `a2min --ast` prints
+/// for the on-target lowering. A refusal, of any kind, is exit 2.
+fn ast_dump(path: &str) -> ExitCode {
+    let p = std::path::Path::new(path);
+    match front::parse_file(p) {
+        Ok(e) => {
+            let here = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+            let base = here.parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+            println!("{}", sexp::sexp(&e, &base));
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("nbc: {path}:{e}");
+            ExitCode::from(2)
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [flag, path] if flag == "--tokens" => tokens(path),
         [flag, path] if flag == "--cst" => cst(path),
+        [flag, path] if flag == "--ast" => ast_dump(path),
         [flag, path] if flag == "--dump" => {
             let bytes = match std::fs::read(path) {
                 Ok(b) => b,

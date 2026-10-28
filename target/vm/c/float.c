@@ -888,6 +888,43 @@ uint64_t f_strtod(const char *s, uint16_t n)
     return norm_round_pack(sign, 1084 - sh, q | (nd != 0));
 }
 
+/* Nix's "invalid float" (the on-target compiler, COMPILER.md "Stage 2b"): a
+ * literal whose double is 2^-1022 exactly is valid only if its decimal value
+ * is at least the midpoint under it, 2^-1022 - 2^-1076 -- strtod sets errno
+ * below that, as nbc's float_literal measures. D * 10^e10 >= (2^54 - 1) *
+ * 2^-1076 is D * 2^1076 >= (2^54 - 1) * 10^-e10, both integers. The digits as
+ * f_strtod reads them, 800 kept. Call with FLOAT_STACK free. */
+int f_at_least_mid(const char *s, uint16_t n)
+{
+    uint16_t d[DL], t[DL], nd = 0, nt, i = 0, kept = 0, started = 0;
+    int16_t e10 = 0, ex = 0, eneg = 0;
+    for (; i < n && s[i] >= '0' && s[i] <= '9'; ++i) {
+        if (!started && s[i] == '0') continue;
+        started = 1;
+        if (kept < 800) { nd = bn_mul10_add(d, nd, (uint16_t)(s[i] - '0')); ++kept; }
+        else e10 = sat_add(e10, 1);
+    }
+    if (i < n && s[i] == '.')
+        for (++i; i < n && s[i] >= '0' && s[i] <= '9'; ++i) {
+            if (!started && s[i] == '0') { e10 = sat_add(e10, -1); continue; }
+            started = 1;
+            if (kept < 800) { nd = bn_mul10_add(d, nd, (uint16_t)(s[i] - '0')); ++kept; e10 = sat_add(e10, -1); }
+        }
+    if (i < n && (s[i] == 'e' || s[i] == 'E')) {
+        ++i;
+        if (i < n && (s[i] == '+' || s[i] == '-')) { eneg = s[i] == '-'; ++i; }
+        for (; i < n && s[i] >= '0' && s[i] <= '9'; ++i)
+            ex = ex <= 1999 ? ex * 10 + (s[i] - '0') : 20000;
+        e10 = sat_add(e10, eneg ? -ex : ex);
+    }
+    if (nd == 0) return 0;
+    if (e10 >= 0) return 1;                     /* at least 1 */
+    nd = bn_shl(d, nd, 1076);
+    t[0] = 0xFFFF; t[1] = 0xFFFF; t[2] = 0xFFFF; t[3] = 0x003F;   /* 2^54 - 1 */
+    nt = bn_pow10(t, 4, (uint16_t)-e10);
+    return bn_ge(d, nd, t, nt);
+}
+
 /* --- toXML's floats: printf("%g") -------------------------------------------------------- */
 /* Nix prints a float in XML with boost::format's %1%, which is ostream's <<:
  * printf("%g") at precision 6, which glibc rounds exactly -- six significant

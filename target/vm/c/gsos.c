@@ -257,6 +257,47 @@ static void push_file(uint8_t text)
     push(r);
 }
 
+/* --- the on-target compiler's imports (COMPILER.md "Stage 2b") --------------------------- */
+/* `import ./f.nix` at compile time, as nbc resolves it: the absolute path
+ * p[0..n) with every link resolved (canonicalize), its default.nix if it is
+ * a directory; then its bytes at dst, at most max, their count in *len. 0 if
+ * GS/OS cannot give the file -- not there, or not one -- and the import is
+ * the primop, which reads it at run time, as nbc compiles it then. The
+ * resolved path, the import's key, is gsos_res()'s. */
+int gsos_import(const uint8_t *p, uint16_t n, uint8_t *dst, uint16_t max, uint16_t *len)
+{
+    uint16_t ref, err, rn;
+    uint32_t eof;
+    uint8_t k;
+    if (!gsos_here()) return 0;
+    if (n >= G_MAX) nomem();
+    memcpy(G_REST, p, n);
+    walk(n, R_FULL);
+    k = res_kind(&err);
+    if (k == K_DIR) {                               /* a directory: its default.nix */
+        rn = *(uint16_t *)G_RES;
+        if (rn + 12 >= G_MAX) nomem();
+        memcpy(G_REST, G_RES + 2, rn);
+        memcpy(G_REST + rn, "/default.nix", 12);
+        walk((uint16_t)(rn + 12), R_FULL);
+        k = res_kind(&err);
+    }
+    if (k != K_FILE) return 0;
+    ref = res_open();
+    eof = ref_eof(ref);
+    if (eof > max) nomem();
+    ref_read(ref, dst, (uint16_t)eof);
+    res_close(ref);
+    *len = (uint16_t)eof;
+    return 1;
+}
+
+const uint8_t *gsos_res(uint16_t *n)
+{
+    *n = *(uint16_t *)G_RES;
+    return G_RES + 2;
+}
+
 /* --- the builtins ---------------------------------------------------------------------- */
 
 void prim_pathexists(void)                      /* pathExists p */

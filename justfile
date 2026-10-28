@@ -224,6 +224,7 @@ bench-update: (bench "--update")
 front-diff fuzz="20000": build-a2min cvm nbc-build
     python3 scripts/front-diff.py --stage lex --nbc {{NBC}} --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --fuzz {{fuzz}}
     python3 scripts/front-diff.py --stage cst --nbc {{NBC}} --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --fuzz {{fuzz}}
+    python3 scripts/front-diff.py --stage ast --nbc {{NBC}} --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --fuzz {{fuzz}}
     python3 scripts/front-diff.py --self-test --nbc {{NBC}} --a2min ./sim/build_a2min/a2min --fuzz 2000
 
 # Every deep program at every stack depth, under a2min's tripwire (VM.md "The C stack").

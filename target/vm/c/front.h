@@ -34,14 +34,48 @@ enum node {
 #define NODE_FIRST NODE_APPLY
 
 /* A tree element: a token (a = its start, b = its length) or a node (a =
- * its first child in the store, b = how many). Six bytes. */
+ * its first child in the store, b = how many). Six bytes. The finished
+ * children are in bank 15. */
 struct el { uint8_t kind, pad; uint16_t a, b; };
+#define CST_STORE ((struct el *)FRONT_OUT)
+
+/* The compiled file's GS/OS pathname -- its directory resolves its imports,
+ * its last component is __curPos's file -- or just its name: a2min writes it
+ * at the top of the source bank, NUL-terminated (a source is at most $FF00
+ * bytes, the imports' after it). */
+#define SRC_NAME  0x000DFF00UL
+
+/* The compiler's own bank (bank 12; no code lands there either): scratch for
+ * a string or a path being built, a canonical path, and the import chain. */
+#define FRONT_SCRATCH 0x000C0000UL
+#define FRONT_CANON   0x000C8000UL
+#define FRONT_CHAIN   0x000CC000UL
+
+/* gsos.c: an import's file at compile time; 0 for the primop */
+int gsos_import(const uint8_t *p, uint16_t n, uint8_t *dst, uint16_t max, uint16_t *len);
+const uint8_t *gsos_res(uint16_t *n);
+
+/* The lowered AST, as nbc's ast.rs (lower.c). A string: its length, then its
+ * bytes. A list cell: the next, two payloads, a position. A node: its tag,
+ * an operator or flags, a position, three payloads -- an X_INT's or an
+ * X_FLOAT's 8 bytes are a and b. */
+struct xs { uint16_t len; uint8_t text[2]; };
+#define XS_TEXT(s) ((uint8_t *)(s) + 2)
+struct xc { struct xc *next; void *a, *b; uint16_t line, col; };
+struct xn { uint8_t tag, op; uint16_t line, col; void *a, *b, *c; };
+enum xtag {
+    X_INT, X_FLOAT, X_VAR, X_NEG, X_NOT, X_BIN, X_AND, X_OR, X_IMPLIES, X_IF, X_LET, X_LAMBDA,
+    X_WITH, X_APPLY, X_ASSERT, X_STR, X_PATHI, X_PATH, X_LIST, X_ATTRS, X_DYNATTRS, X_RECSET,
+    X_SELECT, X_HASATTR, X_UPDATE, X_CONCAT, X_INHERIT, X_SEQ, X_IMPORT
+};
+enum xbin { B_ADD, B_SUB, B_MUL, B_DIV, B_EQ, B_NE, B_LT, B_LE, B_GT, B_GE };
 
 /* --- lex.c ----------------------------------------------------------------------- */
 /* The source is n bytes at `text`, which must be UTF-8 (E_UNSUP otherwise, as
  * nbc refuses it). Each lex_next() is one rnix token: its kind, and it spans
  * from *start to lex_off. */
 void lex_init(const uint8_t *text, uint16_t n);
+int utf8_ok(const uint8_t *text, uint16_t n);
 uint8_t lex_next(uint16_t *start);
 extern uint16_t lex_off;
 
@@ -53,10 +87,20 @@ void lex_dump(void);
 /* rnix's syntax tree of the source; the first error rnix would report is
  * E_PARSE. Then the root and its descendants: */
 void parse_file(const uint8_t *text, uint16_t n);
+void parse_file_at(const uint8_t *text, uint16_t n);
 const struct el *cst_root(void);
+struct cst_mark { uint16_t root, w, s; };
+void cst_mark(struct cst_mark *m);
+void cst_release(const struct cst_mark *m);
 const struct el *cst_child(const struct el *node, uint16_t i);
 /* --cst (a2min): the tree in preorder, as nbc --cst prints rnix's */
 void cst_dump(void);
+
+/* --- lower.c ----------------------------------------------------------------------- */
+/* front.rs over the tree parse_file built: the AST; what nbc refuses, E_UNSUP */
+struct xn *lower_file(const uint8_t *text, uint16_t n);
+/* --ast (a2min): the AST as nbc --ast prints it, an S-expression */
+void ast_dump(void);
 
 /* The stage FRONT_MODE_ADDR names (vm_entry's one test of it: the dispatch
  * is here, in "front", so that a stage costs bank 0 nothing) */

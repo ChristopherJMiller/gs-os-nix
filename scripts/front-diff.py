@@ -41,26 +41,31 @@ def sources():
 # Each stage: nbc's flag and how many numbers a line of its output has to
 # compare (lex drops the kind's name), and a2min's flag.
 STAGES = {"lex": ("--tokens", lambda f: (f[0], f[2], f[3]), "--lex", 3),
-          "cst": ("--cst", lambda f: tuple(f), "--cst", 4)}
+          "cst": ("--cst", lambda f: tuple(f), "--cst", 4),
+          "ast": ("--ast", None, "--ast", 0)}     # the AST: one S-expression line
 
 
 def host(stage, nbc, path):
     flag, pick, _, _ = STAGES[stage]
-    p = subprocess.run([nbc, flag, path], capture_output=True, text=True)
+    p = subprocess.run([nbc, flag, path], capture_output=True)
     if p.returncode == 2:
         return "refused"
     if p.returncode != 0:
-        return f"nbc failed: {p.stderr.strip()[:100]}"
-    return [tuple(int(x) for x in pick(f)) for f in (l.split() for l in p.stdout.splitlines())]
+        return f"nbc failed: {p.stderr.decode(errors='replace').strip()[:100]}"
+    if pick is None:
+        return [p.stdout.decode(errors="replace").strip()]
+    return [tuple(int(x) for x in pick(f)) for f in (l.split() for l in p.stdout.decode().splitlines())]
 
 
 def target(stage, a2min, vm, path):
     _, _, flag, width = STAGES[stage]
-    p = subprocess.run([a2min, flag, vm, path], capture_output=True, text=True, timeout=600)
+    p = subprocess.run([a2min, flag, vm, path], capture_output=True, timeout=600)
     out, err = [], None
-    for l in p.stdout.splitlines():
+    for l in p.stdout.decode(errors="replace").splitlines():
         f = l.split()
-        if len(f) == width and all(x.isdigit() for x in f):
+        if width == 0 and l.startswith("("):
+            out.append(l.strip())
+        elif width and len(f) == width and all(x.isdigit() for x in f):
             out.append(tuple(int(x) for x in f))
         elif l.startswith("error: "):
             err = l[len("error: "):]
@@ -122,7 +127,16 @@ PATTERNS = ["a", "{ }", "{ a, b }", "{ a ? 1, ... }", "{ ... }", "x @ { a }", "{
             "x @ { a } @ y", "{ a } @ x @ y"]
 LEAVES = ["1", "0", "01", "1.5", ".5", "1e3", "2.5E-1", "http://x.y/z", "a", "b", "x1", "_y", "a-b", "a'",
           "or", "__curPos", "true", "null", "a or", "./a", "/a/b", "~/c", "a/b", "./a/${x}", "/${y}/z",
-          "<nixpkgs>", "<a/b>", "./a${b}c", "[]", "{}", '"s"']
+          "<nixpkgs>", "<a/b>", "./a${b}c", "[]", "{}", '"s"',
+          # floats at Nix's edges: under the midpoint below 2^-1022 (invalid), at
+          # and over it (valid), subnormal, underflow and overflow (invalid)
+          "2.2250738585072011e-308", "2.22507385850720113605740979670913197593481954635164564e-308",
+          "2.2250738585072012e-308", "2.2250738585072014e-308", "4.9e-324", "1e-400", "1e400", "0.0e-400",
+          "9223372036854775807", "9223372036854775808", "-9223372036854775808",
+          # sets merged by name, rec and plain, with inherits in each
+          "{ a = { x = 1; }; a = rec { inherit y; z = x; }; }", "{ a = rec { x = 1; }; a = { inherit y; }; }",
+          "{ a.b = 1; a = { c = 2; }; }", "let a = { x = 1; }; a = rec { inherit x; }; in a",
+          "rec { a = { inherit b; }; a = rec { inherit c; }; }", "{ a = 1; a = 2; }"]
 STRBITS = ["x", " ", "\\\"", "$", "$$", "''$", "'''", "\n  ", "\\${"]
 
 
@@ -226,6 +240,20 @@ def run(args, quiet=False):
 def self_test(args):
     """Each plant is a real way a port of rnix's tokenizer or parser goes wrong."""
     plants = [
+        ("an indented string keeps a space too many", "lower.c",
+         "if (cur_dropped >= min_indent) SCRATCH[o++] = ch;", "if (cur_dropped > min_indent) SCRATCH[o++] = ch;"),
+        ("a merged rec set's inherit stays an inherit", "lower.c",
+         "        if (v->tag == X_INHERIT && rec2 && !rec1) {", "        if (0) {"),
+        ("a column counts bytes, not characters", "lower.c",
+         "        if ((lsrc[i] & 0xC0) != 0x80) ++c;          /* characters, not bytes */", "        ++c;"),
+        ("a float under the midpoint is valid", "lower.c",
+         "    if (v == 0x0010000000000000ULL && !f_at_least_mid(t, n)) refuse();\n", ""),
+        ("an import that cannot be read is refused", "lower.c",
+         "    if (!gsos_import(j, n, dst, (uint16_t)(0xFF00U - src_top), &len)) return import_primop(app, arg);",
+         "    if (!gsos_import(j, n, dst, (uint16_t)(0xFF00U - src_top), &len)) refuse();"),
+        ("a directory import has no default.nix", "gsos.c",
+         "    if (k == K_DIR) {                               /* a directory: its default.nix */",
+         "    if (0) {"),
         ("- is right-associative", "parse.c",
          "static uint16_t parse_add(void) { return parse_left_assoc(parse_mul, S_ADD); }",
          "static uint16_t parse_add(void) { return parse_right_assoc(parse_mul, S_ADD); }"),
@@ -263,7 +291,7 @@ def self_test(args):
             r = subprocess.run(["orcabuild", "-o", vm, "-O", *srcs], capture_output=True, text=True)
             if r.returncode != 0:
                 print(f"  {name:<44} DID NOT BUILD"); print(r.stdout[-600:], r.stderr[-600:]); ok = False; continue
-            stage = "lex" if f == "lex.c" else "cst"
+            stage = {"lex.c": "lex", "parse.c": "cst"}.get(f, "ast")
             caught = run(argparse.Namespace(**{**vars(args), "vm": vm, "stage": stage}), quiet=True)
             print(f"  {name:<44} {'caught' if caught else 'SURVIVED -- the diff is decorative'}")
             ok &= bool(caught)
@@ -288,14 +316,16 @@ def main():
         ok = self_test(args)
         print("FRONT-DIFF SELF-TEST OK" if ok else "FRONT-DIFF SELF-TEST FAILED")
         return 0 if ok else 1
-    print(f"=== front-diff: stage {'1, the lexer' if args.stage == 'lex' else '2a, the parser'}, against rnix's ===")
+    what = {"lex": "1, the lexer, against rnix's", "cst": "2a, the parser, against rnix's",
+            "ast": "2b, the lowering, against nbc's"}[args.stage]
+    print(f"=== front-diff: stage {what} ===")
     bad = run(args)
     for b in bad[:20]:
         print("  DIFFERS:", b)
     if bad:
         print(f"FRONT-DIFF FAILED: {len(bad)} input(s) differ")
         return 1
-    print(f"FRONT-DIFF OK ({args.stage}): every {'token' if args.stage == 'lex' else 'node and token'} the same")
+    print(f"FRONT-DIFF OK ({args.stage}): every {dict(lex='token', cst='node and token', ast='AST')[args.stage]} the same")
     return 0
 
 

@@ -30,13 +30,13 @@ struct par { uint8_t kind, pad; uint16_t first; };
 #define TRIV     ((struct tk *)(FRONT_BASE + 0x4C00UL))    /* `trivia_buffer`: trivia not yet given to the builder */
 #define PARS     ((struct par *)(FRONT_BASE + 0x5800UL))   /* the builder's open parents */
 #define WORK     ((struct el *)(FRONT_BASE + 0x6800UL))    /* the builder's children, to $0EFFFF */
-#define STORE    ((struct el *)FRONT_OUT)                   /* finished nodes' children: bank 15 */
+#define STORE    CST_STORE                                  /* finished nodes' children: bank 15 */
 #define RING     512U
 #define PARS_N   1024U
 #define WORK_N   6485U                                      /* ($10000 - $6800) / 6, rounded down */
 #define STORE_N  10922U                                     /* $10000 / 6 */
 
-static uint16_t bhead, bn, tn, pn, wn, sn, consumed, depth;
+static uint16_t bhead, bn, tn, pn, wn, sn, consumed, depth, root_w;
 
 _Noreturn static void parse_err(void) { err_exit(E_PARSE); }
 
@@ -731,9 +731,18 @@ static uint16_t parse_expr(void)
 /* --- the whole file ------------------------------------------------------------------ */
 void parse_file(const uint8_t *text, uint16_t n)
 {
+    wn = sn = 0;
+    parse_file_at(text, n);
+}
+
+/* Another file's tree, after the trees already built -- an import's, while
+ * its importer's is still being lowered: cst_mark first, cst_release after. */
+void parse_file_at(const uint8_t *text, uint16_t n)
+{
     lex_init(text, n);
-    bhead = bn = tn = pn = wn = sn = consumed = depth = 0;
-    b_open(NODE_ROOT, 0);                           /* not start_node: the leading trivia are the root's */
+    bhead = bn = tn = pn = consumed = depth = 0;
+    root_w = wn;
+    b_open(NODE_ROOT, wn);                          /* not start_node: the leading trivia are the root's */
     parse_expr();
     eat_trivia();
     if (tpeek() != TK_EOF) parse_err();              /* UnexpectedExtra */
@@ -745,12 +754,16 @@ void front_run(void)
     switch (*(volatile uint8_t *)FRONT_MODE_ADDR) {
     case FRONT_LEX: lex_dump(); break;
     case FRONT_CST: cst_dump(); break;
+    case FRONT_AST: ast_dump(); break;
     default: err_exit(E_BADNBC);
     }
 }
 
-/* The tree's root, after parse_file: WORK[0]. Its children are the store's. */
-const struct el *cst_root(void) { return &WORK[0]; }
+/* The last tree's root: WORK[root_w]. Its children are the store's. */
+const struct el *cst_root(void) { return &WORK[root_w]; }
+
+void cst_mark(struct cst_mark *m) { m->root = root_w; m->w = wn; m->s = sn; }
+void cst_release(const struct cst_mark *m) { root_w = m->root; wn = m->w; sn = m->s; }
 const struct el *cst_child(const struct el *node, uint16_t i) { return &STORE[node->a + i]; }
 
 /* --cst (a2min): the tree in preorder, as `nbc --cst` prints rnix's: a

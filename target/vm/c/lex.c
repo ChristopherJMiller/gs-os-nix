@@ -448,26 +448,32 @@ static uint8_t next_inner(void)
 }
 
 /* --- the token stream ------------------------------------------------------------- */
-void lex_init(const uint8_t *text, uint16_t n)
+/* UTF-8, as Rust's String::from_utf8 has it: no overlong form, no
+ * surrogate, nothing past U+10FFFF */
+int utf8_ok(const uint8_t *text, uint16_t n)
 {
     uint16_t i = 0, k, len;
     uint8_t b;
-    /* UTF-8, as Rust's String::from_utf8 has it: no overlong form, no
-     * surrogate, nothing past U+10FFFF */
     while (i < n) {
         b = text[i];
         if (b < 0x80) { ++i; continue; }
-        if (b < 0xC2 || b > 0xF4) err_exit(E_UNSUP);
+        if (b < 0xC2 || b > 0xF4) return 0;
         len = ulen(b);
-        if ((uint16_t)(n - i) < len) err_exit(E_UNSUP);
+        if ((uint16_t)(n - i) < len) return 0;
         for (k = 1; k < len; ++k)
-            if ((text[i + k] & 0xC0) != 0x80) err_exit(E_UNSUP);
-        if (b == 0xE0 && text[i + 1] < 0xA0) err_exit(E_UNSUP);
-        if (b == 0xED && text[i + 1] > 0x9F) err_exit(E_UNSUP);
-        if (b == 0xF0 && text[i + 1] < 0x90) err_exit(E_UNSUP);
-        if (b == 0xF4 && text[i + 1] > 0x8F) err_exit(E_UNSUP);
+            if ((text[i + k] & 0xC0) != 0x80) return 0;
+        if (b == 0xE0 && text[i + 1] < 0xA0) return 0;
+        if (b == 0xED && text[i + 1] > 0x9F) return 0;
+        if (b == 0xF0 && text[i + 1] < 0x90) return 0;
+        if (b == 0xF4 && text[i + 1] > 0x8F) return 0;
         i += len;
     }
+    return 1;
+}
+
+void lex_init(const uint8_t *text, uint16_t n)
+{
+    if (!utf8_ok(text, n)) err_exit(E_UNSUP);       /* nbc's read_to_string refuses it */
     src = text;
     slen = n;
     off = 0;

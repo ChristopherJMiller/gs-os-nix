@@ -80,10 +80,12 @@
 #define GSOS_ADDR        0x0334UL   /* a2min sets it: GS/OS answers the file calls (GSOS.md);
                                        0, and the builtins that need it are E_GSOS by name */
 #define FRONT_MODE_ADDR  0x0336UL   /* a2min sets it: 0 run the image at IMAGE_BASE; FRONT_LEX
-                                       the source's tokens, FRONT_CST its syntax tree
-                                       (COMPILER.md, a2min --lex and --cst) */
+                                       the source's tokens, FRONT_CST its syntax tree,
+                                       FRONT_AST its AST (COMPILER.md, a2min --lex, --cst
+                                       and --ast) */
 #define FRONT_LEX        1
 #define FRONT_CST        2
+#define FRONT_AST        3
 #define SRC_LEN_ADDR     0x0338UL   /* a2min sets it: the source's length (u16), at SRC_BASE */
 #define MATURE_STRESS_ADDR 0x0335UL /* a2min sets it: k, and every k-th promotion is followed
                                        by a collection of mature space, needed or not -- with
@@ -116,7 +118,8 @@ _Static_assert(STACK_MIN - STACK_FLOOR == 0x0400U, "1 KB over the deepest path b
 #define STAGE_BASE       0x00020000UL
 #define IMAGE_BASE       0x00030000UL
 /* The on-target compiler's banks (COMPILER.md): no code lands in them --
- * omf2bin places code only below bank 13, and bank-gate checks */
+ * omf2bin places code only below bank 12, and bank-gate checks. Bank 12 is
+ * its scratch (front.h FRONT_SCRATCH) */
 #define SRC_BASE         0x000D0000UL   /* the source text */
 #define FRONT_BASE       0x000E0000UL   /* the front end's working memory: the lexer's contexts */
 #define FRONT_OUT        0x000F0000UL   /* --lex's token records */
@@ -466,6 +469,7 @@ uint16_t f_format(uint64_t a, char *buf);   /* printf("%f"), exactly: its length
 #define F_JSON_MAX 32                       /* f_json's longest: -1.7976931348623157e+308 */
 uint16_t f_json(uint64_t a, char *buf);     /* toJSON's text, nlohmann's: its length */
 uint64_t f_strtod(const char *s, uint16_t n);   /* a JSON number token, as strtod reads it */
+int f_at_least_mid(const char *s, uint16_t n);  /* a float literal >= 2^-1022 - 2^-1076, exactly (COMPILER.md) */
 uint16_t f_g(uint64_t a, char *buf);        /* printf("%g"), exactly (toXML): its length, at most 13 */
 /* ...and the VM's floats, on views: */
 obj_t   *new_float(uint64_t bits);          /* 12 bytes, as new_int: inside the boundary's margin */
