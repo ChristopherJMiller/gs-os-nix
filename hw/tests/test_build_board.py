@@ -98,6 +98,22 @@ def test_update_keeps_tracks(tiny):
     assert len(list(after.GetFootprints())) == 2
 
 
+def test_update_leaves_unchanged_parts_untouched(tiny):
+    """A locked footprint with a hand-moved reference survives update=True, and the
+    board records the full lib:name the netlist uses."""
+    board = pcbnew.LoadBoard(str(tiny))
+    r1 = fp_of(board, "R1")
+    assert r1.GetFPIDAsString() == "Resistor_SMD:R_0603_1608Metric"
+    r1.SetLocked(True)
+    ref_pos = pcbnew.VECTOR2I(bb._mm(13.3), bb._mm(27.7))
+    r1.Reference().SetPosition(ref_pos)
+    pcbnew.SaveBoard(str(tiny), board)
+    bb.build(FIX / "tiny.net", FIX / "tiny_placement.toml", tiny, update=True)
+    r1 = fp_of(pcbnew.LoadBoard(str(tiny)), "R1")
+    assert r1.IsLocked()
+    assert r1.Reference().GetPosition() == ref_pos
+
+
 def test_update_adds_and_removes_parts(tiny, tmp_path):
     net = tmp_path / "t.net"
     net.write_text((FIX / "tiny.net").read_text().replace('"R2"', '"R3"'))

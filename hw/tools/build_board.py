@@ -98,6 +98,7 @@ def load_footprint(fpid: str) -> "pcbnew.FOOTPRINT":
     fp = pcbnew.FootprintLoad(str(_lib_dir(nick)), name)
     if fp is None:
         raise SystemExit(f"footprint {fpid} not found in {_lib_dir(nick)}")
+    fp.SetFPID(pcbnew.LIB_ID(nick, name))      # record lib:name, as the netlist has it
     return fp
 
 
