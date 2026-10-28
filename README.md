@@ -19,6 +19,7 @@ hashes **byte-identically to upstream Nix**, evaluating real Nix natively.
 | [docs/RUNNING.md](docs/RUNNING.md) | Getting code onto the emulated IIgs |
 | [docs/STATUS.md](docs/STATUS.md) | Layer progress, the roadmap, and how to resume |
 | [docs/SOURCES.md](docs/SOURCES.md) | Every external tool and file: where from, its hash, how to find it again |
+| [docs/HARDWARE.md](docs/HARDWARE.md) | The physical card: board design, bus interface, capture, and how an agent designs it |
 
 ## The one-paragraph version
 
