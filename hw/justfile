@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Hardware tasks. Run inside `nix develop .#hw`. Every recipe runs from the repo
+# root. netlist, board, route, check, render and fab arrive with later tasks.
+
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# The hardware tests.
+test:
+    cd {{justfile_directory()}}/.. && python3 -m pytest hw/tests
