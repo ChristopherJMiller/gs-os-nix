@@ -111,9 +111,15 @@ in
       python3 hw/tools/check_pinmap.py --selftest $args
       python3 hw/tools/check_pinmap.py $args
     '' [ "^carrier_top lint clean" "^HW PINMAP SELFTEST OK" "^HW PINMAP OK" ];
+
+    # Review Focus 1, on the placed board: outline, finger orientation and the bevel.
+    hw-edge = hwCheck "edge" ''
+      python3 hw/tools/check_edge.py --selftest hw/carrier/carrier.kicad_pcb
+      python3 hw/tools/check_edge.py hw/carrier/carrier.kicad_pcb
+    '' [ "^HW EDGE SELFTEST OK" "^HW EDGE OK" ];
   };
 
-  packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+  packages =lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
     hw-carrier-build = carrierBuild;
   };
 }

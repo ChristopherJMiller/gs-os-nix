@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Hardware tasks. Run inside `nix develop .#hw`. Every recipe runs from the repo
-# root. board, route, check, render and fab arrive with later tasks.
+# root. route, check, render and fab arrive with later tasks.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -34,3 +34,12 @@ carrier:
       && python3 hw/tools/check_pinmap.py --pins hw/carrier/pins.toml \
            --module hw/carrier/icesugar_pro_v1_3.toml --netlist build/hw/carrier/carrier.net \
            --verilog rtl/board/carrier_top.v --lpf build/hw/carrier/carrier.lpf
+
+# The board: carrier.kicad_pcb and carrier.kicad_pro from the netlist and placement.toml,
+# then the edge gate (selftest first). The board is unrouted until `route` (Task 8).
+board: carrier
+    cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/build_board.py build/hw/carrier/carrier.net hw/carrier/placement.toml \
+           hw/carrier/carrier.kicad_pcb --project hw/carrier/carrier.kicad_pro \
+      && python3 hw/tools/check_edge.py --selftest hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_edge.py hw/carrier/carrier.kicad_pcb

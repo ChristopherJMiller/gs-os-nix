@@ -1,0 +1,443 @@
+# SPDX-License-Identifier: CERN-OHL-S-2.0
+# The carrier floorplan: x, y in mm from the card's front-top corner (x toward the
+# rear, y downward), rot in degrees. J1 (the fingers) is placed from slotgeom, not here.
+# [decouple] maps each decoupling cap to the IC supply pin(s) it serves; the tests check
+# each is within 2 mm (pad edge to pad edge). J2 is rot 0, so the module lies over the
+# empty band above it, where nothing tall may go; the headers sit above that band.
+[board]
+length_mm = 80.0
+height_mm = 64.0
+
+[parts.C1]
+x = 68.0
+y = 60.5
+rot = 0
+side = "F"
+
+[parts.C2]
+x = 71.5
+y = 49.75
+rot = 0
+side = "F"
+
+[parts.C3]
+x = 11.0
+y = 43.5
+rot = 0
+side = "F"
+
+[parts.C4]
+x = 7.0
+y = 60.0
+rot = 0
+side = "F"
+
+[parts.C5]
+x = 47.75
+y = 60.0
+rot = 90
+side = "F"
+
+[parts.C6]
+x = 50.5
+y = 60.5
+rot = 0
+side = "F"
+
+[parts.C7]
+x = 8.0
+y = 47.25
+rot = 270
+side = "F"
+
+[parts.C8]
+x = 18.0
+y = 45.25
+rot = 90
+side = "F"
+
+[parts.C9]
+x = 34.5
+y = 46.0
+rot = 90
+side = "F"
+
+[parts.C10]
+x = 34.5
+y = 51.5
+rot = 90
+side = "F"
+
+[parts.C11]
+x = 22.5
+y = 46.0
+rot = 90
+side = "F"
+
+[parts.C12]
+x = 22.5
+y = 51.5
+rot = 90
+side = "F"
+
+[parts.C13]
+x = 62.25
+y = 48.0
+rot = 90
+side = "F"
+
+[parts.C14]
+x = 68.75
+y = 48.0
+rot = 90
+side = "F"
+
+[parts.C15]
+x = 48.5
+y = 46.25
+rot = 270
+side = "F"
+
+[parts.C16]
+x = 59.5
+y = 46.25
+rot = 270
+side = "F"
+
+[parts.C17]
+x = 11.25
+y = 57.25
+rot = 90
+side = "F"
+
+[parts.C18]
+x = 19.75
+y = 57.25
+rot = 90
+side = "F"
+
+[parts.C19]
+x = 29.0
+y = 57.5
+rot = 270
+side = "F"
+
+[parts.C20]
+x = 37.5
+y = 56.5
+rot = 90
+side = "F"
+
+[parts.C21]
+x = 46.25
+y = 56.5
+rot = 90
+side = "F"
+
+[parts.C22]
+x = 54.75
+y = 56.5
+rot = 90
+side = "F"
+
+[parts.C23]
+x = 63.5
+y = 56.5
+rot = 90
+side = "F"
+
+[parts.C24]
+x = 72.0
+y = 56.5
+rot = 90
+side = "F"
+
+[parts.C25]
+x = 5.0
+y = 46.75
+rot = 0
+side = "F"
+
+[parts.C26]
+x = 13.75
+y = 41.5
+rot = 90
+side = "F"
+
+[parts.C27]
+x = 2.75
+y = 43.5
+rot = 90
+side = "F"
+
+[parts.C28]
+x = 11.0
+y = 41.5
+rot = 0
+side = "F"
+
+[parts.D1]
+x = 71.5
+y = 52.75
+rot = 0
+side = "F"
+
+[parts.F1]
+x = 74.25
+y = 60.5
+rot = 0
+side = "F"
+
+[parts.J2]
+x = 39.0
+y = 34.0
+rot = 0
+side = "F"
+
+[parts.J4]
+x = 8.0
+y = 4.8
+rot = 90
+side = "F"
+
+[parts.JP1]
+x = 22.0
+y = 4.8
+rot = 90
+side = "F"
+
+[parts.JP2]
+x = 32.0
+y = 4.8
+rot = 90
+side = "F"
+
+[parts.R1]
+x = 8.5
+y = 55.25
+rot = 0
+side = "F"
+
+[parts.R2]
+x = 10.5
+y = 60.0
+rot = 0
+side = "F"
+
+[parts.R3]
+x = 17.0
+y = 55.25
+rot = 0
+side = "F"
+
+[parts.R4]
+x = 18.0
+y = 60.0
+rot = 0
+side = "F"
+
+[parts.R5]
+x = 22.5
+y = 57.5
+rot = 90
+side = "F"
+
+[parts.R6]
+x = 31.0
+y = 57.5
+rot = 90
+side = "F"
+
+[parts.R7]
+x = 41.75
+y = 60.5
+rot = 0
+side = "F"
+
+[parts.R8]
+x = 48.25
+y = 56.5
+rot = 90
+side = "F"
+
+[parts.R9]
+x = 56.75
+y = 57.5
+rot = 90
+side = "F"
+
+[parts.R10]
+x = 49.75
+y = 40.75
+rot = 0
+side = "F"
+
+[parts.R11]
+x = 37.5
+y = 4.75
+rot = 90
+side = "F"
+
+[parts.R12]
+x = 18.0
+y = 48.75
+rot = 90
+side = "F"
+
+[parts.R13]
+x = 35.25
+y = 48.75
+rot = 0
+side = "F"
+
+[parts.R14]
+x = 7.25
+y = 50.0
+rot = 0
+side = "F"
+
+[parts.R15]
+x = 38.5
+y = 49.0
+rot = 90
+side = "F"
+
+[parts.R16]
+x = 40.0
+y = 53.75
+rot = 0
+side = "F"
+
+[parts.R17]
+x = 39.5
+y = 56.5
+rot = 90
+side = "F"
+
+[parts.R18]
+x = 19.0
+y = 4.75
+rot = 90
+side = "F"
+
+[parts.R19]
+x = 5.0
+y = 4.75
+rot = 90
+side = "F"
+
+[parts.R20]
+x = 16.0
+y = 4.75
+rot = 90
+side = "F"
+
+[parts.R21]
+x = 27.5
+y = 5.5
+rot = 90
+side = "F"
+
+[parts.U1]
+x = 13.0
+y = 49.0
+rot = 0
+side = "F"
+
+[parts.U2]
+x = 28.5
+y = 49.0
+rot = 0
+side = "F"
+
+[parts.U3]
+x = 65.5
+y = 49.0
+rot = 0
+side = "F"
+
+[parts.U4]
+x = 43.5
+y = 49.0
+rot = 0
+side = "F"
+
+[parts.U5]
+x = 54.5
+y = 49.0
+rot = 0
+side = "F"
+
+[parts.U6]
+x = 8.5
+y = 57.5
+rot = 0
+side = "F"
+
+[parts.U7]
+x = 17.1
+y = 57.5
+rot = 0
+side = "F"
+
+[parts.U8]
+x = 25.7
+y = 57.5
+rot = 0
+side = "F"
+
+[parts.U9]
+x = 34.3
+y = 57.5
+rot = 0
+side = "F"
+
+[parts.U10]
+x = 42.9
+y = 57.5
+rot = 0
+side = "F"
+
+[parts.U11]
+x = 51.5
+y = 57.5
+rot = 0
+side = "F"
+
+[parts.U12]
+x = 60.1
+y = 57.5
+rot = 0
+side = "F"
+
+[parts.U13]
+x = 68.7
+y = 57.5
+rot = 0
+side = "F"
+
+[parts.VR1]
+x = 6.0
+y = 43.5
+rot = 0
+side = "F"
+
+[decouple]
+C8 = ["U1.23", "U1.24"]
+C11 = "U2.7"
+C12 = "U2.18"
+C14 = "U3.6"
+C7 = "U1.1"
+C9 = "U2.42"
+C10 = "U2.31"
+C13 = "U3.1"
+C15 = "U4.20"
+C16 = "U5.20"
+C17 = "U6.5"
+C18 = "U7.5"
+C19 = "U8.5"
+C20 = "U9.5"
+C21 = "U10.5"
+C22 = "U11.5"
+C23 = "U12.5"
+C24 = "U13.5"
