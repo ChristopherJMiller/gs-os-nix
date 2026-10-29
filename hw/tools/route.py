@@ -361,7 +361,7 @@ class _Grid:
             o = outline.Outline(k)
             d.polygon([self.px(o.CPoint(i).x, o.CPoint(i).y) for i in range(o.PointCount())],
                       fill=255)
-        for _ in range(round(inset_mm / RES_MM)):     # a square step at a time
+        for _ in range(math.ceil(inset_mm / RES_MM) + 1):   # a square step at a time, and one over
             img = img.filter(ImageFilter.MinFilter(3))
         inside = np.asarray(img, dtype=bool)
         return ~inside
@@ -396,7 +396,8 @@ class _Grid:
                     o = poly.Hole(k, h)
                     d.polygon([self.px(o.CPoint(i).x, o.CPoint(i).y)
                                for i in range(o.PointCount())], fill=0)
-            out[layer] = np.asarray(img, dtype=bool)
+            # one cell in from the edge, so a track that ends on a cell centre ends in the copper
+            out[layer] = np.asarray(img.filter(ImageFilter.MinFilter(3)), dtype=bool)
         return out
 
 
@@ -572,20 +573,30 @@ def _clone(t):
     return c
 
 
-def _rip_up_and_join(board, net: int, width_mm: float) -> str | None:
+def net_width_mm(board, name: str) -> float:
+    """The track width of a net's class (the Power class makes the rails 0.5 mm), never
+    less than the minimum."""
+    nc = board.GetDesignSettings().m_NetSettings.GetEffectiveNetClass(name)
+    return max(_mm(nc.GetTrackWidth()), MIN_TRACK_MM)
+
+
+def _rip_up_and_join(board, net: int, width_mm: float | None = None) -> str | None:
     """`net` is walled in by the tracks of other nets. Take away the tracks of a small net
     (or, failing that, just the GND tracks that are in the way), join `net`, and put what
     was taken away back (the small net routed again; GND by its pours and, where they
     are cut, by new tracks). Returns what it moved, or None (and the board as it was)."""
     gnd = board.FindNet("GND").GetNetCode()
+    width_of = (lambda code: width_mm if width_mm else
+                net_width_mm(board, board.FindNet(code).GetNetname()))
     pieces = sorted(_components(board, net), key=_size)
-    box = None
-    for kind in ("pad", "trk", "via"):
-        for o in pieces[0][kind]:
-            box = o.GetBoundingBox() if box is None else (box.Merge(o.GetBoundingBox()) or box)
-    box.Inflate(pcbnew.FromMM(2.0))
-    near = {t.GetNetCode() for t in board.GetTracks()
-            if t.GetNetCode() not in (0, net) and box.Intersects(t.GetBoundingBox())}
+    near = set()                                  # nets with copper close to any piece
+    for piece in pieces:
+        for kind in ("pad", "trk", "via"):
+            for o in piece[kind]:
+                box = o.GetBoundingBox()
+                box.Inflate(pcbnew.FromMM(2.0))
+                near |= {t.GetNetCode() for t in board.GetTracks()
+                         if t.GetNetCode() not in (0, net) and box.Intersects(t.GetBoundingBox())}
     pad_count = {}
     for fp in board.GetFootprints():
         for p in fp.Pads():
@@ -593,14 +604,15 @@ def _rip_up_and_join(board, net: int, width_mm: float) -> str | None:
     order = sorted((m for m in near if m != gnd and pad_count.get(m, 0) <= 4),
                    key=lambda m: pad_count.get(m, 0))
     for m in order + ([gnd] if gnd in near else []):
-        grid = _Grid(board, net, width_mm, ignore_tracks={m})
+        w, wm = width_of(net), width_of(m)
+        grid = _Grid(board, net, w, ignore_tracks={m})
         src = grid.own(pieces[0])
         path = next((p for o in pieces[1:]
                      if (p := _astar(grid, src, grid.own(o)))), None)
         if not path:
             continue
         if m == gnd:                       # only the GND tracks the new path runs into
-            planned = _lay_path(board, grid, net, path, width_mm)
+            planned = _lay_path(board, grid, net, path, w)
             old = [t for t in board.GetTracks() if t.GetNetCode() == m and _clashes(t, planned)]
             for t in planned:
                 board.RemoveNative(t)
@@ -609,10 +621,10 @@ def _rip_up_and_join(board, net: int, width_mm: float) -> str | None:
         saved = [_clone(t) for t in old]
         for t in old:
             board.RemoveNative(t)
-        made = _lay_path(board, grid, net, path, width_mm)
+        made = _lay_path(board, grid, net, path, w)
         if m == gnd:
             refill(board)
-        if _join_pieces(board, net, width_mm, made) and _join_pieces(board, m, width_mm, made):
+        if _join_pieces(board, net, w, made) and _join_pieces(board, m, wm, made):
             return board.FindNet(m).GetNetname()
         for t in made:                                # it did not work: put it all back
             board.RemoveNative(t)
@@ -623,21 +635,24 @@ def _rip_up_and_join(board, net: int, width_mm: float) -> str | None:
     return None
 
 
-def finish_unrouted(board, width_mm: float = MIN_TRACK_MM) -> list[str]:
+def finish_unrouted(board, width_mm: float | None = None) -> list[str]:
     """Join the pieces of each net that the router left apart (GND last, with its pours
     taken into account), moving a small net or some GND track aside where one is in the
-    way. Returns what could not be joined, as messages."""
+    way. Every net is laid at the width of its net class (`width_mm` overrides, for
+    tests): a rail that cannot be joined at 0.5 mm is reported, not joined thin. Returns
+    what could not be joined, as messages."""
     failed = []
     names = sorted({p.GetNetname() for fp in board.GetFootprints() for p in fp.Pads()
                     if p.GetNetCode()} - {"GND"}) + ["GND"]
     refill(board)
     for name in names:
         net = board.FindNet(name).GetNetCode()
-        if _join_pieces(board, net, width_mm, []):
+        w = width_mm or net_width_mm(board, name)
+        if _join_pieces(board, net, w, []):
             continue
         moved = _rip_up_and_join(board, net, width_mm)
         if moved is None:
-            failed.append(f"{name}: no path between its pieces")
+            failed.append(f"{name}: no path between its pieces at {w:.2f} mm")
         else:
             print(f"finish: {name} joined by moving {moved}")
     return failed
@@ -681,10 +696,11 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
             raise SystemExit(f"pcbnew could not import {ses}")
         print(f"widened {widen_stubs(b)} stubs")
         pcbnew.SaveBoard(str(board), b)                 # the router's own result, kept
-        for msg in finish_unrouted(b):
-            print(f"left unrouted: {msg}")
+        left = finish_unrouted(b)
         refill(b)
         pcbnew.SaveBoard(str(board), b)
+    if left:
+        raise SystemExit("route: left unrouted:\n  " + "\n  ".join(left))
     print(f"routed {board}")
 
 

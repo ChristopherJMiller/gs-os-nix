@@ -68,7 +68,7 @@ def problems_drc(board: Path) -> list[str]:
     out = []
     for v in rep.get("violations", []):
         out.append(f"DRC {v['type']}: {v['description']} ({_where(v.get('items', []))})")
-    for u in rep.get("unconnected_items", []):
+    for u in rep["unconnected_items"]:
         out.append(f"DRC unconnected: {u['description']} ({_where(u.get('items', []))})")
     return out
 
@@ -162,12 +162,22 @@ def _track_short(board):
     raise SystemExit("selftest: no 2-pad part on F.Cu to short")
 
 
+def _track_delete(board):
+    """Take one signal track out of the routed board: its net falls in two."""
+    tracks = [t for t in board.GetTracks()
+              if t.GetClass() != "PCB_VIA" and t.GetNetname() not in ("GND", "")]
+    if not tracks:
+        raise SystemExit("selftest: the board has no track to delete (route it first)")
+    board.RemoveNative(max(tracks, key=lambda t: t.GetLength()))
+
+
 # name -> (mutation, needs the DRC, text its failure must contain)
 MUTATIONS = {
     "pad on another net": (_pad_move, False, "parity: R"),
     "footprint deleted": (_fp_delete, False, "footprint C1 is in the netlist but missing"),
     "wrong footprint id": (_fp_swap, False, "C1 footprint is"),
     "track across two nets": (_track_short, True, "DRC shorting_items"),
+    "track deleted": (_track_delete, True, "DRC unconnected"),
 }
 
 
