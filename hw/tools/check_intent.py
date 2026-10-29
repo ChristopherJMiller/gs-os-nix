@@ -15,7 +15,7 @@ With a module map (hw/carrier/icesugar_pro_v1_3.toml) the carrier's J2 rules app
 the module's 5V pins on +5V_MOD, its GND pins on GND, and +5V_MOD fed from +5V through
 one series diode and nothing else.
 
-Pin numbers below are the packages' own: SN74LVCR2245A (TSSOP-20), SN74ALVC164245
+Pin numbers below are the packages' own: SN74LVCR2245A (SSOP-20), SN74ALVC164245
 (TSSOP-48), SN74LVC1T45 (SOT-23-6); see the datasheets cited in hw/src/slot_bus.py.
 """
 import argparse

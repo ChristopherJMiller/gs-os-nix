@@ -93,8 +93,9 @@ def test_lvcr2245_polarity(nl):
     for i in range(8):
         assert p[str(2 + i)] == f"slot_d{i}" and p[str(18 - i)] == f"SLOT_D{i}"
     assert "+5V" not in p.values() and "+5V_SLOT" not in p.values()
-    assert nl.parts[u].footprint.startswith("Package_SO:TSSOP-20")
-    assert nl.parts[u].fields["MPN"] == "SN74LVCR2245APWR"
+    assert nl.parts[u].footprint.startswith("Package_SO:SSOP-20_3.9x8.7mm_P0.635mm")
+    assert nl.parts[u].fields["MPN"] == "SN74LVCR2245ADBQR"
+    assert nl.parts[u].fields["LCSC"] == "C2675819"
 
 
 def test_164245_polarity(nl):

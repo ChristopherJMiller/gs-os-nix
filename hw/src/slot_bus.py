@@ -23,7 +23,7 @@ pins are referenced to):
               resistors to reduce overshoot and undershoot" -- on EVERY output, so both
               the A port (toward the FPGA) and the B port (toward the slot). Table 2:
               OE=L DIR=L "B data to A bus", OE=L DIR=H "A data to B bus", OE=H
-              "Isolation" (DIR, OE are plain inputs on VCC). Pins (PW, TSSOP-20): DIR 1,
+              "Isolation" (DIR, OE are plain inputs on VCC). Pins (the pin table covers "DB, DBQ, DGV, DW, NS, OR PW" alike; TSSOP-20 PW and SSOP-20 DBQ share them): DIR 1,
               A1..A8 2..9, GND 10, B8..B1 11..18, OE 19, VCC 20. I/O tolerate 5.5 V at
               any valid VCC (VI 0..5.5 V; VO 0..5.5 V in 3-state; "5-V Input/Output
               Voltage With 3.3-V VCC"); VIH 2 V at 2.7-3.6 V, so the card's 5 V TTL bus
@@ -88,10 +88,15 @@ C_10U = ("10uF", "CL10A106KP8NNNC", "C19702")      # basic, 10 V X5R
 
 IC = {  # key: (symbol lib, symbol, value, footprint, MPN, LCSC)
     # KiCad has no LVCR2245 symbol; 74HC245 is the '245 pinout the part shares (see
-    # [LVCR2245A] above). LCSC C467018 = SN74LVCR2245APWR (TSSOP-20), checked on LCSC
-    # and JLCPCB 2026-10-29: part and package match, but stock was 0 on both that day.
+    # [LVCR2245A] above). Every TSSOP-20 (PW) variant, e.g. SN74LVCR2245APWR C467018, had
+    # zero stock on LCSC and JLCPCB on 2026-10-29, so the card uses the DBQ: LCSC C2675819 =
+    # SN74LVCR2245ADBQR, SSOP-20 150 mil, 0.635 mm pitch, 243 in stock on the LCSC page
+    # 2026-10-29 (254 on JLCPCB's listing earlier that day). Fallback: SN74LVCR2245ADBR,
+    # C2865353 (SSOP-20 208 mil, 50 in stock). The KiCad SSOP-20_3.9x8.7mm_P0.635mm land
+    # pattern is NOT checked against TI's DBQ0020A drawing: SCAS581N prints drawings for
+    # DB, DW and PW only; do that before ordering (Task 4).
     "LVCR2245": ("74xx", "74HC245", "SN74LVCR2245A",
-                 "Package_SO:TSSOP-20_4.4x6.5mm_P0.65mm", "SN74LVCR2245APWR", "C467018"),
+                 "Package_SO:SSOP-20_3.9x8.7mm_P0.635mm", "SN74LVCR2245ADBQR", "C2675819"),
     "164245": ("74xx", "SN74ALVC164245DGG", "74ALVC164245",
                "Package_SO:TSSOP-48_6.1x12.5mm_P0.5mm", "SN74ALVC164245DGGR", "C7128"),
     "1T45": ("Logic_LevelTranslator", "SN74LVC1T45DBV", "SN74LVC1T45",

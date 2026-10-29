@@ -278,8 +278,8 @@ two LS loads [HWR 5-13], and the research found that strong LVC edges overshoot 
 Apple bus. Big Mess o' Wires' Yellowstone card fixed that by moving to the 74LVCR2245,
 which has 26 Ω series resistors in every output (Yellowstone 2.x, https://www.bigmessowires.com/?p=7117
 and https://www.bigmessowires.com/?p=6645) **V** for the move, **I** for its effect on
-this card. The data translator U1 is now **SN74LVCR2245A** (TSSOP-20, `SN74LVCR2245APWR`,
-LCSC C467018) in place of the SN74LVC8T245 [SCAS581N]:
+this card. The data translator U1 is now **SN74LVCR2245A** (SSOP-20 DBQ, `SN74LVCR2245ADBQR`,
+LCSC C2675819) in place of the SN74LVC8T245 [SCAS581N]:
 
 - One supply, +3V3 (1.65-3.6 V). No +5V pin, so the card needs no 5 V on U1 and the
   bench-power risk of a dead VCCB (Owner's review 7) no longer applies to data.
@@ -292,8 +292,11 @@ LCSC C467018) in place of the SN74LVC8T245 [SCAS581N]:
   (`slot_d0..7`), B side = slot (`SLOT_D0..7`); the listen-only '541 still taps `SLOT_D*`.
 - Cost: the 26 Ω is on both ports, so the A side's edges into the FPGA are slowed too;
   the budget (30-140 ns margins against sub-10 ns propagation) absorbs it **I**.
-  LCSC and JLCPCB showed zero stock for every TSSOP-20 LVCR2245A on 2026-10-29
-  (SN74LVCR2245ADBQR C2675819, a 150-mil SSOP-20, had 254); see the plan 1b report.
+  Package: the TSSOP-20 (PW, C467018) is out of stock at LCSC and JLCPCB (2026-10-29),
+  so the card uses the DBQ, an SSOP-20 at 0.635 mm pitch, 150 mil (C2675819, 243 in
+  stock at LCSC). Fallback: SN74LVCR2245ADBR, SSOP-20 208 mil (C2865353, 50 in stock).
+  The DBQ's land pattern (KiCad `SSOP-20_3.9x8.7mm_P0.635mm`) is **I** until checked
+  against TI's DBQ0020A drawing, which SCAS581N does not print.
 
 Rejected: keeping the 8T245 and adding 22-33 Ω resistor arrays on the eight data lines.
 It adds two 4-resistor arrays (or eight 0603s) in the tightest part of the layout, a
