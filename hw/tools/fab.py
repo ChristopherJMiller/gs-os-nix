@@ -58,6 +58,18 @@ def write_cpl(pos: Path, dest: Path, skip: set[str]) -> int:
     return len(rows)
 
 
+def ibom_command(board: Path, dest: Path) -> list[str]:
+    """The Interactive HTML BOM under a virtual X server, as `ibom.html` in `dest`.
+
+    `-d` (--auto-display), not `-a`: `-a` sleeps a fixed 3 s and runs the command whether or
+    not Xvfb is up, and on a loaded machine wx then finds no display and GTK segfaults.
+    `-d` waits for Xvfb's -displayfd, which it writes once the server takes connections.
+    """
+    return ["xvfb-run", "-d", "generate_interactive_bom", "--no-browser",
+            "--dest-dir", str(dest), "--name-format", "ibom",
+            "--include-tracks", str(board)]
+
+
 def build(board_src: Path, sch_src: Path, out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "layers").mkdir(exist_ok=True)
@@ -79,9 +91,7 @@ def build(board_src: Path, sch_src: Path, out: Path) -> None:
         write_cpl(kk / "pos.csv", out / "cpl.csv", not_placed(pcbnew.LoadBoard(str(board))))
 
         # interactive BOM (needs a display for its wx import)
-        run(["xvfb-run", "-a", "generate_interactive_bom", "--no-browser",
-             "--dest-dir", str(tmp / "ibom"), "--name-format", "ibom",
-             "--include-tracks", str(board)])
+        run(ibom_command(board, tmp / "ibom"))
         shutil.copy(tmp / "ibom" / "ibom.html", out / "ibom.html")
 
         # renders, board only
