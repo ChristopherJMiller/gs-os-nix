@@ -472,8 +472,8 @@ Three recorders, behind a passive tap:
   while the IIgs is hung. The **UART**
   streams filtered card cycles. Exported as VCD / sigrok `.sr` for PulseView.
 - Streaming every cycle needs ~8 MB/s, which only a USB-HS FIFO reaches. Triggered
-  snapshots plus a filtered stream cover timing diagnosis, so rev A has no onboard USB. (The carrier's module has one, for programming
-  and this readout.)
+  snapshots plus a filtered stream cover timing diagnosis, so rev A has no onboard USB.
+  (The carrier's module has one, for programming and this readout.)
 
 ### Programming and recovery *(designer's calls)*
 
@@ -485,8 +485,8 @@ Three recorders, behind a passive tap:
   valid-but-broken image, the golden boots first and sets a flash flag, then reloads the
   user image, which clears the flag once it is healthy. After a power cycle with the
   flag still set, the card stays in golden. A SAFE jumper forces golden.
-- JTAG is the last resort and always works. (The carrier has no JTAG header; it is
-  programmed over the module's USB, HW-13.)
+- On rev A, JTAG is the last resort and always works. The carrier has no JTAG header: it
+  is programmed over the module's USB (HW-13), so there the USB link is the only path.
 
 ## How the agent designs a board
 
@@ -529,7 +529,7 @@ hand-written track that touched no pad onto another net, and DRC missed the shor
 | `hw-tests` | pytest over `hw/tests` | -- (the tests are the mutations) |
 | `hw-intent` | design intent from the netlist: power-up state, daisy chains, rails, module power (HW-15) | each rule has a planted fault |
 | `hw-erc` | SKiDL's `ERC()` on the netlist: zero errors | a planted second driver |
-| `hw-drc` | KiCad DRC zero errors, zero unconnected; netlist ↔ board parity | a deleted track |
+| `hw-drc` | KiCad DRC zero errors, zero unconnected; netlist ↔ board parity; power tracks at class width bar short necks (GND exempt) | a deleted track |
 | `hw-pinmap` | netlist ↔ the board's `pins.toml` ↔ board-top RTL ports ↔ `.lpf` agree; bank VCCIO consistent | two balls swapped |
 | `hw-edge` | finger count, pitch, position, bevel keep-out | one finger moved |
 | `hw-bom` | every part has a footprint and an LCSC number | one LCSC number deleted |

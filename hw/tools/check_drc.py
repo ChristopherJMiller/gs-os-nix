@@ -17,10 +17,11 @@ gate is what ties it back to the netlist. Two halves:
   net is only ever what the pads say; a short shows up as a DRC violation.
 
 The selftest plants a pad on another net, a deleted footprint, a wrong footprint id and
-a track across two pads of different nets, on temporary copies; each must fail with its
+a track across two pads of different nets and a long +5V track thinned (twice), on temporary copies; each must fail with its
 own message.
 """
 import argparse
+import fnmatch
 import json
 import shutil
 import subprocess
@@ -34,6 +35,13 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from hw.tools.netlist import Netlist, load
+
+# Power-track width rule. KiCad's DRC does not enforce net-class width as a minimum.
+NECK_MAX_MM = 1.5       # a neck is short: a pad escape or a jog, never a run
+NECK_MIN_MM = 0.3       # and even a neck stays this wide, for the 3V3/5V rail current
+WIDTH_TOL_MM = 0.001    # 1 um: KiCad stores nm, so 0.3004 passes and 0.2989 fails
+# GND is exempt: its pours carry the current; the routed GND tracks are only stitching.
+WIDTH_EXEMPT = {"GND"}
 
 
 # --- KiCad's DRC ----------------------------------------------------------------------
@@ -118,11 +126,72 @@ def problems_parity(board, nl: Netlist) -> list[str]:
     return out
 
 
+# --- power-track width --------------------------------------------------------------------
+
+def power_class(pro_path: Path) -> tuple[list[str], float]:
+    """(net patterns of the Power net class, its track width in mm), from the .kicad_pro."""
+    ns = json.loads(Path(pro_path).read_text())["net_settings"]
+    width = next(c["track_width"] for c in ns["classes"] if c["name"] == "Power")
+    pats = [x["pattern"] for x in ns["netclass_patterns"] if x["netclass"] == "Power"]
+    return pats, width
+
+
+def problems_width(board, pro_path: Path) -> list[str]:
+    """Every Power-class track is at least the class width, except necks.
+
+    A neck is a segment of at most NECK_MAX_MM and at least NECK_MIN_MM wide that either
+    has an end on a pad of its net or has both ends joining other copper of its net (a jog
+    between full-width tracks). GND is exempt (WIDTH_EXEMPT)."""
+    pats, cls_w = power_class(pro_path)
+    mm, tol = pcbnew.ToMM, WIDTH_TOL_MM
+    nets = {str(n) for n in board.GetNetsByName().keys()
+            if any(fnmatch.fnmatchcase(str(n), q) for q in pats)} - WIDTH_EXEMPT
+    tracks = [t for t in board.GetTracks() if t.GetNetname() in nets]
+    pads = [p for fp in board.GetFootprints() for p in fp.Pads()]
+
+    def on_pad(t, pt):
+        acc = t.GetWidth() // 2 + 1000
+        return any(p.GetNetCode() == t.GetNetCode() and p.HitTest(pt, acc) for p in pads)
+
+    def joins(t, pt):
+        near = lambda q: abs(q.x - pt.x) <= 1000 and abs(q.y - pt.y) <= 1000
+        for o in tracks:
+            if o is t:
+                continue
+            if o.GetClass() == "PCB_VIA":
+                if near(o.GetPosition()):
+                    return True
+            elif near(o.GetStart()) or near(o.GetEnd()):
+                return True
+        return on_pad(t, pt)
+
+    out = []
+    for t in tracks:
+        if t.GetClass() == "PCB_VIA":
+            continue
+        w, length = mm(t.GetWidth()), mm(t.GetLength())
+        if w >= cls_w - tol:
+            continue
+        ends = (t.GetStart(), t.GetEnd())
+        neck = (length <= NECK_MAX_MM and w >= NECK_MIN_MM - tol and
+                (any(on_pad(t, e) for e in ends) or all(joins(t, e) for e in ends)))
+        if not neck:
+            s0 = t.GetStart()
+            out.append(f"power width: {t.GetNetname()} track {w:.3f} mm wide, "
+                       f"{length:.2f} mm long at ({mm(s0.x):.2f}, {mm(s0.y):.2f}) on "
+                       f"{t.GetLayerName()}; class width {cls_w} mm, only necks "
+                       f"(<= {NECK_MAX_MM} mm, >= {NECK_MIN_MM} mm, at a pad or a jog) "
+                       f"may be narrower")
+    return out
+
+
 # --- the gate -----------------------------------------------------------------------------
 
 def problems(board_path: Path, nl: Netlist) -> list[str]:
     board = pcbnew.LoadBoard(str(board_path))
-    return problems_parity(board, nl) + problems_drc(board_path)
+    return (problems_parity(board, nl)
+            + problems_width(board, board_path.with_suffix(".kicad_pro"))
+            + problems_drc(board_path))
 
 
 def _pad_move(board):
@@ -171,6 +240,18 @@ def _track_delete(board):
     board.RemoveNative(max(tracks, key=lambda t: t.GetLength()))
 
 
+def _thin_long_5v(width_mm):
+    def mutate(board):
+        """Thin the longest +5V segment (longer than a neck can be) to `width_mm`."""
+        t = max((t for t in board.GetTracks()
+                 if t.GetClass() != "PCB_VIA" and t.GetNetname() == "+5V"),
+                key=lambda t: t.GetLength())
+        if pcbnew.ToMM(t.GetLength()) <= NECK_MAX_MM:
+            raise SystemExit("selftest: no +5V segment longer than a neck")
+        t.SetWidth(pcbnew.FromMM(width_mm))
+    return mutate
+
+
 # name -> (mutation, needs the DRC, text its failure must contain)
 MUTATIONS = {
     "pad on another net": (_pad_move, False, "parity: R"),
@@ -178,6 +259,8 @@ MUTATIONS = {
     "wrong footprint id": (_fp_swap, False, "C1 footprint is"),
     "track across two nets": (_track_short, True, "DRC shorting_items"),
     "track deleted": (_track_delete, True, "DRC unconnected"),
+    "+5V thinned to 0.15": (_thin_long_5v(0.15), False, "power width: +5V track 0.150"),
+    "+5V long run at 0.3": (_thin_long_5v(0.3), False, "power width: +5V track 0.300"),
 }
 
 
@@ -197,7 +280,8 @@ def selftest(board_path: Path, nl: Netlist) -> int:
             copy = _copy_project(board_path, d)
             _mutate(copy, mutate)
             board = pcbnew.LoadBoard(str(copy))
-            found = problems_parity(board, nl)
+            found = (problems_parity(board, nl)
+                     + problems_width(board, copy.with_suffix(".kicad_pro")))
             if drc:
                 found += problems_drc(copy)
             if not any(expect in p for p in found):

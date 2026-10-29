@@ -155,7 +155,7 @@ in
     '' [ "^HW FAB SELFTEST OK" "^HW FAB OK" ];
   };
 
-  packages =lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+  packages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
     hw-carrier-build = carrierBuild;
     hw-carrier-fab = carrierFab;
   };
