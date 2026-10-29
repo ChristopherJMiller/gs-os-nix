@@ -10,7 +10,7 @@
 # one bank on a run of odd pins or of even pins), taken in ascending pin order, so a bus
 # is a run of neighbouring contacts and bit i is the i-th ball:
 #   slot_a   16  bank 7, odd pins 77-111    (the address translator, 74ALVC164245)
-#   slot_d    8  bank 1, even pins 86-100   (the data translator, SN74LVC8T245)
+#   slot_d    8  bank 1, even pins 86-100   (the data translator, SN74LVCR2245A)
 #   slot_dl   8  bank 0, odd pins 51-69     (the data listen buffer, 74LVC541)
 #   control inputs: bank 2, even pins 64-84 (clocks, R/W and the select strobes)
 #   control outputs: bank 3, even pins 42-62 (translator controls and open-drain drivers,

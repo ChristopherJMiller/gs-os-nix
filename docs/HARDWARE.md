@@ -271,6 +271,35 @@ Departures from the first design, each because the first idea read the wrong art
 `kicad-cli` and KiKit run only on temporary copies of the board, so a gate never edits
 the committed one. `hw-timing` and `hw-rtl` are not built yet (plan 3).
 
+### HW-16 -- The data translator is a 74LVCR2245A: 26 Ω outputs, one supply
+
+The layout audit (plan 1b) estimated 18-23 pF on SLOT_D0-D5 against Apple's ≤ 15 pF and
+two LS loads [HWR 5-13], and the research found that strong LVC edges overshoot on the
+Apple bus. Big Mess o' Wires' Yellowstone card fixed that by moving to the 74LVCR2245,
+which has 26 Ω series resistors in every output (Yellowstone 2.x, https://www.bigmessowires.com/?p=7117
+and https://www.bigmessowires.com/?p=6645) **V** for the move, **I** for its effect on
+this card. The data translator U1 is now **SN74LVCR2245A** (TSSOP-20, `SN74LVCR2245APWR`,
+LCSC C467018) in place of the SN74LVC8T245 [SCAS581N]:
+
+- One supply, +3V3 (1.65-3.6 V). No +5V pin, so the card needs no 5 V on U1 and the
+  bench-power risk of a dead VCCB (Owner's review 7) no longer applies to data.
+- Both ports are 5.5 V tolerant at any valid VCC, and VIH is 2.0 V at 2.7-3.6 V, so
+  the slot's 5 V levels read as highs; the part drives 3.3 V highs, which TTL reads.
+  Ioff (±10 µA at 5.5 V, VCC = 0) covers partial power-down and live insertion.
+- Function: OE=L DIR=L is B → A (slot → FPGA); DIR=H is A → B; OE=H isolates. The
+  power-up defaults are unchanged (/OE pulled up, DIR pulled down; `hw-intent`), and
+  the rules now say the part has no +5V pin and VCC is on +3V3. A side = FPGA
+  (`slot_d0..7`), B side = slot (`SLOT_D0..7`); the listen-only '541 still taps `SLOT_D*`.
+- Cost: the 26 Ω is on both ports, so the A side's edges into the FPGA are slowed too;
+  the budget (30-140 ns margins against sub-10 ns propagation) absorbs it **I**.
+  LCSC and JLCPCB showed zero stock for every TSSOP-20 LVCR2245A on 2026-10-29
+  (SN74LVCR2245ADBQR C2675819, a 150-mil SSOP-20, had 254); see the plan 1b report.
+
+Rejected: keeping the 8T245 and adding 22-33 Ω resistor arrays on the eight data lines.
+It adds two 4-resistor arrays (or eight 0603s) in the tightest part of the layout, a
+stub between buffer and resistor, and keeps the second supply (VCCB on the fused +5V);
+the LVCR2245 puts the resistors inside the package, at the pin, and needs one rail.
+
 ## Facts the design rests on
 
 **V** = verified at the source given; **I** = inferred, check before relying on it.
@@ -379,7 +408,7 @@ No /IRQ, /NMI or /DMA in the signal list. RAM2GS puts a CPLD and SDRAM there
 ```
                  ┌────────────────────────── bus section (one SKiDL subcircuit) ──────────────────────────┐
  Apple II slot   │  A0-15, R/W ──── 74ALVC164245 ─────────────────────────────┐                         │
- 50-pin fingers ─┤  D0-7 ────────── SN74LVC8T245 (DIR, /OE from FPGA) ────────┤                         │
+ 50-pin fingers ─┤  D0-7 ────────── SN74LVCR2245A (DIR, /OE from FPGA) ───────┤                         │
                  │  D0-7 ────────── 74LVC541, listen-only (capture) ──────────┤                         │
                  │  PH0 PH1 7M Q3 ─ 74LVC2G17 (+ series-R footprints) ────────┼──► FPGA I/O (3.3 V)     │
                  │  selects, M2SEL, M2B0, RESET-in, INT/DMA IN ─ 5V-tol buffer┤                         │
@@ -395,10 +424,12 @@ No /IRQ, /NMI or /DMA in the signal list. RAM2GS puts a CPLD and SDRAM there
 
 ### The bus section *(designer's calls, from proven cards)*
 
-- **Data:** SN74LVC8T245, VCCB from the slot's 5 V. Default direction slot → FPGA;
-  /OE pulled high so it is off until the FPGA configures. The FPGA turns it toward the
-  slot only for a card read (/DEVSEL low, R/W high), from the first 7M↑ after PH0↑
-  until before PH0↓. A2FPGA uses the same part for data.
+- **Data:** SN74LVCR2245A (HW-16), on +3V3 alone: its I/O tolerate the slot's 5 V and
+  each output has a 26 Ω series resistor built in, which tames the overshoot a strong
+  LVC edge makes on the Apple bus. Default direction slot → FPGA; /OE pulled high so
+  it is off until the FPGA configures. The FPGA turns it toward the slot only for a
+  card read (/DEVSEL low, R/W high), from the first 7M↑ after PH0↑ until before
+  PH0↓. Big Mess o' Wires' Yellowstone uses the same family for data.
 - **Address and R/W:** 74ALVC164245 (A2FPGA's newer boards); it can drive the bus,
   keeping DMA possible.
 - **Listen-only data buffer:** a 74LVC541, always on. A driving '245 shows the FPGA
@@ -631,7 +662,7 @@ The agent cannot judge intent. Before ordering, look at the package above for:
    above J2.
 2. **The SODIMM footprint** against TE drawing C-1473005 sheet 2, and pin 1 and key
    orientation against a real iCESugar-Pro.
-3. **Translator direction and enable nets** in `schematic.pdf`: the 8T245's /OE pulled
+3. **Translator direction and enable nets** in `schematic.pdf`: the LVCR2245A's /OE pulled
    up and DIR pulled down; the 74ALVC164245 the same; the 1T45's DIR.
 4. **BOM LCSC numbers** against the intended parts (`bom.csv` carries the MPN).
 5. **The finger tab** against a real Apple II card (open question 5): TAB_WIDTH
@@ -639,7 +670,8 @@ The agent cannot judge intent. Before ordering, look at the package above for:
 6. **The module's USB connector:** whether it is reachable with the card in a slot.
 7. **Residual electrical risks:**
    - the 74ALVC164245 has no Ioff;
-   - on USB-only bench power, `+5V` (the slot side, VCCB) is dead while `+3V3` is live;
+   - on USB-only bench power, `+5V` (the slot side, VCCB) is dead while `+3V3` is live
+     (the data translator no longer has a VCCB: HW-16);
    - the carrier's buffers drive the module's FPGA pins and could back-power its VCCIO
      if the module's 3V3 lags.
 8. **Hidden R/C designators**, and the ~93 silkscreen warnings.

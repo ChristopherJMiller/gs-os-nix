@@ -5,7 +5,8 @@ daisy-chain pass-throughs and the slot-side fuse and bypassing.
 
 One SKiDL subcircuit, reused unchanged on the carrier and the integrated card
 (docs/HARDWARE.md "The bus section"). The A side of every translator is the FPGA (3.3 V,
-`+3V3`), the B side the slot (5 V, the fused `+5V`). `python3 -m hw.src.slot_bus
+`+3V3`), the B side the slot (5 V, the fused `+5V`); the data translator is the exception
+(a single-supply 74LVCR2245A on `+3V3`, HW-16). `python3 -m hw.src.slot_bus
 --netlist OUT.net` writes the section alone.
 
 Power-up state (the Review Focus the hw-intent check pins): every slot-facing driver is
@@ -16,8 +17,27 @@ fitted.
 
 Datasheets (TI; each checked for pinout, function table and which supply the control
 pins are referenced to):
-  [LVC8T245]  SN74LVC8T245 SCES584D, table 7-1: OE=L DIR=L "B data to A bus"; OE=H both
-              ports Hi-Z; DIR and OE are referenced to VCCA; pins table 4-1.
+  [LVCR2245A] SN74LVCR2245A SCAS581N (TI, rev. Nov 2014): 1.65-3.6 V VCC, one supply (no
+              second rail). Features: "All Outputs Have Equivalent 26-ohm Series
+              Resistors" and section 9.1: "All outputs ... include equivalent 26-ohm
+              resistors to reduce overshoot and undershoot" -- on EVERY output, so both
+              the A port (toward the FPGA) and the B port (toward the slot). Table 2:
+              OE=L DIR=L "B data to A bus", OE=L DIR=H "A data to B bus", OE=H
+              "Isolation" (DIR, OE are plain inputs on VCC). Pins (PW, TSSOP-20): DIR 1,
+              A1..A8 2..9, GND 10, B8..B1 11..18, OE 19, VCC 20. I/O tolerate 5.5 V at
+              any valid VCC (VI 0..5.5 V; VO 0..5.5 V in 3-state; "5-V Input/Output
+              Voltage With 3.3-V VCC"); VIH 2 V at 2.7-3.6 V, so the card's 5 V TTL bus
+              levels read as highs. Ioff: +-10 uA at VI or VO = 5.5 V with VCC = 0
+              ("Ioff Supports Live Insertion, Partial-Power-Down Mode, and Back-Drive
+              Protection"), so a powered slot does not back-feed an unpowered card. VOH
+              is a 3.3 V high, which a TTL input reads (VIH 2.0 V). Section 9.1 also
+              says OE should be tied to VCC through a pull-up to hold Hi-Z in power-up.
+              The KiCad library has no LVCR2245 symbol; `74xx:74HC245` is the same
+              '245 pinout (A->B = DIR 1, A0..A7 = 2..9, GND 10, B7..B0 = 11..18, CE =
+              OE 19, VCC 20); the datasheet's A1..A8 / B1..B8 are the symbol's A0..A7 / B0..B7.
+              Evidence for the swap: Big Mess o' Wires' Yellowstone 2.x moved to the
+              74LVCR2245 for the same reason (https://www.bigmessowires.com/?p=7117,
+              ?p=6645); HW-16 in docs/HARDWARE.md.
   [ALVC164245] SN74ALVC164245 SCAS416Q, table 3: the same function table, per 8-bit
               section; control pins "powered by VCCA"; A port 2.3-3.6 V, B port 3-5.5 V.
               The datasheet numbers bits 1..8 where this design (and the RTL) says 0..7;
@@ -67,8 +87,11 @@ C_100N = ("100nF", "CC0603KRX7R9BB104", "C14663")  # basic, 50 V X7R
 C_10U = ("10uF", "CL10A106KP8NNNC", "C19702")      # basic, 10 V X5R
 
 IC = {  # key: (symbol lib, symbol, value, footprint, MPN, LCSC)
-    "8T245": ("Logic_LevelTranslator", "SN74LVC8T245", "SN74LVC8T245",
-              "Package_SO:TSSOP-24_4.4x7.8mm_P0.65mm", "SN74LVC8T245PWR", "C27643"),
+    # KiCad has no LVCR2245 symbol; 74HC245 is the '245 pinout the part shares (see
+    # [LVCR2245A] above). LCSC C467018 = SN74LVCR2245APWR (TSSOP-20), checked on LCSC
+    # and JLCPCB 2026-10-29: part and package match, but stock was 0 on both that day.
+    "LVCR2245": ("74xx", "74HC245", "SN74LVCR2245A",
+                 "Package_SO:TSSOP-20_4.4x6.5mm_P0.65mm", "SN74LVCR2245APWR", "C467018"),
     "164245": ("74xx", "SN74ALVC164245DGG", "74ALVC164245",
                "Package_SO:TSSOP-48_6.1x12.5mm_P0.5mm", "SN74ALVC164245DGGR", "C7128"),
     "1T45": ("Logic_LevelTranslator", "SN74LVC1T45DBV", "SN74LVC1T45",
@@ -214,18 +237,17 @@ def slot_bus(p5v: Net, p3v3: Net, gnd: Net) -> SlotBus:
     def fpga(name: str) -> Net:
         return b.net(name)
 
-    # --- data: SN74LVC8T245. A = FPGA, B = slot. DIR low = B->A (slot -> FPGA). ---
-    d = b.ic("8T245")
-    b.tie(n3, *_named(d, "V_{CCA}"))
-    b.tie(n5, *_named(d, "V_{CCB}"))  # fused +5V, never +5V_SLOT
+    # --- data: SN74LVCR2245A on +3V3 alone (26 ohm built into every output, HW-16).
+    # A = FPGA, B = slot. DIR low = B->A (slot -> FPGA); the symbol calls DIR "A->B". ---
+    d = b.ic("LVCR2245")
+    b.tie(n3, *_named(d, "VCC"))
     b.tie(g, *_named(d, "GND"))
-    b.tie(fpga("slot_d_dir"), *_named(d, "DIR"))
-    b.tie(fpga("slot_d_oe_n"), *_named(d, "~{OE}"))
+    b.tie(fpga("slot_d_dir"), *_named(d, "A->B"))
+    b.tie(fpga("slot_d_oe_n"), *_named(d, "CE"))
     for i in range(8):
-        b.tie(fpga(f"slot_d{i}"), *_named(d, f"A{i + 1}"))
-        b.tie(b.net(f"SLOT_D{i}"), *_named(d, f"B{i + 1}"))
-    b.c(C_100N, n3, g)  # VCCA
-    b.c(C_100N, n5, g)  # VCCB (pins 23 and 24 are adjacent: one capacitor)
+        b.tie(fpga(f"slot_d{i}"), *_named(d, f"A{i}"))
+        b.tie(b.net(f"SLOT_D{i}"), *_named(d, f"B{i}"))
+    b.c(C_100N, n3, g)  # VCC
 
     # --- address: 74ALVC164245, A0-A15. A = FPGA, B = slot. Either DIR low = B->A. ---
     a = b.ic("164245")

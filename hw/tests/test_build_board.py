@@ -164,6 +164,12 @@ def carrier_nl(tmp_path_factory):
     return nlmod.load(out / "carrier.net")
 
 
+STALE_BOARD = pytest.mark.xfail(
+    strict=True, reason="plan 1b Task 1 changed the netlist (U1 is a TSSOP-20 LVCR2245A, "
+    "one cap fewer); the committed board is rebuilt in Task 5, which removes this mark")
+
+
+@STALE_BOARD
 def test_board_matches_netlist(carrier_board, carrier_nl):
     """Every part is on the board with the netlist's pad nets and fields (R8, R9)."""
     refs = {f.GetReference() for f in carrier_board.GetFootprints()}
@@ -202,11 +208,12 @@ def _pad(fp, num):
     return next(p for p in fp.Pads() if p.GetNumber() == num)
 
 
+@STALE_BOARD
 def test_decoupling_caps_within_2mm(carrier_board):
     """Each [decouple] entry (cap = "U.pin", or a list of pins for a shared cap) has the
     cap's supply pad within 2 mm (pad edge to pad edge) of every pin it serves."""
     dec = tomllib.loads(PLACEMENT.read_text())["decouple"]
-    assert len(dec) == 18
+    assert len(dec) == 17
     for cap, pins in dec.items():
         c = fp_of(carrier_board, cap)
         supply = [p for p in c.Pads() if p.GetNetname() != "GND"]
@@ -222,7 +229,7 @@ def test_decoupling_caps_within_2mm(carrier_board):
 
 
 def test_every_ic_supply_pin_has_a_cap(carrier_nl):
-    """The [decouple] table covers each IC's rail pins (U1's VCCB pair share one cap)."""
+    """The [decouple] table covers each IC's rail pins."""
     covered = set()
     for pins in tomllib.loads(PLACEMENT.read_text())["decouple"].values():
         covered |= set([pins] if isinstance(pins, str) else pins)
