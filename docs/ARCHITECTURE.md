@@ -134,11 +134,13 @@ pipeline. The dispatch loop, forcing and card I/O may stay inline assembly.
 The bytecode the VM runs is defined in [BYTECODE.md](BYTECODE.md): tvix's shape
 (stack VM, constant pool and code per chunk, explicit thunk placement, in-place
 update) with two 65816 adjustments recorded in [DECISIONS.md](DECISIONS.md) D17.
-Until the on-target compiler exists (L5), `tools/nbc` on the host produces `.nbc`
-**test fixtures** from `.nix` sources — test-only by construction (D7,
-`checks.fixture-purity`), Rust by D16 — and `scripts/scoreboard.py` runs the
-vendored tvix corpus (`tests/corpus/tvix/`) through it and the VM. That count is
-the headline metric.
+`tools/nbc` on the host produces `.nbc` **test fixtures** from `.nix` sources —
+test-only by construction (D7, `checks.fixture-purity`), Rust by D16 — and
+`scripts/scoreboard.py` runs the vendored tvix corpus (`tests/corpus/tvix/`)
+through it and the VM. That count is the headline metric. The on-target
+compiler (L5, [COMPILER.md](COMPILER.md)) is a port of nbc that writes the
+same image byte for byte; nbc stays as its oracle, and the scoreboard runs
+with it too (`--on-target`), the VM compiling every test itself.
 
 **String context must stay here.** Nix tracks which store paths a string value depends
 on, so `"${pkgs.hello}/bin/hello"` makes the referring derivation depend on `hello`.

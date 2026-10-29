@@ -8,8 +8,8 @@
 | **L1** | `sha256.v`, `storepath.v`, testbench vs NIST and host `nix` | **done — M1 achieved** |
 | **L2** | Card in a machine: register map, verilate, a2bus device, patched mame | **done — M2 achieved** (gated by the ROM-free harness; MAME glue written, needs a romset) |
 | **L3** | Memory model: heap port, `keycam.v`, `alu64.v`, collector, CPU nursery | **done** — card side (memory engine, `DATA`/`TAG`, `ALLOC`/`RESERVE`, `FOLLOW`, `HASH_STREAM`, `LOOKUP`, `ALU64`, `MARK`/`COMPACT`) and the CPU-side nursery (`target/heap/nursery.s`: bump alloc, Cheney in RAM, one-burst promotion). D6 measured: `just bench-nursery` |
-| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — the bytecode compiler is complete (2026-10-26): `nbc` refuses nothing in the vendored corpus, tvix's own notyetpassing tests included. Scoreboard 645 / 656: 0 fail, 0 error, 0 need GS/OS, 0 unsupported -- every corpus test passes but tvix's own 11 notyetpassing. Interpreter speed stopped at -37.5% (2026-10-27); next: capacity, then M3 (the roadmap below).** The history: `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
-| **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | **in progress** (D33: C, a port of nbc, which is its oracle; [COMPILER.md](COMPILER.md)) — stages 1 to 4 done: rnix's tokens, rnix's syntax tree, nbc's AST and nbc's image byte for byte over every `.nix` in the repository and tens of thousands of fuzzed mutants and generated programs each, imports read through GS/OS (`checks.front`); every test compiled on the target (`checks.scoreboard-target`, 645 / 656), printed by the target (`A2MIN_PRINT`), and typed at it a line at a time (`checks.repl`) -- M3 in simulation |
+| **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — the bytecode compiler is complete (2026-10-26): `nbc` refuses nothing in the vendored corpus, tvix's own notyetpassing tests included. Scoreboard 645 / 656: 0 fail, 0 error, 0 need GS/OS, 0 unsupported -- every corpus test passes but tvix's own 11 notyetpassing. Interpreter speed stopped at -37.5% (2026-10-27); M3 reached in simulation (2026-10-28); next: the roadmap below.** The history: `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
+| **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | **done in simulation** (2026-10-28; D33: C, a port of nbc, which stays its oracle; [COMPILER.md](COMPILER.md)) — all four stages: rnix's tokens, rnix's syntax tree, nbc's AST and nbc's image byte for byte over every `.nix` in the repository and tens of thousands of fuzzed mutants and generated programs each, imports read through GS/OS (`checks.front`); every test compiled on the target (`checks.scoreboard-target`, 645 / 656), printed by the target (`A2MIN_PRINT`), and typed at it a line at a time (`checks.repl`) -- M3 in simulation; on the real machine it waits for the card (HARDWARE.md) |
 | **L6** | SHA-256 of strings, ATerm, `derivation` primop, string context; `NARHASH` with file I/O (D21) | **in progress** — `builtins.hashString "sha256"` on the card (`HASH_PUSH` for a young string, `HASH_STREAM` for a mature one, `sha256.c` without a card), matching Nix on FIPS padding edges; `md5`, `sha1` and `sha512` on the CPU (`hashes.c`). **`derivation`** ([DERIVATION.md](DERIVATION.md)): input-addressed, byte-identical to the host -- ATerm, `hashDerivationModulo`, output and `.drv` paths from the card's `HASH_FINAL` `P3`; `derivation.nix` embedded verbatim. **String context** carries inputs through `+`, `"${}"`, `concatStringsSep`, `toString`, `substring`, `baseNameOf`, `dirOf`, so a chain of derivations matches the host. **Fixed-output derivations** (`outputHash`, every `fetchurl`): the path from the declared hash (base16, nix32, Base64, SRI; md5, sha1, sha256, sha512; flat and NAR), and the modulo hash a dependent sees, as the host computes them. `drvPath` (`=`) context, the context builtins, `toFile` and `currentSystem` too (Phase B of the roadmap below, complete 2026-10-26). Next for L6: `NARHASH`, which needs file I/O (L7) |
 | **HW** | The physical card: board design as code, bus interface, capture, fab ([HARDWARE.md](HARDWARE.md), [hw/README.md](../hw/README.md)) | **in progress** — plan 1 of 3 done (2026-10-29): `nix develop .#hw` (KiCad 10, SKiDL, Freerouting), eight `hw-*` gates each proven able to fail, and the bus carrier for an iCESugar-Pro routed and order-ready (`nix build .#hw-carrier-fab`). Nothing fabricated; no IIgs on the bench yet. Next: plan 2 (the core's `mem_ready`, one card-clock constant) and plan 3 (board gateware, carrier bitstream, bring-up) -- the hardware roadmap below |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | **started, in simulation** (2026-10-26): the file builtins call GS/OS (`gsos.c`, [GSOS.md](GSOS.md), D30) and a2min answers from a mounted directory; the FST's symlink is defined (a `$F1` file holding its target). The driver, the FST itself, the store and fetching are not started |
@@ -92,7 +92,41 @@ For the software side, found while designing the hardware (not yet acted on):
 - ARCHITECTURE.md's 11.2k LUT4 is the `-noabc9` count; nextpnr places 14.7k (60% of
   a 25F).
 
-## Roadmap (2026-10-27, next): capacity, then M3
+## Roadmap (2026-10-29, proposed): after M3
+
+**Proposed, not yet agreed with Chris** -- the order is a suggestion. M3
+runs in simulation (`just repl`; the roadmap below), and what it found
+comes first. Each item by the vm-change skill, committed when its gates
+pass.
+
+1. **A list that does not fit the nursery.** A list is allocated in the
+   nursery whole, so one built at once that does not fit it is `E_NOMEM`:
+   `genList` reserves its elements' thunks with the list, ~44 bytes an
+   element, and stops at ~1,460 elements, where Nix goes on (COMPILER.md
+   "Stage 4", "What the session found"). M3's session met it at once; any
+   real program will. A list past the nursery has to be built where it
+   will live -- reserved on the card, or in pieces with a collection
+   between them, its elements filled in after.
+2. **The typed line, a little further.** A line's relative paths are
+   FIXTURE_PWD's and its imports are refused, where `nix-instantiate -E`
+   resolves both against the current directory: GS/OS's prefix is the
+   IIgs's. Nesting ends at 80 parentheses, where rnix goes to 511: the
+   parser recurses through every precedence level for each, and precedence
+   climbing would recurse once. Bindings that carry
+   from line to line (`x = 1`) are Nix's REPL's and not `-E`'s: Chris's
+   call whether M3's loop should have them.
+3. **M3 on the real machine.** `--repl` reads and writes GS/OS's standard
+   input and output, which on the IIgs are the ORCA shell's (or the
+   `.CONSOLE` driver's); the same binary under MAME with a romset (D13),
+   then on the card -- the hardware track ([HARDWARE.md](HARDWARE.md), its
+   plan 1, the `.#hw` toolchain and the bus carrier).
+4. **M4's last step**: the `.drv` written to disk, which needs GS/OS file
+   writes (L7) -- the store's first file.
+
+The open items that need no milestone are under "Open, independent of M4"
+below.
+
+## Roadmap (2026-10-27, reached 2026-10-28): capacity, then M3
 
 Agreed with Chris after speed step 3. The speed is enough for the
 milestones -- at the IIgs's 2.8 MHz one derivation evaluates in about 0.4 s,
@@ -182,11 +216,9 @@ gates pass:
    run and every mutation mode (`A2MIN_PRINT=1`); ~~**4c.** a line typed
    in~~ **done** (2026-10-28): `repl.c`, `a2min --repl`, `just repl`; a
    session of 68 typed lines answers as the host does (`checks.repl`).
-4. **Next, found by M3's session: a list that does not fit the nursery.** A
-   list is allocated in the nursery whole, so one built at once that does
-   not fit it is `E_NOMEM`: `genList` reserves its elements' thunks with the
-   list, ~44 bytes an element, and stops at ~1,460 elements, where Nix goes
-   on (COMPILER.md "Stage 4", "What the session found").
+
+**Reached 2026-10-28**: M3 in simulation. What the session found is the
+next roadmap's first item.
 
 ## Roadmap (2026-10-26, next): the VM's last errors, then GS/OS in simulation
 
@@ -561,7 +593,7 @@ a2min.
 
 - **`LOOKUP`**: a decision for Chris ("Next actions" below). (Floats, the
   other, were decided -- soft-float in C -- and are done: [FLOAT.md](FLOAT.md).)
-- **Bank 0** (16,299 bytes, 4,181 under the C stack's floor at `$7000`):
+- **Bank 0** (16,399 bytes, 4,081 under the C stack's floor at `$7000`):
   the value stack (4 KB) and CTAB (2 KB) are the biggest entries in its
   ledger; at fixed addresses in the free `$0400-$1FFF` they would give the
   stack or bank 0 6 KB more, if the access they compile to costs no cycles. (The md5/sha1/sha512 tables do not need
@@ -579,14 +611,21 @@ a2min.
   (8 KB are not), as before speed step 3 (measured at c8e1d71): the views
   and the result in one instruction. A program under no stress keeps such
   strings young and is not affected.
-- **a2min's printer** shows `«repeated»` for a list printed twice when it is
-  one object, where Nix prints it again (its printer tracks `Value*`s, and a
-  returned value is a copy). No corpus test shows it yet.
+- **10,000 pairs are `E_NOMEM` under GC stress**, after two mature
+  collections (`builtins.concatLists` of a 100-by-100 `genList` of pairs,
+  M3's session's heavy line), alone as in a session; why is not yet looked
+  into. Under no stress it answers, and the REPL's light session leaves it
+  out for its GC-stress pass.
+- **The printers** -- a2min's, and the VM's (`print.c`), which is held to
+  it -- show `«repeated»` for a list printed twice when it is one object,
+  where Nix prints it again (its printer tracks `Value*`s, and a returned
+  value is a copy). No corpus test shows it yet; `eval-okay-print-rules`
+  shows the cases where they agree.
 - **`CHUNK_MAX`** (256 chunks a program): nbc writes an image with more,
   and the VM refuses it at load (`E_BADNBC`) -- honest, but late. A
   position fixture reached 259 (the embedded `derivation.nix` is many
   chunks) and was split. nbc should refuse it by name at compile time.
-- **The `eval-fail` corpus**, and **L5** (self-hosting, D7's exit).
+- **The `eval-fail` corpus.** (L5, D7's exit, is done in simulation.)
 
 ## Next actions (L4)
 
@@ -940,6 +979,8 @@ number rises by widening the lowering and the VM together, one slice at a time
 6. Every external tool and file -- ORCA/C, the disk-image tools, nixpkgs, the
    corpus, and the ROMs you must supply -- is in [SOURCES.md](SOURCES.md), with
    its hash and the terms to find it again.
+7. To see where it has got to: `just repl`, and type Nix at the VM -- each
+   line compiled, run and printed by it, on a2min.
 
 ## Standing gates
 
@@ -980,7 +1021,21 @@ number rises by widening the lowering and the VM together, one slice at a time
   stripped), and no compiled `.nbc` carries a store path or digest that is not a
   literal in its `.nix` source. Self-tests by planting each violation first.
 - **`checks.nbc-opcodes`** — BYTECODE.md, `opcodes.rs` and `opcodes.h` are one
-  table; self-tests by changing one VM opcode in a copy.
+  table; self-tests by changing one VM opcode in a copy. And `nbc_tables.h`,
+  the on-target compiler's copy of nbc's tables, `derivation.nix` and the
+  error names, is the generator's output exactly (`gen-nbc-tables.py`).
+- **`checks.front`** — the on-target compiler against nbc, stage by stage
+  (COMPILER.md): rnix's tokens and syntax tree, nbc's AST and nbc's image
+  byte for byte, for every `.nix` in the repository and 20,000 fuzzed
+  programs each; then 25 planted front-end bugs, each caught.
+- **`checks.scoreboard-target`** — the scoreboard again with every test
+  compiled by the VM itself (`--on-target`, `a2min --run-nix`), under the
+  same ratchet, and the fixtures under GC stress. Both scoreboard checks set
+  `A2MIN_PRINT=1`: the VM prints every answer too, held to a2min's printer
+  byte for byte, in every mode.
+- **`checks.repl`** — M3: a session of typed lines whose transcript is the
+  host's answers' (`scripts/repl-session.py`), a light one under GC stress,
+  and four planted REPL bugs.
 - **Every stretch idea sits behind a measurement gate.** Parallel mark engines,
   `NEXTOP` dispatch assist, and stack ports are all unproven. Enthusiasm is not
   evidence.

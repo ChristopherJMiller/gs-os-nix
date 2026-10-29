@@ -8,6 +8,11 @@ Three routes, for three different jobs. All need `nix develop`.
 | 1. MAME debugger | `just m2-mame` | yes | Higher-fidelity confirmation |
 | 2. ProDOS disk | `just disk` | yes | Interactive, and the route for L4+ |
 
+On route 0 the VM can be typed at, too: `just repl` (`a2min --repl`) reads
+lines from standard input as GS/OS's console, and the VM compiles, runs and
+prints each one itself (M3 in simulation, [COMPILER.md](COMPILER.md) "Stage 4").
+`a2min --run-nix <vm> <file.nix>` does the same for a file.
+
 ## Route 0 — minimal 65816 harness (the gating check)
 
 ```sh
