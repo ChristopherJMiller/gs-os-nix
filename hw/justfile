@@ -67,7 +67,7 @@ fab: carrier
       && python3 -m hw.tools.fab --board hw/carrier/carrier.kicad_pcb \
            --sch build/hw/carrier/carrier.kicad_sch --out build/hw/fab \
       && python3 hw/tools/check_fab.py --selftest --board hw/carrier/carrier.kicad_pcb \
-           --sch build/hw/carrier/carrier.kicad_sch \
+           build/hw/fab \
       && python3 hw/tools/check_fab.py --board hw/carrier/carrier.kicad_pcb build/hw/fab
 
 # The renders alone: build/hw/fab/render-{top,bottom}.png and layers/*.svg.

@@ -150,8 +150,7 @@ in
 
     # The order package's contents: gerbers, drill, one CPL row per machine-placed part.
     hw-fab = hwCheck "fab" ''
-      python3 hw/tools/check_fab.py --selftest --board hw/carrier/carrier.kicad_pcb \
-        --sch ${carrierBuild}/carrier.kicad_sch
+      python3 hw/tools/check_fab.py --selftest --board hw/carrier/carrier.kicad_pcb ${carrierFab}
       python3 hw/tools/check_fab.py --board hw/carrier/carrier.kicad_pcb ${carrierFab}
     '' [ "^HW FAB SELFTEST OK" "^HW FAB OK" ];
   };

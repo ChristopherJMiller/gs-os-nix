@@ -2,7 +2,7 @@
 """hw-fab: the JLCPCB order package is complete.
 
     python3 hw/tools/check_fab.py --board BOARD.kicad_pcb DIR                    # HW FAB OK
-    python3 hw/tools/check_fab.py --selftest --board BOARD.kicad_pcb --sch SCH   # HW FAB SELFTEST OK
+    python3 hw/tools/check_fab.py --selftest --board BOARD.kicad_pcb DIR         # HW FAB SELFTEST OK
 
 DIR is what `hw/tools/fab.py` wrote. It must hold:
 
@@ -12,13 +12,13 @@ DIR is what `hw/tools/fab.py` wrote. It must hold:
   `Assembly = "hand"` nor board copper (`Fab = "pcb"`), and no row for any other;
 * bom.csv, both renders, ibom.html, schematic.pdf and layers/*.svg, non-empty.
 
-The selftest builds the package from a temporary copy of the board with Edge.Cuts
-deleted. KiKit may refuse it, or the zip may lose its outline gerber; either way the
-package must not pass.
+The selftest plants faults in copies of a built package (a gerber and the drill removed
+from the zip, CPL rows removed, doubled or added for J1 and a hand part, a render emptied
+or removed); each must be found with its own message, and the unmutated package must pass.
 """
 import argparse
 import csv
-import subprocess
+import shutil
 import sys
 import tempfile
 import zipfile
@@ -76,47 +76,100 @@ def problems(d: Path, board) -> list[str]:
     return out
 
 
-def selftest(board_path: Path, sch: Path) -> int:
+def _copy(pkg: Path, dst: Path) -> Path:
+    shutil.copytree(pkg, dst)
+    return dst
+
+
+def _zip_drop(d: Path, keep) -> None:
+    z = d / "gerbers.zip"
+    with zipfile.ZipFile(z) as zin:
+        items = [(i, zin.read(i)) for i in zin.infolist() if keep(i.filename)]
+    with zipfile.ZipFile(z, "w") as zout:
+        for i, data in items:
+            zout.writestr(i, data)
+
+
+def _cpl_edit(d: Path, edit) -> None:
+    p = d / "cpl.csv"
+    with p.open() as fh:
+        rd = csv.DictReader(fh)
+        names, rows = rd.fieldnames, list(rd)
+    rows = edit(rows)
+    with p.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, names, lineterminator="\n")
+        w.writeheader()
+        w.writerows(rows)
+
+
+def _hand_ref(board) -> str:
+    return next(r for r in sorted(f.GetReference() for f in board.GetFootprints())
+                if r not in placed_refs(board) and r != "J1")
+
+
+MUTATIONS = {
+    "Edge_Cuts gerber removed": (
+        lambda d, b: _zip_drop(d, lambda n: "EdgeCuts" not in n and "Edge_Cuts" not in n),
+        "no Edge_Cuts gerber"),
+    "drill files removed": (
+        lambda d, b: _zip_drop(d, lambda n: not n.lower().endswith(".drl")),
+        "no drill file"),
+    "gerbers.zip missing": (lambda d, b: (d / "gerbers.zip").unlink(), "gerbers.zip is missing"),
+    "CPL row for R1 removed": (
+        lambda d, b: _cpl_edit(d, lambda rows: [r for r in rows if r["Designator"] != "R1"]),
+        "0 rows for R1"),
+    "CPL row for R1 doubled": (
+        lambda d, b: _cpl_edit(d, lambda rows: rows + [r for r in rows
+                                                       if r["Designator"] == "R1"]),
+        "2 rows for R1"),
+    "CPL row for J1 added": (
+        lambda d, b: _cpl_edit(d, lambda rows: rows + [{**rows[0], "Designator": "J1"}]),
+        "row for J1, which is hand-fitted"),
+    "CPL row for a hand part added": (
+        lambda d, b: _cpl_edit(d, lambda rows: rows + [{**rows[0],
+                                                        "Designator": _hand_ref(b)}]),
+        "which is hand-fitted or board copper"),
+    "render-top.png emptied": (lambda d, b: (d / "render-top.png").write_bytes(b""),
+                               "render-top.png is missing or empty"),
+    "render-bottom.png removed": (lambda d, b: (d / "render-bottom.png").unlink(),
+                                  "render-bottom.png is missing or empty"),
+}
+
+
+def selftest(board_path: Path, pkg: Path) -> int:
+    """Plant each fault in a copy of the built package; each must be found as its own message."""
+    board = pcbnew.LoadBoard(str(board_path))
+    bad = 0
+    base = problems(pkg, board)
+    if base:
+        print(f"selftest: the unmutated package already fails: {base[:3]}")
+        bad += 1
     with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
-        board = pcbnew.LoadBoard(str(board_path))
-        for dr in list(board.GetDrawings()):
-            if dr.GetLayer() == pcbnew.Edge_Cuts:
-                board.RemoveNative(dr)
-        copy = tmp / "carrier.kicad_pcb"
-        pcbnew.SaveBoard(str(copy), board)
-        fab = Path(__file__).with_name("fab.py")
-        if not fab.is_file():
-            print(f"selftest: {fab} does not exist")
-            return 1
-        r = subprocess.run([sys.executable, str(fab), "--board", str(copy), "--sch", str(sch),
-                            "--out", str(tmp / "out")], capture_output=True, text=True)
-        if r.returncode == 0:
-            found = problems(tmp / "out", board)
-            if not any("Edge_Cuts" in p for p in found):
-                print("selftest: a package built without Edge.Cuts was not found incomplete "
+        for i, (name, (mutate, expect)) in enumerate(MUTATIONS.items()):
+            d = _copy(pkg, Path(tmp) / f"m{i}")
+            for p in [d, *d.rglob("*")]:
+                p.chmod(p.stat().st_mode | 0o200)
+            mutate(d, board)
+            found = problems(d, board)
+            if not any(expect in p for p in found):
+                print(f"selftest: planted fault '{name}' was not found as {expect!r} "
                       f"(got {found[:3]})")
-                return 1
-        else:
-            print("selftest: fab.py refused the board without Edge.Cuts: "
-                  f"{(r.stderr.strip().splitlines() or ['(no message)'])[-1]}")
+                bad += 1
+    if bad:
+        return 1
     print("HW FAB SELFTEST OK")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("dir", type=Path, nargs="?")
+    ap.add_argument("dir", type=Path)
     ap.add_argument("--board", type=Path, required=True)
-    ap.add_argument("--sch", type=Path)
-    ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--selftest", action="store_true",
+                    help="plant each fault in a copy of the built package DIR")
     a = ap.parse_args(argv)
     if a.selftest:
-        if not a.sch:
-            ap.error("--selftest needs --sch")
-        return selftest(a.board, a.sch)
-    if not a.dir:
-        ap.error("DIR is required")
+        return selftest(a.board, a.dir)
     found = problems(a.dir, pcbnew.LoadBoard(str(a.board)))
     for p in found:
         print(f"HW FAB: {p}")
