@@ -37,7 +37,7 @@ carrier:
 
 # The board: carrier.kicad_pcb and carrier.kicad_pro from the netlist and placement.toml,
 # then the edge gate (selftest first). This starts a fresh, unrouted board, so it discards a
-# route: run `route` after it.
+# route: run `route` after it, then `artwork` (a fresh board has no art).
 board: carrier
     cd {{justfile_directory()}}/.. \
       && python3 hw/tools/build_board.py build/hw/carrier/carrier.net hw/carrier/placement.toml \
@@ -47,7 +47,7 @@ board: carrier
 
 # Route the carrier with Freerouting (minutes; the result is not reproducible, so the
 # routed board is committed), then the DRC and parity gate on it (selftest first).
-# Starts from `board`'s placement; run `board` first after changing placement.toml.
+# Starts from `board`'s placement; run `board` first after changing placement.toml, and `artwork` after.
 route PASSES="20":
     cd {{justfile_directory()}}/.. \
       && python3 hw/tools/route.py hw/carrier/carrier.kicad_pcb --passes {{PASSES}} \
@@ -73,11 +73,20 @@ fab: carrier
 # The renders alone: build/hw/fab/render-{top,bottom}.png and layers/*.svg.
 render: fab
 
-# Refresh the board pictures in hw/README.md from the fab renders. Run after the board changes.
-readme-images: fab
+# The silkscreen art (name, open-source-hardware logo, ASCII art; hw/carrier/artwork.toml)
+# applied to the committed board, in place, without touching copper. Idempotent. Run it after
+# `board` or `route`, which both rewrite the board and drop the art. Then the edge and DRC gates.
+artwork: carrier
     cd {{justfile_directory()}}/.. \
-      && install -m 644 build/hw/fab/render-top.png hw/img/carrier-top.png \
-      && install -m 644 build/hw/fab/render-bottom.png hw/img/carrier-bottom.png
+      && python3 -m hw.tools.artwork hw/carrier/carrier.kicad_pcb hw/carrier/artwork.toml \
+      && just -f hw/justfile gate-board
+
+# Refresh the pictures in hw/README.md: hw/img/carrier-{iso,top,bottom}.png, 3D renders with
+# every package, the J2 socket body and the silkscreen art. Needs KiCad's 3D model library, so
+# run it in `nix develop .#hw-render`, not `.#hw`. Run after the board changes.
+readme-images:
+    cd {{justfile_directory()}}/.. \
+      && python3 -m hw.tools.render --board hw/carrier/carrier.kicad_pcb --out hw/img
 
 # The edge and DRC gates (selftest first) on the committed board. DRC needs the netlist, so
 # this runs after `carrier`. It does not route.

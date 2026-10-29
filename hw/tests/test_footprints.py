@@ -169,3 +169,30 @@ def test_library_is_regenerated(tmp_path):
     assert sorted(p.name for p in written) == sorted(p.name for p in COMMITTED.iterdir())
     for p in written:
         assert p.read_bytes() == (COMMITTED / p.name).read_bytes(), p.name
+
+
+COMMITTED_MODELS = Path(__file__).resolve().parents[1] / "lib" / "gsnix.3dshapes"
+
+
+def test_sodimm_model_is_regenerated(tmp_path):
+    written = footprints.write_models(tmp_path / "gsnix.3dshapes")
+    assert sorted(p.name for p in written) == sorted(p.name for p in COMMITTED_MODELS.iterdir())
+    for p in written:
+        assert p.read_bytes() == (COMMITTED_MODELS / p.name).read_bytes(), p.name
+
+
+def test_sodimm_model_matches_the_socket():
+    """The approximate body: 5.2 mm housing over the bosses, latches inside the ejector width,
+    and marked approximate."""
+    text = footprints.sodimm_model()
+    assert text.startswith("#VRML V2.0 utf8") and "APPROXIMATE" in text
+    pts = [tuple(float(v) * 2.54 for v in chunk.split())
+           for blk in text.split("point [")[1:] for chunk in blk.split("]")[0].split(",")]
+    xs, ys, zs = zip(*pts)
+    assert max(zs) == pytest.approx(g.SODIMM_HEIGHT_MM + 1.0, abs=0.01)   # latch tops
+    assert min(zs) == 0
+    assert max(xs) == pytest.approx(g.SODIMM_EJECTOR_W_MM / 2, abs=0.01)
+    assert min(xs) == pytest.approx(-g.SODIMM_EJECTOR_W_MM / 2, abs=0.01)
+    housing_h = max(z for x, _, z in pts if abs(x) < g.SODIMM_HOUSING_LEN_MM / 2 - 0.01)
+    assert housing_h == pytest.approx(g.SODIMM_HEIGHT_MM, abs=0.01)
+    assert max(abs(y) for y in ys) == pytest.approx(g.SODIMM_HOUSING_HALF_MM, abs=0.01)

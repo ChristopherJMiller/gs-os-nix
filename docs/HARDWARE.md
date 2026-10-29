@@ -615,6 +615,8 @@ Inside `nix develop .#hw`, from the repo root:
 | `just -f hw/justfile route [PASSES]` | Freerouting (default 20 passes; minutes), then the DRC and parity gate |
 | `just -f hw/justfile fab` | the BOM gate, the package in `build/hw/fab`, then the fab gate |
 | `just -f hw/justfile render` | the renders (runs `fab`) |
+| `just -f hw/justfile artwork` | the silkscreen art (`hw/carrier/artwork.toml`) onto the board, without touching copper; after `board` or `route` |
+| `just -f hw/justfile readme-images` | the README's 3D renders in `hw/img`; needs the optional `nix develop .#hw-render` shell (KiCad's 3D models) |
 | `just -f hw/justfile check` | every `check_*.py` locally, in gate order, without re-routing |
 
 Each recipe runs the check's selftest before the check. `nix flake check` runs the same

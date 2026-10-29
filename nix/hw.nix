@@ -87,6 +87,25 @@ in
     else
       pkgs.mkShell { name = "gs-os-nix-hw-linux-only"; };
 
+  # devShells.<system>.hw-render: the hw shell plus KiCad's 3D model library (a large
+  # download), only for the README renders (`just -f hw/justfile readme-images`). No check
+  # and no package uses it, so `nix flake check` and `nix develop .#hw` never fetch the
+  # library. GSNIX_3DMODEL_DIR is our own models, the checkout's hw/lib/gsnix.3dshapes.
+  renderShell =
+    if pkgs.stdenv.hostPlatform.isLinux then
+      pkgs.mkShell (hwEnv // {
+        name = "gs-os-nix-hw-render";
+        packages = tools ++ [ pkgs.just pkgs.trellis ];
+        KICAD10_3DMODEL_DIR = "${libs.packages3d}/share/kicad/3dmodels";
+        shellHook = ''
+          export GSNIX_3DMODEL_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/hw/lib/gsnix.3dshapes"
+          echo "gs-os-nix hw-render  --  the hw shell plus KiCad's 3D models, for the renders"
+          echo "  kicad-cli $(kicad-cli version 2>&1 | head -1)"
+        '';
+      })
+    else
+      pkgs.mkShell { name = "gs-os-nix-hw-render-linux-only"; };
+
   checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
     hw-tests = hwCheck "tests" ''
       python3 -m pytest -q hw/tests && echo 'HW TESTS OK'
