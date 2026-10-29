@@ -19,6 +19,7 @@ kicad-cli and KiKit rewrite the .kicad_pro and write a .kicad_prl (ruling R21).
 """
 import argparse
 import csv
+import os
 import shutil
 import subprocess
 import sys
@@ -30,8 +31,10 @@ import pcbnew
 LAYERS = ["F.Cu", "B.Cu", "F.Silkscreen", "Edge.Cuts"]
 
 
-def run(cmd: list[str], cwd: Path | None = None) -> None:
-    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+def run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
+    """Run `cmd`, with `env` added to the environment; exit with its output if it fails."""
+    full_env = {**os.environ, **env} if env else None
+    r = subprocess.run(cmd, cwd=cwd, env=full_env, capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"fab: {' '.join(cmd[:3])} failed ({r.returncode}):\n{r.stdout}{r.stderr}")
 
@@ -58,14 +61,15 @@ def write_cpl(pos: Path, dest: Path, skip: set[str]) -> int:
     return len(rows)
 
 
-def ibom_command(board: Path, dest: Path) -> list[str]:
-    """The Interactive HTML BOM under a virtual X server, as `ibom.html` in `dest`.
+# The iBOM's own headless switch: it never creates a wx.App, so it needs no X server. Under
+# xvfb-run it failed now and then on a loaded build machine (wx found no display and GTK
+# segfaulted), with both `xvfb-run -a` and `-d`.
+IBOM_ENV = {"INTERACTIVE_HTML_BOM_NO_DISPLAY": "1"}
 
-    `-d` (--auto-display), not `-a`: `-a` sleeps a fixed 3 s and runs the command whether or
-    not Xvfb is up, and on a loaded machine wx then finds no display and GTK segfaults.
-    `-d` waits for Xvfb's -displayfd, which it writes once the server takes connections.
-    """
-    return ["xvfb-run", "-d", "generate_interactive_bom", "--no-browser",
+
+def ibom_command(board: Path, dest: Path) -> list[str]:
+    """The Interactive HTML BOM as `ibom.html` in `dest`. Run it with IBOM_ENV."""
+    return ["generate_interactive_bom", "--no-browser",
             "--dest-dir", str(dest), "--name-format", "ibom",
             "--include-tracks", str(board)]
 
@@ -90,8 +94,8 @@ def build(board_src: Path, sch_src: Path, out: Path) -> None:
         shutil.copy(kk / "bom.csv", out / "bom.csv")
         write_cpl(kk / "pos.csv", out / "cpl.csv", not_placed(pcbnew.LoadBoard(str(board))))
 
-        # interactive BOM (needs a display for its wx import)
-        run(ibom_command(board, tmp / "ibom"))
+        # interactive BOM, headless
+        run(ibom_command(board, tmp / "ibom"), env=IBOM_ENV)
         shutil.copy(tmp / "ibom" / "ibom.html", out / "ibom.html")
 
         # renders, board only

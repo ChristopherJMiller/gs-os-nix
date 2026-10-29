@@ -33,7 +33,6 @@ let
     freerouting
     kikit
     interactive-html-bom
-    xvfb-run
     verilator
   ];
 
