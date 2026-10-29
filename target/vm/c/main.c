@@ -47,8 +47,15 @@ static void diag_write(void);
 /* FIRST in this file, and this file first in the link: the load file's entry
  * point is the first function of the first object, and the first cut had
  * err_exit here -- a2min entered it with garbage and longjmp'd through an
- * unset buffer. */
+ * unset buffer. One run, or M3's loop of them (repl.c), each vm_once. */
 void vm_entry(void)
+{
+    front_entry();
+}
+
+/* One run: the VM's state set up, then a stage, or an image loaded, run and
+ * its answer left in RESULT (and printed, if a2min asks) */
+void vm_once(void)
 {
     uint16_t i;
     obj_true    = STATIC_PTR(&true_s);

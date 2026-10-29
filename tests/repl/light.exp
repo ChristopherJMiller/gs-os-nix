@@ -1,0 +1,59 @@
+7
+"hello world"
+[ 1 2 3 ]
+{ a = 1; b = 2; }
+25
+2
+3
+7
+14
+[ 2 4 6 ]
+[ 3 4 5 ]
+4950
+[ "a" "m" "z" ]
+"{\"a\":[1,2,{\"b\":null}],\"c\":\"s\"}"
+{ x = [ 1 2.5 true ]; }
+"xycxy"
+[ "bbb" ]
+[ "a" [ ] "b" [ ] "c" ]
+[ 1 2 3 ]
+"a-b-c"
+"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+"bcd"
+6
+"float"
+3
+0.3
+9223372036854775807
+{ success = false; value = false; }
+{ success = false; value = false; }
+"/nix/store/7a0ijvk1fjl7b368pxc225rfx6vmig8l-x.drv"
+14000
+[ { a = 1; } «repeated» { y = «repeated»; } ]
+{ "a b" = 2; "if" = 1; or = 3; }
+"a\${b} $ \n"
+[ [ ] { } [ [ ] ] ]
+/b/c
+true
+{ a = false; b = true; }
+{ a = 2; }
+{ b = 2; }
+{ k = 1; }
+{ a = 2; b = 3; }
+2
+-1
+{ name = "hello"; version = "2.10"; }
+"1 a  1"
+error: E_DIVZERO
+error: E_THROW "boom"
+error: E_ABORT "stop"
+error: E_NOATTR
+error: E_TYPE
+error: E_ASSERT
+error: E_PARSE
+error: E_UNSUP
+error: E_GSOS "readFile"
+2
+4
+"three"
+[ "after the CRs" ]

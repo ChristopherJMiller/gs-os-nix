@@ -1279,11 +1279,15 @@ uint16_t compile_file(const struct xn *program)
  * the image at IMAGE_BASE and its length at RESULT_ADDR */
 void compile_dump(void)
 {
-    uint16_t n = *(volatile uint16_t *)SRC_LEN_ADDR;
-    struct xn *x;
+    *(uint16_t *)RESULT_ADDR = compile_source(*(volatile uint16_t *)SRC_LEN_ADDR);
+}
+
+/* The n bytes at SRC_BASE parsed, lowered and compiled into IMAGE_BASE; the
+ * image's length */
+uint16_t compile_source(uint16_t n)
+{
     parse_file((const uint8_t *)SRC_BASE, n);
-    x = lower_file((const uint8_t *)SRC_BASE, n);
-    *(uint16_t *)RESULT_ADDR = compile_file(x);
+    return compile_file(lower_file((const uint8_t *)SRC_BASE, n));
 }
 
 /* --run-nix (a2min): the same, the image left for vm_entry to load and run.

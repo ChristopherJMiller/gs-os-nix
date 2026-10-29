@@ -60,6 +60,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <sstream>
 #include <string>
@@ -756,7 +757,8 @@ std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &see
 // (docs/COMPILER.md, scripts/front-diff.py).
 constexpr uint32_t SRC_BASE = 0x0D0000, FRONT_OUT = 0x0F0000;
 uint8_t front_mode = 0;                   // 0 run the image; 1 --lex; 2 --cst; 3 --ast; 4 --compile;
-                                          // 5 --run-nix, compiled on the target and run
+                                          // 5 --run-nix, compiled on the target and run;
+                                          // 6 --repl, lines typed (M3)
 const char *compile_out = nullptr;       // --compile's image file
 // What the VM printed (A2MIN_PRINT) against what a2min prints: a line each.
 // A difference is an error line of its own, which the scoreboard counts.
@@ -837,8 +839,8 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     // to standard output through GS/OS, and that must be what a2min prints --
     // the target's printer held to this one, in every mode a run can be in.
     const char *pr = std::getenv("A2MIN_PRINT");
-    const bool target_print = pr && pr[0] == '1' && (front_mode == 0 || front_mode == 5);
-    ram[0x0337] = target_print ? 1 : 0;
+    const bool target_print = (pr && pr[0] == '1' && (front_mode == 0 || front_mode == 5)) || front_mode == 6;
+    ram[0x0337] = target_print ? 1 : 0;         // --repl: the VM's printing is its only output
     const char *mount = std::getenv("A2MIN_MOUNT");
     if (mount && *mount && !gsos.mount(mount)) { std::fprintf(stderr, "A2MIN_MOUNT must be /prefix=dir\n"); return 2; }
     if (front_mode == 3 || front_mode == 4 || (front_mode == 5 && !gsos.mounts.empty())) gsos.mount("/h=/");
@@ -848,7 +850,16 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         gsos_on = true;
         ram[0x0334] = gsos.mounts.empty() ? 0 : 1;
     }
-    if (front_mode) {
+    if (front_mode == 6) {                  // --repl: what is typed, from the file or standard input
+        if (nbc_path) {
+            std::ifstream f(nbc_path, std::ios::binary);
+            if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }
+            gsos.console_in.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        } else {
+            gsos.console_in.assign(std::istreambuf_iterator<char>(std::cin), std::istreambuf_iterator<char>());
+        }
+        ram[0x0336] = front_mode;
+    } else if (front_mode) {
         std::ifstream f(nbc_path, std::ios::binary);
         if (!f) { std::fprintf(stderr, "cannot open %s\n", nbc_path); return 2; }
         const std::vector<uint8_t> src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -889,6 +900,16 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         read_chunk_kinds(std::vector<uint8_t>(&ram[NBC_BASE], &ram[NBC_BASE] + n));
     }
 
+    if (front_mode == 6) {                  // the session as the VM wrote it, and nothing else
+        std::fwrite(gsos.console_out.data(), 1, gsos.console_out.size(), stdout);
+        // the phase counters are each line's own (vm_once clears them): the last line's
+        std::fprintf(stderr, "a2min --repl: %llu instructions, %llu CPU cycles; the last line: %u collections, "
+                     "%u bytes promoted, %u of mature space\n",
+                     static_cast<unsigned long long>(cpu.instructions), static_cast<unsigned long long>(cpu.cycles),
+                     ram32(STATS), ram32(STATS + 8), ram32(STATS + 32));
+        if (!halted) { std::printf("error: did not halt\n"); return 1; }
+        return 0;
+    }
     std::printf("a2min --run-nbc %s: %llu instructions, %llu CPU cycles, %llu slot accesses\n",
                 nbc_path, static_cast<unsigned long long>(cpu.instructions),
                 static_cast<unsigned long long>(cpu.cycles),
@@ -1196,6 +1217,10 @@ int main(int argc, char **argv) {
         front_mode = 4;
         compile_out = argc >= 5 ? argv[4] : nullptr;
         return run_nbc(argv[2], argv[3], false);
+    }
+    if (argc >= 3 && (std::string(argv[1]) == "--repl" || std::string(argv[1]) == "--repl-gc-stress")) {
+        front_mode = 6;                     // M3: [input], else standard input; the transcript out
+        return run_nbc(argv[2], argc >= 4 ? argv[3] : nullptr, std::string(argv[1]) == "--repl-gc-stress");
     }
     if (argc >= 4 && (std::string(argv[1]) == "--run-nix" || std::string(argv[1]) == "--run-nix-gc-stress")) {
         front_mode = 5;                     // a .nix compiled by the VM, then run by it: one run

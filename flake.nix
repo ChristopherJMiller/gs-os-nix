@@ -279,6 +279,31 @@
               | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
           '';
 
+        # M3 (docs/COMPILER.md "Stage 4"): a session of typed lines, each compiled,
+        # run and printed by the VM, the transcript as the host's answers make it
+        # (scripts/repl-session.py) -- the full session, whose heavy lines fill
+        # mature space across lines, then the light one under GC stress; then
+        # planted REPL bugs, each of which must be caught.
+        repl = pkgs.runCommandCC "check-repl"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/target ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            vm=${ours.cvm}/cvm.bin
+            python3 scripts/repl-session.py --a2min ./build/a2min --vm "$vm" | tee "$out"
+            python3 scripts/repl-session.py --session light --gc-stress --a2min ./build/a2min --vm "$vm" | tee -a "$out"
+            python3 scripts/repl-session.py --self-test --session light --a2min ./build/a2min | tee -a "$out"
+            grep -q "^REPL SESSION OK (session)" "$out"
+            grep -q "^REPL SESSION OK (light, GC stress)" "$out"
+            grep -q "^REPL SESSION SELF-TEST OK" "$out"
+          '';
+
         # The verb gate (DECISIONS.md, CARD-ISA.md): a verb must be justified by a
         # measured comparison against the 65816 doing the same work, or it gets
         # deleted. `just economics` does that card-side on synthetic operands;

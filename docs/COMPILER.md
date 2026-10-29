@@ -350,10 +350,39 @@ a string's too); no passing test's answer had either. The VM pays bank 0
 4 bytes, the call (`print_result` tests the flag itself: in `vm_entry` the
 test cost 25), and each run 81 cycles for it.
 
-**4c. A typed line** (`repl.c`). A prompt, a line read from standard input,
-compiled as a file with no name (no directory: positions are none, as for
-nbc's unit tests; a relative path is FIXTURE_PWD's, as everywhere), run,
-printed, and the VM reset for the next line -- each line its own
-evaluation, as `nix-instantiate --eval -E` is. a2min's standard input and
-output are the console. The gate: a session of typed lines, every fixture's
-expression among them, answers as the scoreboard does.
+**4c. A typed line** (`repl.c`). A prompt (`nix> `), a line read from
+standard input through GS/OS (`GetStdRefNum`, `Read`) to a CR -- what the
+IIgs's Return key sends -- or an LF, compiled as a file with no name (no
+directory, so no positions, and an import is refused, as nbc refuses one with
+nothing to resolve it against; a relative path is FIXTURE_PWD's, as
+everywhere), run, printed, and the next -- each line its own evaluation, as
+`nix-instantiate --eval --strict -E` is. `vm_entry` calls into the front end
+(`front_entry`), which makes one run (`vm_once`, the old `vm_entry`) or, for
+`FRONT_REPL`, one a line. a2min's standard input and output are the
+console's: `a2min --repl <vm> [<input>]` writes the session as the VM wrote
+it, and `just repl` is a terminal on the VM.
+
+The gate (`scripts/repl-session.py`, `checks.repl`): a session of typed
+lines -- every kind of value, the builtins, a derivation, errors, an empty
+line, a stretch of CR line ends -- whose transcript must be the one the
+host's answers make (`nix-instantiate --eval --strict -E` a line; for a line
+Nix rejects too, the VM's error line, as for an eval-fail fixture). Its heavy
+lines fill mature space across lines, so that a later line's mature
+collection takes an earlier line's garbage (measured: one alone collects
+nothing, the sixth of six collects mature space and answers right); a light
+session, the same less those, runs under GC stress. Four planted REPL bugs
+must be caught: a CR that does not end a line, an empty line compiled, no
+prompt, a line read after the last one.
+
+**4c done** (2026-10-28): the session's 68 lines answer as the host's, 991M
+cycles in all (the heavy lines are most of it), and the light session's 59
+under GC stress. Bank 0 +6, the new `vm_entry`; each run some cycles more for
+the call through the front end.
+
+**What the session found** -- the VM's, not the REPL's, and recorded as
+STATUS.md's next capacity item: a list is allocated in the nursery whole, so
+one built at once that does not fit it is `E_NOMEM` -- `genList` reserves
+its elements' thunks with the list, ~44 bytes an element, and stops at about
+1,460 elements, where Nix goes on. And under GC stress, where every value is
+promoted at once, the heavy line that builds 10,000 pairs is `E_NOMEM`
+after two mature collections, alone as in a session.

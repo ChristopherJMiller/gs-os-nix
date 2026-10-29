@@ -49,6 +49,8 @@ struct GsosFs {
     static constexpr uint16_t STD_IN = 0xFF0A, STD_OUT = 0xFF0B, STD_ERR = 0xFF0C;
     static constexpr uint16_t paramRangeErr = 0x53;
     std::string console_out, console_err;
+    std::string console_in;                     // what is typed: a2min --repl's input
+    size_t console_at = 0;
 
     bool mount(const char *spec) {
         const char *eq = std::strchr(spec, '=');
@@ -152,6 +154,14 @@ struct GsosFs {
             return 0;
         }
         case 0x2012: {                                  // Read
+            if (r16(pb + 2) == STD_IN) {                // the console: what is left of the input
+                const uint32_t buf = r32(pb + 4) & 0xFFFFFF, req = r32(pb + 8);
+                uint32_t n = 0;
+                while (n < req && console_at < console_in.size())
+                    wr(buf + n++, static_cast<uint8_t>(console_in[console_at++]));
+                w32(pb + 12, n);
+                return n == 0 && req != 0 ? eofEncountered : 0;
+            }
             auto it = open.find(r16(pb + 2));
             if (it == open.end()) return invalidRefNum;
             Open &o = it->second;

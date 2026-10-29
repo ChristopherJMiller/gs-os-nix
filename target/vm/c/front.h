@@ -118,6 +118,13 @@ uint16_t compile_file(const struct xn *program);
 void compile_dump(void);
 /* --run-nix (a2min): the source at SRC_BASE compiled, for the VM to run */
 void compile_run(void);
+/* the n bytes at SRC_BASE compiled into IMAGE_BASE: the image's length */
+uint16_t compile_source(uint16_t n);
+
+/* --- repl.c ------------------------------------------------------------------------ */
+/* The line read, for front_run to compile: its length (the line is at
+ * SRC_BASE), beside the compiler's and the printer's registers */
+#define REPL_LEN (*(uint16_t *)(FRONT_CSTATE + 0xF0UL))
 
 /* The compiler's registers: the top of bank 12, above the import chain,
  * so they cost bank 0 nothing */

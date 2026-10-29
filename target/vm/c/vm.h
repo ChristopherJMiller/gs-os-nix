@@ -82,14 +82,17 @@
 #define FRONT_MODE_ADDR  0x0336UL   /* a2min sets it: 0 run the image at IMAGE_BASE; FRONT_LEX
                                        the source's tokens, FRONT_CST its syntax tree,
                                        FRONT_AST its AST, FRONT_COMPILE its image;
-                                       FRONT_RUN compiles it and runs the image
+                                       FRONT_RUN compiles it and runs the image;
+                                       FRONT_REPL reads it a line at a time
                                        (COMPILER.md, a2min --lex, --cst, --ast,
-                                       --compile and --run-nix) */
+                                       --compile, --run-nix and --repl) */
 #define FRONT_LEX        1
 #define FRONT_CST        2
 #define FRONT_AST        3
 #define FRONT_COMPILE    4
 #define FRONT_RUN        5
+#define FRONT_REPL       6          /* M3: lines read from standard input, each compiled,
+                                       run and printed (repl.c) */
 #define PRINT_ADDR       0x0337UL   /* a2min sets it: the VM prints its answer to standard
                                        output itself, as a2min does (print.c) */
 #define SRC_LEN_ADDR     0x0338UL   /* a2min sets it: the source's length (u16), at SRC_BASE */
@@ -409,6 +412,9 @@ obj_t *make_apply(obj_t *f, obj_t *x);
 uint16_t stack_ptr(void);
 void stack_check(void);
 void print_result(void);            /* print.c: if PRINT_ADDR, the answer as a2min prints it, to standard output */
+uint16_t gsos_call(uint16_t num, void *pb);   /* gsos.c: a GS/OS call through the stack entry; its error */
+void vm_once(void);                 /* main.c: one run -- a stage, or an image loaded, run and printed */
+void front_entry(void);             /* repl.c: one run, or M3's loop of them (FRONT_REPL) */
 void stack_need(uint16_t n);        /* E_NOMEM unless n bytes more than STACK_MIN are free */
 
 /* --- gc.c: the nursery collector --------------------------------------------------- */

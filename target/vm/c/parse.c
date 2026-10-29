@@ -758,6 +758,10 @@ int front_run(void)
     case FRONT_AST: ast_dump(); break;
     case FRONT_COMPILE: compile_dump(); break;
     case FRONT_RUN: compile_run(); return 1;
+    case FRONT_REPL:                            /* the line repl.c read */
+        if (REPL_LEN > 0xFF00U) nomem();        /* longer than the source bank */
+        compile_source(REPL_LEN);
+        return 1;
     default: err_exit(E_BADNBC);
     }
     return 0;

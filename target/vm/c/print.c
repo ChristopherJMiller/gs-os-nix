@@ -41,23 +41,6 @@ struct pstate { uint16_t out, ref, nseen, nframes; uint8_t full; };
 struct gs_std { uint16_t pcount, prefix, ref; };
 struct gs_io  { uint16_t pcount, ref; void *buf; uint32_t req, got; };
 
-/* GS/OS's stack entry, as gsos.c's */
-static uint16_t gs_call(uint16_t num, void *pb)
-{
-    uint16_t err;
-    asm {
-        lda pb+2
-        pha
-        lda pb
-        pha
-        lda num
-        pha
-        jsl 0xE100B0
-        sta err
-    }
-    return err;
-}
-
 /* --- the text --------------------------------------------------------------------------- */
 static void flush(void)
 {
@@ -68,7 +51,7 @@ static void flush(void)
     w.buf = OUT;
     w.req = PS.out;
     w.got = 0;
-    gs_call(0x2013, &w);                        /* Write; an error has nowhere to be said */
+    gsos_call(0x2013, &w);                        /* Write; an error has nowhere to be said */
     PS.out = 0;
 }
 
@@ -338,7 +321,7 @@ void print_result(void)
     s.pcount = 2;
     s.prefix = 11;                              /* standard output */
     s.ref = 0;
-    gs_call(0x2037, &s);                        /* GetStdRefNum */
+    gsos_call(0x2037, &s);                        /* GetStdRefNum */
     PS.ref = s.ref;
     if (*(volatile uint8_t *)RESULT_STAT_ADDR == 0xFF) {
         code = *(volatile uint8_t *)RESULT_ERR_ADDR;

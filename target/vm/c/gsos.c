@@ -68,6 +68,10 @@ static uint16_t gs_call(uint16_t num, void *pb)
     return err;
 }
 
+/* The same, for the printer and the REPL: the console's calls (print.c,
+ * repl.c) */
+uint16_t gsos_call(uint16_t num, void *pb) { return gs_call(num, pb); }
+
 static uint8_t kind_of(uint16_t ftype, uint32_t aux)
 {
     if (ftype == FT_DIR) return K_DIR;

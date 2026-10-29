@@ -298,6 +298,16 @@ scoreboard *flags: build-a2min cvm nbc-build
 
 scoreboard-update: (scoreboard "--update")
 
+# M3: typed lines, each compiled, run and printed by the VM (COMPILER.md "Stage 4"):
+# the session against the host's answers, then the light one under GC stress.
+repl-session: build-a2min cvm
+    python3 scripts/repl-session.py --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin
+    python3 scripts/repl-session.py --session light --gc-stress --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin
+
+# Type at the VM yourself: an expression a line; the end of the input (Ctrl-D) ends it.
+repl: build-a2min cvm
+    ./sim/build_a2min/a2min --repl target/build/cvm.bin
+
 # The same, the VM compiling every test itself (a2min --run-nix; COMPILER.md "Stage 4").
 scoreboard-target *flags: build-a2min cvm
     A2MIN_PRINT=1 python3 scripts/scoreboard.py --on-target --a2min ./sim/build_a2min/a2min \

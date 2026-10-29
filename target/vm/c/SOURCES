@@ -24,3 +24,4 @@ parse.c
 lower.c
 compile.c
 print.c
+repl.c
