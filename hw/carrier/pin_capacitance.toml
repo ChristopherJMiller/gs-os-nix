@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: CERN-OHL-S-2.0
+# Pin capacitance of every IC that sits on an Apple II slot (J1) net, for hw-load
+# (hw/tools/check_load.py). Keyed by the part VALUE as it appears in the netlist.
+#
+#   ci        input capacitance (pF) of a pin that is only an input
+#   cio       capacitance (pF) of an I/O pin, or of an output pin whose datasheet gives
+#             only Co (the 541's Y pins, the 1G07's Y pin)
+#   io_pins   the package pin numbers that use cio; every other pin uses ci
+#   basis     "typ" or "max": which column of the datasheet the figures come from. TI prints
+#             these capacitances only as typical values (VCC = 3.3 V, TA = 25 C) and gives no
+#             maximum, so every entry here is "typ". Apple's 15 pF limit is a design limit,
+#             and the 0.10 pF/mm copper figure is itself an estimate.
+#   url, table  the datasheet and the table in it
+#
+# A pin on a J1 net whose part is missing here is a failure of the gate, not a zero.
+
+[parts."SN74LVCR2245A"]
+ci = 4.0
+cio = 5.5
+io_pins = [2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18]
+basis = "typ"
+url = "https://www.ti.com/lit/ds/symlink/sn74lvcr2245a.pdf"
+table = "SCAS581N, 7.5 Electrical Characteristics: Ci (control inputs) 4 pF, Cio (A or B port) 5.5 pF, VCC 3.3 V"
+
+[parts."74ALVC164245"]
+ci = 6.5
+cio = 8.5
+# the slot-side data pins (the ones on J1 nets); the FPGA-side pins are on no J1 net
+io_pins = [2, 3, 5, 6, 8, 9, 11, 12, 13, 14, 16, 17, 19, 20, 22, 23]
+basis = "typ"
+url = "https://www.ti.com/lit/ds/symlink/sn74alvc164245.pdf"
+table = "SCAS416Q, 6.6 Electrical Characteristics, VCCA = 2.7 V to 3.6 V: Ci (control inputs) 6.5 pF, Cio (A or B port) 8.5 pF"
+
+[parts."SN74LVC1T45"]
+ci = 2.5
+cio = 6.0
+io_pins = [3, 4]
+basis = "typ"
+url = "https://www.ti.com/lit/ds/symlink/sn74lvc1t45.pdf"
+table = "SCES515N, 5.5 Electrical Characteristics: Ci (DIR) 2.5 pF, Cio (A or B port) 6 pF, VCCA = VCCB = 3.3 V, TA = 25 C"
+
+[parts."74LVC541"]
+ci = 4.0
+cio = 5.5
+io_pins = [11, 12, 13, 14, 15, 16, 17, 18]
+basis = "typ"
+url = "https://www.ti.com/lit/ds/symlink/sn74lvc541a.pdf"
+table = "SCAS298O, 5.5 Electrical Characteristics: Ci 4 pF; the Y outputs use Co 5.5 pF (the datasheet's output figure), VCC 3.3 V"
+
+[parts."74LVC2G17"]
+ci = 4.0
+io_pins = []
+basis = "typ"
+url = "https://www.ti.com/lit/ds/symlink/sn74lvc2g17.pdf"
+table = "SCES381N, 7.5 Electrical Characteristics: Ci 4 pF at VCC 3.3 V (no output capacitance is given; the 1Y and 2Y outputs are not on any J1 net)"
+
+[parts."74LVC1G07"]
+ci = 4.0
+cio = 5.0
+io_pins = [4]
+basis = "typ"
+url = "https://www.ti.com/lit/ds/symlink/sn74lvc1g07.pdf"
+table = "SCES296AG, 5.5 Electrical Characteristics: Ci 4 pF (A), Co 5 pF (Y, open drain), VCC 3.3 V"

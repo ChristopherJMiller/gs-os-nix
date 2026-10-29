@@ -103,3 +103,11 @@ gate-board: carrier
 # the bus section's intent (`netlist`); then edge, drc (with power-track width); then (via
 # `fab`) bom and the package's fab gate. Never routes or rewrites the board.
 check: test carrier netlist gate-board fab
+
+# The slot-pin load gate (selftest first): every J1 net <= 15 pF (Apple HWR 5-13). Standalone,
+# and not part of `gate-board` or `check` until the re-routed board passes (plan 1b task 5).
+load: carrier
+    cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/check_load.py --selftest \
+      && python3 hw/tools/check_load.py --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb
