@@ -36,7 +36,8 @@ step toward the same bitstream running in a real slot.
   (no 1 MHz throttle), but it only looks like DRAM -- no I/O space, no IRQ, no DMA, an
   8 MB ceiling, and DRAM-style RAS/CAS timing to emulate. Facts in "The memory slot"
   below.
-- Onboard USB. An external JTAG adapter is acceptable *(owner)*.
+- Onboard USB on rev A. An external JTAG adapter is acceptable *(owner)*. (The carrier
+  uses its module's USB, HW-13.)
 - Gowin parts, until Apicula's miscompute bugs close (HW-1).
 - Reflashing the card from the IIgs, and any change to [CARD-ISA.md](CARD-ISA.md).
   Both are possible later; both belong to the software side.
@@ -232,6 +233,13 @@ VCOM port: `openFPGALoader -c cmsisdap`). It keeps a 1×3 UART header **J4** (10
 series per line) and the SAFE jumper **JP1** on spare PIOs (`uart_tx`, `uart_rx`,
 `safe_n`). Rejected: a Cortex-10 header on the carrier, which would connect to nothing.
 Rev A keeps its JTAG header as designed.
+
+Readout on the carrier: the JTAG user-register readout (ER1 on the ECP5 `JTAGG`
+primitive, see Capture) goes through the module's iCELink, a CMSIS-DAP JTAG adapter
+and the same one that programs the module, so the host tool needs a CMSIS-DAP-capable
+JTAG driver (openocd's `cmsis-dap`). J4's UART carries the filtered stream. **I**
+(inferred, not yet exercised; plan 3 builds it). On rev A both go through the Cortex-10
+header and an external adapter.
 
 ### HW-14 -- The carrier powers the module through a diode, and makes only its own 3.3 V
 
@@ -459,14 +467,18 @@ Three recorders, behind a passive tap:
 - Triggers follow AtomBusMon: 4-8 masked comparators (address, data, R/W, selects,
   /M2SEL), a sequencer, occurrence counters, pre/post depth.
 - Readout is over **JTAG** (ECP5 `JTAGG`, user register ER1 at IR 0x32), using the same
-  cable that programs the card, and working even while the IIgs is hung. The **UART**
+  adapter that programs the card (on rev A the external one on the Cortex-10 header; on
+  the carrier the module's iCELink over CMSIS-DAP, **I**, HW-13), and working even
+  while the IIgs is hung. The **UART**
   streams filtered card cycles. Exported as VCD / sigrok `.sr` for PulseView.
 - Streaming every cycle needs ~8 MB/s, which only a USB-HS FIFO reaches. Triggered
-  snapshots plus a filtered stream cover timing diagnosis, so there is no onboard USB.
+  snapshots plus a filtered stream cover timing diagnosis, so rev A has no onboard USB. (The carrier's module has one, for programming
+  and this readout.)
 
 ### Programming and recovery *(designer's calls)*
 
-- openFPGALoader with a Tigard (`-c tigard`, $49) or any FT232H/FT2232H board.
+- On the carrier, openFPGALoader through the module's USB (`-c cmsisdap`, HW-13). On
+  rev A, openFPGALoader with a Tigard (`-c tigard`, $49) or any FT232H/FT2232H board.
 - Flash map: user image at 0x000000, golden image at 0x800000, ECP5 jump table at the
   top (`ecpmulti --golden`). The upper half is block-protected, with WP# on a jumper.
 - ECP5 falls back to the golden image on a CRC error or DONE timeout. To also catch a

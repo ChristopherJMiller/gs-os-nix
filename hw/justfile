@@ -84,7 +84,7 @@ gate-board: carrier
       && python3 hw/tools/check_drc.py --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb
 
-# Every gate, locally, in the order `nix flake check` lists them: tests; then (via
+# Every gate, locally, in this order: tests; then (via
 # `carrier`) erc, intent, pinmap; then edge, drc; then (via `fab`) bom and the package's fab
 # gate. Never routes or rewrites the board.
 check: test carrier gate-board fab
