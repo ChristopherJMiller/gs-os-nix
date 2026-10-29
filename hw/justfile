@@ -73,6 +73,12 @@ fab: carrier
 # The renders alone: build/hw/fab/render-{top,bottom}.png and layers/*.svg.
 render: fab
 
+# Refresh the board pictures in hw/README.md from the fab renders. Run after the board changes.
+readme-images: fab
+    cd {{justfile_directory()}}/.. \
+      && install -m 644 build/hw/fab/render-top.png hw/img/carrier-top.png \
+      && install -m 644 build/hw/fab/render-bottom.png hw/img/carrier-bottom.png
+
 # The edge and DRC gates (selftest first) on the committed board. DRC needs the netlist, so
 # this runs after `carrier`. It does not route.
 gate-board: carrier
