@@ -92,36 +92,38 @@ For the software side, found while designing the hardware (not yet acted on):
 - ARCHITECTURE.md's 11.2k LUT4 is the `-noabc9` count; nextpnr places 14.7k (60% of
   a 25F).
 
-## Roadmap (2026-10-29, proposed): after M3
+## Roadmap (2026-10-29): after M3
 
-**Proposed, not yet agreed with Chris** -- the order is a suggestion. M3
-runs in simulation (`just repl`; the roadmap below), and what it found
-comes first. Each item by the vm-change skill, committed when its gates
-pass.
+Agreed with Chris (2026-10-29): long lists first; values that carry over
+between typed lines, as `nix repl` has them; our own FST before the `.drv`
+goes to disk. Items 2 and 4 are designed when they start. Each item by the
+vm-change skill, committed when its gates pass.
 
-1. **A list that does not fit the nursery.** A list is allocated in the
-   nursery whole, so one built at once that does not fit it is `E_NOMEM`:
-   `genList` reserves its elements' thunks with the list, ~44 bytes an
-   element, and stops at ~1,460 elements, where Nix goes on (COMPILER.md
-   "Stage 4", "What the session found"). M3's session met it at once; any
-   real program will. A list past the nursery has to be built where it
-   will live -- reserved on the card, or in pieces with a collection
-   between them, its elements filled in after.
+1. **Long lists** -- designed: [HEAP.md](HEAP.md) "Long lists". Today
+   `sort` gives out at ~493 elements, `filter` at ~971, `genList` at
+   ~1,460, `map` at ~1,995 and any list at ~10,000 (measured 2026-10-29).
+   Step 0: the card's heap grown to what the board keeps for it (16 MB),
+   its size reported by the card. Step 1: every list primop to the
+   nursery's size (~16,000). Step 2: lists past the nursery, to 65,535.
+   Then **big attribute sets and long strings**, the same kind of ceiling,
+   an item of their own.
 2. **The typed line, a little further.** A line's relative paths are
    FIXTURE_PWD's and its imports are refused, where `nix-instantiate -E`
    resolves both against the current directory: GS/OS's prefix is the
    IIgs's. Nesting ends at 80 parentheses, where rnix goes to 511: the
    parser recurses through every precedence level for each, and precedence
-   climbing would recurse once. Bindings that carry
-   from line to line (`x = 1`) are Nix's REPL's and not `-E`'s: Chris's
-   call whether M3's loop should have them.
+   climbing would recurse once. And bindings that carry from line to line
+   (`x = 1`), as `nix repl` has them (Chris, 2026-10-29).
 3. **M3 on the real machine.** `--repl` reads and writes GS/OS's standard
    input and output, which on the IIgs are the ORCA shell's (or the
    `.CONSOLE` driver's); the same binary under MAME with a romset (D13),
    then on the card -- the hardware track ([HARDWARE.md](HARDWARE.md), its
    plan 1, the `.#hw` toolchain and the bus carrier).
 4. **M4's last step**: the `.drv` written to disk, which needs GS/OS file
-   writes (L7) -- the store's first file.
+   writes (L7) -- the store's first file -- and long names: ProDOS allows 15
+   characters and HFS 31, and a store path's name is a 32-character hash and
+   more. **Our own FST first** (Chris, 2026-10-29), the store's home that L7
+   planned, then the `.drv` into it.
 
 The open items that need no milestone are under "Open, independent of M4"
 below.

@@ -472,3 +472,180 @@ that half, so a test has to move an object twice and then use it.
 `eval-okay-tryeval-mature` does that for the one root nothing else reached,
 a catch frame's environment: under mature stress, 1,248 collections inside a
 `tryEval`, then a throw, then the `let`'s variables read through the frame.
+
+## Long lists (design, 2026-10-29)
+
+**Why.** Real Nix programs build and walk lists of thousands and tens of
+thousands of elements; the VM's list primops give out far sooner, with
+`E_NOMEM`. M3's first session met it at once (COMPILER.md "Stage 4", "What
+the session found"). Measured on `a2min --run-nix` (2026-10-29), each primop
+fed a list built by `concatLists`:
+
+| Primop | Works to about | What ends it |
+|---|---|---|
+| `sort`, `partition` | 493 elements | the value stack (1,024 slots): two slots an element |
+| `filter`, `concatMap` | 971 | the value stack: the kept elements, or the mapped lists, staged on it |
+| `genList` | 1,460 | the reservation up front: 44 bytes an element (`make_apply`'s 28, the index's INT 12, the slot 4) |
+| `map` | 1,995 | the reservation up front: 32 bytes an element |
+| `concatLists`, `length`, `elemAt` | 10,193 | the nursery: the result is allocated whole, with its parts live |
+
+Nix has no such ceilings. Chris's decisions (2026-10-29): lists come first
+of the three items after M3, in **two steps** -- every list primop to the
+nursery's size, then lists past the nursery, as big as the card holds;
+**the card's heap grows** for it, since 1 MB cannot hold the lists either
+step asks for; and step 1 covers **every list primop**, big attribute sets
+and long strings becoming a later item of their own.
+
+**Goals.** Step 0: a card heap big enough for the targets, the size the card
+reports rather than a constant. Step 1: every primop that builds or reads a
+list works up to the largest list the nursery can hold (~16,000 elements:
+the list object, 4 bytes an element, has to fit in it). Step 2: lists up to
+65,535 elements (below), allocated on the card when they cannot be young,
+read an element at a time. At each, the answers are the host's, under every
+stress mode.
+
+**Non-goals.** A new list layout -- chunked lists, ropes -- since every
+consumer, the card's tracer and the printer would change with it; counts
+past 65,535; attribute sets past their own ceilings (one over ~4,600
+attributes cannot be young, one over ~1,460 cannot be viewed once mature)
+and strings past 64 KB (`toJSON` of a long list will meet it) -- the later
+item; making long lists fast.
+
+**Anti-goals.** A wrong answer in silence: anything still too big stays a
+loud `E_NOMEM`. Small lists slower: the benchmarks are the gate (D29), and a
+list that fits as today takes today's path. A list the collector can see
+before every slot of it is valid.
+
+**Constraints the design keeps** (each from the code, 2026-10-29):
+
+- **Counts are 16 bits** everywhere -- `AUX16`, the card's tracer
+  ("What the collector traces"), the printer -- which caps a list at 65,535
+  elements (256 KB). Past it means 24-bit counts in the RTL and the C at
+  once: out of scope.
+- **`obj_size` is 16 bits**: a list past 16,383 elements overflows it, and
+  every size computed from a header with it. Step 2 widens every size
+  computation that can see such a list -- `obj_size`, `mature_view`'s check,
+  the stage's copy -- before such a list can exist; overflowing silently
+  copies the wrong number of bytes.
+- **A mature object over `WINDOW_MAX` (20 KB, 5,000 list elements) cannot
+  be viewed**: `deref` of it is `E_NOMEM`. A list that is promoted past that
+  size can be read only an element at a time (`list_elem`, `RELEM`, or
+  `card_read_at` in bursts). Step 1's lists cross it (16,000 elements is 64
+  KB), so step 1 already has to fix the readers its own primops use.
+- **Forcing and type checks read the tag through a view too** -- `force_top`
+  and `FORCE_TOP`, `force_slot`, `view_two`, `force_two_orig`,
+  `force_pop_as`, `typeOf` and the `is*` tests, `values_equal`,
+  `call_enter`, and the thunk update in `force_thunk` -- so `let l = genList
+  (x: x) 15000; in length l` would fail when `l`'s thunk is updated, before
+  `length` runs. *My call:* a whole view of a list too long to view stays
+  `E_NOMEM`, loud, and those paths read the header alone (its tag and
+  count: from the window cache, or 4 bytes across the bus) where the object
+  is mature and too long to view. That is the mature path only -- the young
+  path, which the dispatch loop's macros take inline, is untouched -- and
+  any reader not yet fixed stays loud rather than reading the ring. The
+  benchmarks measure what it costs.
+- **A list may be seen by a collector mid-fill.** Both collectors pass a
+  null pointer through (`gc.c` `evac`; `rtl/a2nix_card.v`, EVAC's null
+  test), so a list whose unfilled slots are null is safe to collect; one
+  with garbage in a slot is not. A collection promotes everything young, so
+  a list being filled may be mature when the next element is stored: stores
+  then go through `store_field` (the barrier), and a young value fills the
+  remembered set (`RSET_N`, 256 entries), whose filling collects again.
+  The card's copier is a semispace copy by the header's count, so a list
+  may not grow its count after allocation: the copy would drop what was
+  reserved past it.
+- **The value stack is 1,024 slots**, the root stack 320: neither may hold
+  a list's elements.
+- **`card_reserve` takes 16 bits**, though the card's `RESERVE` takes a
+  32-bit `LEN` (CARD-ISA.md): a 256 KB list is a C change, not an RTL one.
+  An allocation on the card outside promotion has to keep `card_next` and
+  `card_end` right, and make room first (a mature collection) as promotion
+  does (`MATURE_MARGIN`). Card memory comes back from `RESERVE` with old
+  bytes in it.
+- The VM's usual rules (the vm-change skill): no `obj_t *` C local across
+  anything that collects; bank 0 is nearly full; no 32-bit products
+  (`~UMUL4`).
+
+**Step 0: the card's heap, grown.** The harness card's heap is 1 MB, two
+halves of 512 KB (`SPACE_SIZE` in `rtl/a2nix_card.v`, `cardbus.h`,
+`CARD_HALF` in `vm.h`, MAME's `HEAP_BYTES`), and after `MATURE_MARGIN` about
+439 KB can be live. That holds neither step: `genList` keeps ~44 bytes an
+element live, so ~10,000 elements fit, where step 1 asks 15,000; step 2's
+60,000-element `genList` keeps ~2.6 MB live, and `sort`, `filter`,
+`partition` and `tail` hold two or three lists at once. The board has 32 MB
+and its memory map keeps the first 16 MB for the heap (HARDWARE.md HW-12,
+which leaves the heap's size to this side).
+
+- *My call:* the full 16 MB the board keeps, two halves of 8 MB, in the
+  RTL, the harness and MAME together -- unless the measurement of what a
+  mature collection of that much costs says less.
+- The card reports its heap's size (a register, CARD-ISA.md), and the VM
+  reads it at start instead of `CARD_HALF`: the open item "the card's
+  geometry is a constant" (STATUS.md), closed here because a second size
+  would make the constant wrong somewhere.
+- HW-12 and rev A's memory map are the hardware session's: the change is
+  agreed with it and its document updated in the same commit.
+- `regress`, the RTL mutations and every mature-space gate run at the new
+  size; a mature pointer stays a card address with bit 31 clear, which 16
+  MB leaves room for.
+
+**Step 1: every list primop to the nursery's size.**
+
+- *Builders in batches.* A primop that makes new objects per element
+  (`genList`, `map`) allocates its result list first, nulled, roots it, and
+  makes the elements a batch at a time, reserving per batch, so that a
+  collection may fall between batches; each store into the list after one
+  goes through `store_field`. Below one batch, it reserves once as today.
+- *No staging on the value stack.* `filter`, `concatMap`, `sort` and
+  `partition` stage their results on the stack today, and so do
+  `listToAttrs`, `groupBy` and `genericClosure` (two slots an element),
+  `catAttrs`, `zipAttrsWith`, `concatStringsSep` where an element has
+  context or must be coerced, and `toString` of a list. Each builds into a
+  list instead -- `filter`'s and `partition`'s at the input's length, then
+  copied to the exact length (a count may not shrink in place either, for
+  the same reason it may not grow); `sort`'s working buffer a second list.
+  Where the result is a set or a string, step 1 takes it as far as that
+  set's or string's own ceiling, which is the later item's.
+- *Their readers element by element* where the list can be past
+  `WINDOW_MAX`: `elemAt`, `head`, `tail`, `length` and the rest that call
+  `force_pop_as(T_LIST)` and index `ELEMS` read one element (`list_elem`)
+  or the header, not a view of the whole. A read an element at a time
+  takes no view, or turns the ring over between elements as
+  `deep_force_top` does.
+- `++` (`OP_CONCAT`, `run.c`) is a builder too, and in step 1.
+- The 25 `list_alloc` call sites are the builders' list (`prims.c` 12,
+  `run.c` 3, `derivation.c` 5, `json.c` 2, `match.c` 3); most build a few
+  elements and stay as they are.
+
+**Step 2: lists past the nursery (to 65,535 elements).**
+
+- A list whose object does not fit the nursery is `RESERVE`d on the card
+  directly, its header and nulls written there, and filled as step 1 fills
+  a promoted one.
+- Every size computation and offset widened first: `obj_size` and its
+  callers, `store_field`'s offset and the remembered set's (`rs_entry.off`,
+  16 bits), `list_elem`'s, the printer's `rd`. Past 16,383 elements a slot's
+  offset does not fit 16 bits.
+- Every reader of a list's elements audited -- the ~67 places that index
+  `ELEMS` of a view, among them equality and comparison (`data.c`),
+  `deepSeq`, `toJSON`, the derivation's arguments -- to read element by
+  element when the list is mature and long.
+
+**Gates.** Fixtures with the host's answers, each primop past each old
+ceiling. *My call on their modes:* full size in plain runs (and with reserve
+stress, which costs little); smaller variants, still past the old ceilings,
+in the GC-stress, period and mature-stress modes, sized to the cycle budget
+by measurement -- under mature stress every boundary copies all live mature
+data, so a 15,000-element list there would take hours; and excused with no
+card, as `eval-okay-big-operations` is, since the 64 KB nursery alone holds
+none of them. `sort`'s input in a random order, so that its buffer is
+used. A mutation per new rule (a slot not nulled before a collection, a
+store into a promoted list without the barrier, a long list viewed whole,
+an `obj_size` or an offset left 16-bit, a header read where a view is
+needed); the benchmarks the same to the noise, small lists taking today's
+path.
+
+**Left to the builder:** the batch size; when a builder takes the batched
+path; how `sort` lays out its buffer; whether nulling a card list is the
+CPU's bus writes or a card verb (an RTL change, and so a D5 measurement);
+the order the readers are fixed in.
