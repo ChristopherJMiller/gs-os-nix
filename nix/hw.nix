@@ -117,6 +117,15 @@ in
       python3 hw/tools/check_edge.py --selftest hw/carrier/carrier.kicad_pcb
       python3 hw/tools/check_edge.py hw/carrier/carrier.kicad_pcb
     '' [ "^HW EDGE SELFTEST OK" "^HW EDGE OK" ];
+
+    # The routed board: KiCad's DRC (no violations, nothing unconnected) and, from the
+    # carrier netlist, that every footprint and pad net is the netlist's.
+    hw-drc = hwCheck "drc" ''
+      python3 hw/tools/check_drc.py --selftest --netlist ${carrierBuild}/carrier.net \
+        hw/carrier/carrier.kicad_pcb
+      python3 hw/tools/check_drc.py --netlist ${carrierBuild}/carrier.net \
+        hw/carrier/carrier.kicad_pcb
+    '' [ "^HW DRC SELFTEST OK" "^HW DRC OK" ];
   };
 
   packages =lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {

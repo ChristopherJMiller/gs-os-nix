@@ -51,6 +51,11 @@ VIA_MM = 0.6
 VIA_DRILL_MM = 0.3
 EDGE_CLEARANCE_MM = 0.5
 GND = "GND"
+# The "Power" net class (ruling R23): wide tracks for the rails, assigned by net name in
+# the project file (the netlist's rails; no name is written on any track).
+POWER_TRACK_MM = 0.5
+POWER_NETS = ["+5V_SLOT", "+5V", "+5V_MOD", "+3V3", "GND", "+12V_SLOT", "-5V_SLOT",
+              "-12V_SLOT"]
 FIXED = "J1"                               # the fingers: placed from slotgeom
 _SKIP_FIELDS = {"Reference", "Value", "Datasheet", "Description", "Footprint"}
 
@@ -269,9 +274,14 @@ def project_json() -> dict:
             "min_clearance": CLEARANCE_MM, "min_track_width": TRACK_MM,
             "min_via_diameter": VIA_MM, "min_through_hole_diameter": VIA_DRILL_MM,
             "min_copper_edge_clearance": EDGE_CLEARANCE_MM}}},
-        "net_settings": {"classes": [{
-            "name": "Default", "clearance": CLEARANCE_MM, "track_width": TRACK_MM,
-            "via_diameter": VIA_MM, "via_drill": VIA_DRILL_MM}], "meta": {"version": 3}},
+        "net_settings": {
+            "classes": [
+                {"name": "Default", "clearance": CLEARANCE_MM, "track_width": TRACK_MM,
+                 "via_diameter": VIA_MM, "via_drill": VIA_DRILL_MM},
+                {"name": "Power", "clearance": CLEARANCE_MM, "track_width": POWER_TRACK_MM,
+                 "via_diameter": VIA_MM, "via_drill": VIA_DRILL_MM}],
+            "netclass_patterns": [{"netclass": "Power", "pattern": n} for n in POWER_NETS],
+            "meta": {"version": 3}},
         "text_variables": {"LICENSE": "CERN-OHL-S-2.0"},
     }
 

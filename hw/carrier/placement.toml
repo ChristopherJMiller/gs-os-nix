@@ -6,7 +6,7 @@
 # empty band above it, where nothing tall may go; the headers sit above that band.
 [board]
 length_mm = 80.0
-height_mm = 64.0
+height_mm = 68.0
 
 [parts.C1]
 x = 68.0
