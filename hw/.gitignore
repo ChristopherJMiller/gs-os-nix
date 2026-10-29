@@ -1,0 +1,5 @@
+# KiCad's per-user project state, and SKiDL's side files (ruling R22).
+*.kicad_prl
+*.erc
+*.log
+*_sklib.py

@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Hardware tasks. Run inside `nix develop .#hw`. Every recipe runs from the repo
+# root.
+
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# The hardware tests.
+test:
+    cd {{justfile_directory()}}/.. && python3 -m pytest hw/tests
+
+# The whole carrier and its gates (recipe `carrier`), then the bus section alone and the
+# design-intent gate on it (selftest first).
+netlist: carrier
+    cd {{justfile_directory()}}/.. && mkdir -p build/hw \
+      && python3 -m hw.src.slot_bus --netlist build/hw/slot_bus.net \
+      && python3 hw/tools/check_intent.py --selftest build/hw/slot_bus.net \
+      && python3 hw/tools/check_intent.py build/hw/slot_bus.net
+
+# The whole carrier: netlist, schematic, LPF and ERC report in build/hw/carrier, then the
+# gates on them (each selftest first): ERC, design intent (with the module rules), pin map.
+carrier:
+    cd {{justfile_directory()}}/.. && mkdir -p build/hw \
+      && python3 -m hw.carrier.top --out build/hw/carrier \
+      && python3 hw/tools/check_erc.py --selftest && python3 hw/tools/check_erc.py \
+      && python3 hw/tools/check_intent.py --module hw/carrier/icesugar_pro_v1_3.toml \
+           --selftest build/hw/carrier/carrier.net \
+      && python3 hw/tools/check_intent.py --module hw/carrier/icesugar_pro_v1_3.toml \
+           build/hw/carrier/carrier.net \
+      && verilator --lint-only -Wall rtl/board/carrier_top.v \
+      && python3 hw/tools/check_pinmap.py --selftest --pins hw/carrier/pins.toml \
+           --module hw/carrier/icesugar_pro_v1_3.toml --netlist build/hw/carrier/carrier.net \
+           --verilog rtl/board/carrier_top.v --lpf build/hw/carrier/carrier.lpf \
+      && python3 hw/tools/check_pinmap.py --pins hw/carrier/pins.toml \
+           --module hw/carrier/icesugar_pro_v1_3.toml --netlist build/hw/carrier/carrier.net \
+           --verilog rtl/board/carrier_top.v --lpf build/hw/carrier/carrier.lpf
+
+# The board: carrier.kicad_pcb and carrier.kicad_pro from the netlist and placement.toml,
+# then the edge gate (selftest first). This starts a fresh, unrouted board, so it discards a
+# route: run `route` after it.
+board: carrier
+    cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/build_board.py build/hw/carrier/carrier.net hw/carrier/placement.toml \
+           hw/carrier/carrier.kicad_pcb --project hw/carrier/carrier.kicad_pro \
+      && python3 hw/tools/check_edge.py --selftest hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_edge.py hw/carrier/carrier.kicad_pcb
+
+# Route the carrier with Freerouting (minutes; the result is not reproducible, so the
+# routed board is committed), then the DRC and parity gate on it (selftest first).
+# Starts from `board`'s placement; run `board` first after changing placement.toml.
+route PASSES="20":
+    cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/route.py hw/carrier/carrier.kicad_pcb --passes {{PASSES}} \
+      && python3 hw/tools/check_drc.py --selftest --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_drc.py --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb
+
+# The BOM gate, then the JLCPCB package and review artefacts (gerbers, BOM, CPL, ibom,
+# renders, layer SVGs, schematic PDF) in build/hw/fab, then the fab gate on them.
+fab: carrier
+    cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/check_bom.py --selftest --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_bom.py --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb \
+      && python3 -m hw.tools.fab --board hw/carrier/carrier.kicad_pcb \
+           --sch build/hw/carrier/carrier.kicad_sch --out build/hw/fab \
+      && python3 hw/tools/check_fab.py --selftest --board hw/carrier/carrier.kicad_pcb \
+           build/hw/fab \
+      && python3 hw/tools/check_fab.py --board hw/carrier/carrier.kicad_pcb build/hw/fab
+
+# The renders alone: build/hw/fab/render-{top,bottom}.png and layers/*.svg.
+render: fab
+
+# Refresh the board pictures in hw/README.md from the fab renders. Run after the board changes.
+readme-images: fab
+    cd {{justfile_directory()}}/.. \
+      && install -m 644 build/hw/fab/render-top.png hw/img/carrier-top.png \
+      && install -m 644 build/hw/fab/render-bottom.png hw/img/carrier-bottom.png
+
+# The edge and DRC gates (selftest first) on the committed board. DRC needs the netlist, so
+# this runs after `carrier`. It does not route.
+gate-board: carrier
+    cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/check_edge.py --selftest hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_edge.py hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_drc.py --selftest --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_drc.py --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb
+
+# Every gate, locally, in this order: tests; then (via `carrier`) erc, intent, pinmap; then
+# the bus section's intent (`netlist`); then edge, drc (with power-track width); then (via
+# `fab`) bom and the package's fab gate. Never routes or rewrites the board.
+check: test carrier netlist gate-board fab

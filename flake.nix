@@ -55,9 +55,12 @@
       rtlSources = "rtl/sha256_core.v rtl/sha256.v rtl/storepath.v rtl/keycam.v rtl/alu64.v"
         + " rtl/a2nix_card.v";
       rtlTops = [ "sha256_core" "sha256" "storepath" "keycam" "alu64" "a2nix_card" ];
+      # The hardware side (docs/HARDWARE.md): the .#hw shell, its checks and packages.
+      hw = import ./nix/hw.nix;
     in
     {
       devShells = forAll ({ pkgs, ours, ... }: {
+        hw = (hw { inherit pkgs self; }).devShell;
         default = pkgs.mkShell {
           name = "gs-os-nix";
 
@@ -776,9 +779,9 @@
                 | tee -a "$out"
             done
           '';
-      });
+      } // (hw { inherit pkgs self; }).checks);
 
-      packages = forAll ({ ours, ... }: {
+      packages = forAll ({ pkgs, ours, ... }: {
         # Apple II disk tooling, neither of which is in nixpkgs.
         inherit (ours) applecommander cadius;
         # The RTL Verilated into a static library MAME links, and MAME with the card
@@ -792,7 +795,7 @@
         # The VM (docs/VM.md): `nix build .#cvm` -> result/cvm.bin for a2min --run-nbc.
         inherit (ours) cvm;
         default = ours.verilated-card;
-      });
+      } // (hw { inherit pkgs self; }).packages);
 
       apps = forAll ({ pkgs, system, ... }: {
         # Regenerate tests/vectors/l1.txt from the real nix on this host. Run this

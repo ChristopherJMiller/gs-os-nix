@@ -1,6 +1,7 @@
 # Hardware: the physical card
 
-**Status: design, 2026-10-27. Nothing is built yet.** This document is the plan for
+**Status: the carrier is designed and its fab package built (2026-10-28); the owner's
+review and the order are pending, and nothing is fabricated.** This document is the plan for
 turning `rtl/a2nix_card.v` into a card that plugs into a real Apple IIgs, and for how an
 agent designs that card. It records the owner's decisions, the facts they rest on, and
 what is left to whoever builds it. As hardware lands, settled entries move to
@@ -35,7 +36,8 @@ step toward the same bitstream running in a real slot.
   (no 1 MHz throttle), but it only looks like DRAM -- no I/O space, no IRQ, no DMA, an
   8 MB ceiling, and DRAM-style RAS/CAS timing to emulate. Facts in "The memory slot"
   below.
-- Onboard USB. An external JTAG adapter is acceptable *(owner)*.
+- Onboard USB on rev A. An external JTAG adapter is acceptable *(owner)*. (The carrier
+  uses its module's USB, HW-13.)
 - Gowin parts, until Apicula's miscompute bugs close (HW-1).
 - Reflashing the card from the IIgs, and any change to [CARD-ISA.md](CARD-ISA.md).
   Both are possible later; both belong to the software side.
@@ -183,7 +185,8 @@ section.
 
 Carrier bring-up is staged so that a fault cannot reach the machine:
 
-1. Bench: power and JTAG only, no IIgs.
+1. Bench: power and programming only, no IIgs (on the carrier, over the module's own
+   USB; HW-13).
 2. In the IIgs, a **listen-only** bitstream: every data and address buffer disabled
    toward the slot, every open-drain line released, capture recording.
 3. Read-only responses: the `ID` register at `$C0n1`.
@@ -219,6 +222,54 @@ The core's heap is fixed (`SPACE_SIZE`, 512 KB a side, matching MAME's `HEAP_BYT
 Rev A runs the same 1 MB, so the card and MAME behave alike. The SDRAM map reserves its
 first 16 MB for the heap and puts capture's ring above it. Growing the heap is the
 software side's decision.
+
+### HW-13 -- The carrier has no JTAG header; it is programmed over the module's USB
+
+The iCESugar-Pro v1.3 routes JTAG (TCK, TMS, TDI, TDO) and its serial pins (B9, A9)
+only to its on-module iCELink MCU and its own header J1. None reaches the SODIMM
+**V** [module schematic, `hw/carrier/icesugar_pro_v1_3.toml`]. The carrier therefore
+programs and reads the console through the module's USB (iCELink is CMSIS-DAP plus a
+VCOM port: `openFPGALoader -c cmsisdap`). It keeps a 1×3 UART header **J4** (100 Ω in
+series per line) and the SAFE jumper **JP1** on spare PIOs (`uart_tx`, `uart_rx`,
+`safe_n`). Rejected: a Cortex-10 header on the carrier, which would connect to nothing.
+Rev A keeps its JTAG header as designed.
+
+Readout on the carrier: the JTAG user-register readout (ER1 on the ECP5 `JTAGG`
+primitive, see Capture) goes through the module's iCELink, a CMSIS-DAP JTAG adapter
+and the same one that programs the module, so the host tool needs a CMSIS-DAP-capable
+JTAG driver (openocd's `cmsis-dap`). J4's UART carries the filtered stream. **I**
+(inferred, not yet exercised; plan 3 builds it). On rev A both go through the Cortex-10
+header and an external adapter.
+
+### HW-14 -- The carrier powers the module through a diode, and makes only its own 3.3 V
+
+The SODIMM carries only +5 V (pins 2, 4, 6, 8, 10, 12) and GND; the module makes its
+own 3V3, 2V5 and 1V1 **V** [module schematic]. The module ties its USB VBUS straight to
+those 5 V pins, with no diode, so a USB cable would back-power the slot. The carrier
+feeds the module through **D1**, a Schottky (B220A-13-F, LCSC C110481): `+5V` →
+`+5V_MOD`. The carrier's `+3V3` comes from **VR1**, an AP2112K-3.3 (C51118) fed from
+`+5V_MOD`, so the bus section's 3.3 V side tracks the module whether the slot or USB
+supplies it. Rejected: a direct connection (the back-power above). The datasheet gives
+D1's Vf as 0.50 V max at 2 A and states none at 0.5 A; the module's SY8008 bucks have
+headroom either way **I**.
+
+### HW-15 -- The gates as built: each reads what it can prove, and proves it can fail
+
+Departures from the first design, each because the first idea read the wrong artefact:
+
+- `hw-erc` runs SKiDL's `ERC()` on the netlist. Rejected: `kicad-cli` ERC on the
+  generated schematic, which the labels-only schematic (a human artefact) cannot
+  support.
+- `hw-drc` is KiCad DRC plus our own netlist ↔ board parity (`check_drc.py`).
+  Rejected: `--schematic-parity`, for the same reason.
+- `hw-fab` checks the package's contents on mutated copies. Rejected: byte identity,
+  because KiCad stamps dates into gerbers.
+- `hw-intent` states what ERC and DRC cannot see (power-up state, daisy chains, rails,
+  module power) as rules on the netlist, each with a planted mutation. `hw-tests`
+  runs pytest over `hw/tests`.
+
+`kicad-cli` and KiKit run only on temporary copies of the board, so a gate never edits
+the committed one. `hw-timing` and `hw-rtl` are not built yet (plan 3).
 
 ## Facts the design rests on
 
@@ -336,7 +387,7 @@ No /IRQ, /NMI or /DMA in the signal list. RAM2GS puts a CPLD and SDRAM there
                  │  INT IN → INT OUT, DMA IN → DMA OUT (hardware pass-through)                           │
                  │  /RESET held low until FPGA DONE                                                       │
                  │  +5 V ─ polyfuse ─ bucks ─► 3.3 V (and, on the card, 2.5 V VCCAUX, 1.1 V core)       │
-                 │  JTAG 2×5 1.27 mm · UART 1×3 · SAFE jumper · flash WP# jumper                          │
+                 │  JTAG 2×5 1.27 mm (rev A only) · UART 1×3 · SAFE jumper · flash WP# jumper             │
                  └─────────────────────────────────────────────────────────────────────────────────────────┘
    carrier (HW-3): bus section + SODIMM-200 socket ── iCESugar-Pro (LFE5U-25F + 32 MB SDRAM + flash)
    card (rev A):   bus section + LFE5U-25F-6BG256C + W9825G6KH-6 + 128 Mbit SPI flash + oscillator, 4 layers
@@ -360,10 +411,11 @@ No /IRQ, /NMI or /DMA in the signal list. RAM2GS puts a CPLD and SDRAM there
   sees a half-configured card (A2FPGA's CPLD does this).
 - **Power:** polyfuse, then buck converters, with bypassing on all four rails. Target
   **≤ 300 mA at +5 V** so other cards keep their share of the 500 mA; measured on the
-  carrier.
-- **Debug headers:** a shrouded 2×5 1.27 mm Cortex-10 JTAG header (VTref = 3.3 V,
-  nRESET unconnected), which Tigard, FT232H boards, J-Link and CMSIS-DAP probes fit;
-  a 1×3 0.1" UART header (TX, RX, GND).
+  carrier. The carrier differs (HW-14): the module makes its own rails.
+- **Debug headers:** on rev A, a shrouded 2×5 1.27 mm Cortex-10 JTAG header (VTref =
+  3.3 V, nRESET unconnected), which Tigard, FT232H boards, J-Link and CMSIS-DAP probes
+  fit; a 1×3 0.1" UART header (TX, RX, GND). The carrier has no JTAG header (HW-13);
+  it keeps the UART header (J4) and the SAFE jumper (JP1).
 
 ### The integrated card (rev A)
 
@@ -415,40 +467,52 @@ Three recorders, behind a passive tap:
 - Triggers follow AtomBusMon: 4-8 masked comparators (address, data, R/W, selects,
   /M2SEL), a sequencer, occurrence counters, pre/post depth.
 - Readout is over **JTAG** (ECP5 `JTAGG`, user register ER1 at IR 0x32), using the same
-  cable that programs the card, and working even while the IIgs is hung. The **UART**
+  adapter that programs the card (on rev A the external one on the Cortex-10 header; on
+  the carrier the module's iCELink over CMSIS-DAP, **I**, HW-13), and working even
+  while the IIgs is hung. The **UART**
   streams filtered card cycles. Exported as VCD / sigrok `.sr` for PulseView.
 - Streaming every cycle needs ~8 MB/s, which only a USB-HS FIFO reaches. Triggered
-  snapshots plus a filtered stream cover timing diagnosis, so there is no onboard USB.
+  snapshots plus a filtered stream cover timing diagnosis, so rev A has no onboard USB.
+  (The carrier's module has one, for programming and this readout.)
 
 ### Programming and recovery *(designer's calls)*
 
-- openFPGALoader with a Tigard (`-c tigard`, $49) or any FT232H/FT2232H board.
+- On the carrier, openFPGALoader through the module's USB (`-c cmsisdap`, HW-13). On
+  rev A, openFPGALoader with a Tigard (`-c tigard`, $49) or any FT232H/FT2232H board.
 - Flash map: user image at 0x000000, golden image at 0x800000, ECP5 jump table at the
   top (`ecpmulti --golden`). The upper half is block-protected, with WP# on a jumper.
 - ECP5 falls back to the golden image on a CRC error or DONE timeout. To also catch a
   valid-but-broken image, the golden boots first and sets a flash flag, then reloads the
   user image, which clears the flag once it is healthy. After a power cycle with the
   flag still set, the card stays in golden. A SAFE jumper forces golden.
-- JTAG is the last resort and always works.
+- On rev A, JTAG is the last resort and always works. The carrier has no JTAG header: it
+  is programmed over the module's USB (HW-13), so there the USB link is the only path.
 
 ## How the agent designs a board
 
 ```
  hw/
-   pins.toml           RTL port → ball/pad → bank → IO standard: the ONE pin map
-   src/*.py            SKiDL: slot_bus(), power(), debug(), ecp5_25f(), sdram(), flash(), icesugar_socket()
-   carrier/, card/     per board: top.py, placement.toml, the routed .kicad_pcb (committed)
+   src/*.py            SKiDL: slot_bus() and the shared helpers
+   carrier/, card/     per board: top.py, pins.toml (RTL port → ball/pad → bank → IO
+                       standard: that board's ONE pin map), placement.toml, the module map
+                       (carrier: icesugar_pro_v1_3.toml), the routed .kicad_pcb (committed)
+   tools/              build_board, route, fab, footprints, check_*.py
+   tests/              pytest over the above (`hw-tests`)
  rtl/board/            a2bus_phy, capture, mem_bridge, SDRAM controller, per-board tops
 ```
 
-1. **Source:** SKiDL subcircuits. The FPGA's pin nets come *from* `pins.toml`, which also
-   generates the `.lpf`, so schematic and constraints cannot drift.
-2. **Netlist** plus a `.kicad_sch` for people to read and review.
+1. **Source:** SKiDL subcircuits. The FPGA's pin nets come *from* the board's `pins.toml`
+   (`hw/<board>/pins.toml`), which also generates the `.lpf`, so schematic and constraints cannot drift.
+2. **Netlist** plus a `.kicad_sch` for people to read and review. The schematic is
+   schematizer's labels-only mode: the human-readable artefact. The gates read SKiDL's
+   netlist, not the schematic.
 3. **Board:** created from the netlist, then a placement table applied by script
    (`pcbnew`). The fingers and outline come from a parametric script.
 4. **Fanout** *(card only):* a scripted dog-bone generator for the BGA.
 5. **Routing:** DSN → Freerouting → SES. Planes as zones.
-6. **DRC** with `--schematic-parity --refill-zones`.
+6. **DRC:** KiCad's (`--severity-error`, `--refill-zones`, rules from the `.kicad_pro`)
+   plus our own netlist ↔ board parity, both in `check_drc.py`. Not KiCad's
+   `--schematic-parity`, which reads the generated schematic rather than the netlist.
 7. **Renders:** per-layer SVGs and top/bottom PNGs. The agent looks at them; so does a
    person.
 8. **Fab outputs:** `kikit fab jlcpcb --assembly`, plus the Interactive HTML BOM.
@@ -462,12 +526,14 @@ hand-written track that touched no pad onto another net, and DRC missed the shor
 
 | Check | Asserts | Mutation |
 |---|---|---|
-| `hw-erc` | ERC JSON: zero errors | a floating input |
-| `hw-drc` | zero errors, zero unconnected, schematic parity | a track crossing two pads |
-| `hw-pinmap` | netlist ↔ `pins.toml` ↔ board-top RTL ports ↔ `.lpf` agree; bank VCCIO consistent | two balls swapped |
+| `hw-tests` | pytest over `hw/tests` | -- (the tests are the mutations) |
+| `hw-intent` | design intent from the netlist: power-up state, daisy chains, rails, module power (HW-15) | each rule has a planted fault |
+| `hw-erc` | SKiDL's `ERC()` on the netlist: zero errors | a planted second driver |
+| `hw-drc` | KiCad DRC zero errors, zero unconnected; netlist ↔ board parity; power tracks at class width bar short necks (GND exempt) | a deleted track |
+| `hw-pinmap` | netlist ↔ the board's `pins.toml` ↔ board-top RTL ports ↔ `.lpf` agree; bank VCCIO consistent | two balls swapped |
 | `hw-edge` | finger count, pitch, position, bevel keep-out | one finger moved |
 | `hw-bom` | every part has a footprint and an LCSC number | one LCSC number deleted |
-| `hw-fab` | fab outputs regenerate byte-identically | -- |
+| `hw-fab` | the package's contents: layers, drill, one CPL row per assembled ref, renders. Not byte identity: KiCad stamps dates into gerbers | planted faults in a copy of the package |
 | `hw-timing` | nextpnr meets the shared card-clock constant (HW-8) and the capture clock on each board top | the constant raised past what routes |
 | `hw-rtl` | `a2bus_phy`/capture/`mem_bridge` tests: MAME's `read_c0nx`/`write_c0nx` log expanded into TN68 pin waveforms, with injected skew and edge-of-window cases; readout equals the log | sample offset off by one tick |
 
@@ -479,25 +545,103 @@ connector against a real card; the shifters' direction/enable logic.
 ## Staging
 
 1. **Research and this design** -- done when the owner approves this document.
-2. **Toolchain and carrier** (HW-3). Done when:
-   - `nix develop .#hw` and the `hw-*` checks exist, each proven able to fail;
-   - the carrier is designed through the loop: ERC/DRC/parity/pinmap/edge/BOM green,
-     fab outputs produced, renders reviewed by the owner;
-   - the core has `mem_ready` (HW-7), with the wait-state test and its mutation, and
-     MAME and the harness unchanged in behaviour;
-   - the card clock is one constant (HW-8), and MAME's `CARD_CLOCK_HZ` follows it;
-   - `rtl/board/` builds a carrier bitstream that meets timing on the iCESugar-Pro
-     pinout at that clock, with `a2bus_phy` and a capture skeleton passing `hw-rtl`;
-   - the bring-up procedure (HW-9) is written, with its listen-only bitstream.
+2. **Toolchain and carrier** (HW-3). Done when (**done** = by the toolchain-and-carrier
+   plan, plan 1; the rest belongs to plans 2 and 3):
+   - **done:** `nix develop .#hw` and the `hw-*` checks (tests, intent, erc, pinmap, edge,
+     drc, bom, fab) exist, each proven able to fail;
+   - **done, review pending:** the carrier is designed through the loop:
+     ERC/DRC/parity/pinmap/edge/BOM green, fab outputs and renders produced. The owner's
+     review of them is the list under "Owner's review";
+   - plan 2: the core has `mem_ready` (HW-7), with the wait-state test and its mutation,
+     and MAME and the harness unchanged in behaviour;
+   - plan 2: the card clock is one constant (HW-8), and MAME's `CARD_CLOCK_HZ` follows it;
+   - plan 3: `rtl/board/` builds a carrier bitstream that meets timing on the iCESugar-Pro
+     pinout at that clock, with `a2bus_phy` and a capture skeleton passing `hw-rtl` and
+     `hw-timing`. Today `rtl/board/carrier_top.v` is a port-list stub that only
+     `hw-pinmap` reads;
+   - plan 3: the bring-up procedure (HW-9) is written, with its listen-only bitstream.
 3. **Integrated rev A**, designed alongside the carrier's bring-up (HW-9): the same
    gates plus BGA fanout, a 4-layer stackup, and a real JLCPCB quote. Done when it is
    order-ready and reviewed. **Ordered only after the carrier has run in a real IIgs**
    and its findings are folded in.
 
 Ordering the carrier is the owner's call. Without a IIgs, a carrier can be powered,
-programmed over JTAG, and loop-tested with its shifters, but not bus-tested. A *bus
+programmed over the module's USB, and loop-tested with its shifters, but not bus-tested. A *bus
 exerciser* -- an RP2350 on a slot extender, generating TN68 cycles -- would test a card
 with no IIgs. It is not planned.
+
+## The carrier as built
+
+| | |
+|---|---|
+| Outline | **80 mm long × 68 mm** above the finger tab, measured from the committed board. Height was raised from 64 mm so routing could complete; the limit is 69.85 mm (2.75", TN28). |
+| Stackup | 2 layers, 70 footprints. DRC: 0 errors, 0 unconnected. |
+| SODIMM socket | **TE 1473005-4** (LCSC C428482), DDR2 standard type, 5.2 mm module height. Land pattern from TE drawing C-1473005 rev J3, sheet 2; footprint generated by `hw/tools/footprints.py`. |
+| Module map | `hw/carrier/icesugar_pro_v1_3.toml`, from the module schematic (sha256 767cd3f1…) at wuxx/icesugar-pro commit 087e48d. 106 SODIMM pins carry PIOs; banks 0, 1, 2, 3, 6, 7 and 8 are all 3.3 V. Each pin's PIO label is checked against Trellis's site name. |
+| Power | D1 and VR1 (HW-14). |
+| Debug | Module USB, J4, JP1 (HW-13). |
+| Routing | Freerouting 2.4.1, which rejects `--router.copperToEdgeClearanceUm`, so edge clearance is DSN keep-out strips. A last-resort A* finisher in `route.py` joins the nets Freerouting leaves, at each net's class width; it refuses to thin power. Power net class ≥ 0.5 mm. Not reproducible, 15-30 min; the routed board is committed source. |
+| Silkscreen | R/C reference text is hidden (the iBOM shows designators). About 93 silkscreen warnings are left ungated. |
+
+The module lies over the empty band above J2; nothing tall goes there.
+
+**Fab package:** `nix build .#hw-carrier-fab` (under `/nix/store/…-hw-carrier-fab`):
+
+| File | |
+|---|---|
+| `gerbers.zip` | JLCPCB gerbers and drill |
+| `bom.csv` | 21 lines, LCSC numbers; hand-fitted parts included |
+| `cpl.csv` | 66 rows, KiKit's JLC rotation corrections applied; J1, J4, JP1, JP2 excluded (hand-fitted or board copper) |
+| `ibom.html` | Interactive HTML BOM |
+| `render-top.png`, `render-bottom.png`, `layers/*.svg` | what the owner looks at |
+| `schematic.pdf` | the labels-only schematic |
+
+J1, the fingers, is board copper (`Fab = "pcb"`, no LCSC number).
+
+**JLC order options** live on the order form, not in the files: 2 layers, 1.6 mm FR-4,
+ENIG, gold fingers yes, 45° bevel, assembly on top side, BOM and CPL from the package.
+PCBWay is the alternative for hard gold (HW-4).
+
+## Design loop
+
+Inside `nix develop .#hw`, from the repo root:
+
+| Command | Does |
+|---|---|
+| `just -f hw/justfile test` | pytest over `hw/tests` |
+| `just -f hw/justfile carrier` | netlist, schematic, LPF, ERC report in `build/hw/carrier`; then erc, intent and pinmap gates |
+| `just -f hw/justfile netlist` | `carrier`, then the bus section alone and the intent gate on it |
+| `just -f hw/justfile board` | fresh unrouted `carrier.kicad_pcb` from the netlist and `placement.toml`; then the edge gate. **Discards a route.** |
+| `just -f hw/justfile route [PASSES]` | Freerouting (default 20 passes; minutes), then the DRC and parity gate |
+| `just -f hw/justfile fab` | the BOM gate, the package in `build/hw/fab`, then the fab gate |
+| `just -f hw/justfile render` | the renders (runs `fab`) |
+| `just -f hw/justfile check` | every `check_*.py` locally, in gate order, without re-routing |
+
+Each recipe runs the check's selftest before the check. `nix flake check` runs the same
+gates as `hw-*`.
+
+## Owner's review
+
+The agent cannot judge intent. Before ordering, look at the package above for:
+
+1. **Placement** against the slot outline and the neighbouring slots' clearance: the
+   socket's 5.2 mm plus the module's components; the module lies over the empty band
+   above J2.
+2. **The SODIMM footprint** against TE drawing C-1473005 sheet 2, and pin 1 and key
+   orientation against a real iCESugar-Pro.
+3. **Translator direction and enable nets** in `schematic.pdf`: the 8T245's /OE pulled
+   up and DIR pulled down; the 74ALVC164245 the same; the 1T45's DIR.
+4. **BOM LCSC numbers** against the intended parts (`bom.csv` carries the MPN).
+5. **The finger tab** against a real Apple II card (open question 5): TAB_WIDTH
+   65.8 mm (the KiCad footprint) versus TN28's 2.950".
+6. **The module's USB connector:** whether it is reachable with the card in a slot.
+7. **Residual electrical risks:**
+   - the 74ALVC164245 has no Ioff;
+   - on USB-only bench power, `+5V` (the slot side, VCCB) is dead while `+3V3` is live;
+   - the carrier's buffers drive the module's FPGA pins and could back-power its VCCIO
+     if the module's 3V3 lags.
+8. **Hidden R/C designators**, and the ~93 silkscreen warnings.
+9. **JLC's CPL preview**, to confirm part rotations.
 
 ## Open questions only a real IIgs answers
 
@@ -511,8 +655,8 @@ with no IIgs. It is not planned.
 
 ## Left to the builder
 
-Part choices not named here (regulators, flash, oscillator, polyfuse, the SODIMM-200
-socket); the stackup; the SDRAM controller (write one, or adapt an open core); the
+Part choices not named here (rev A's regulators, flash, oscillator, polyfuse; the
+carrier's are in "The carrier as built"); the stackup; the SDRAM controller (write one, or adapt an open core); the
 exact capture record format and the host readout tool (openocd, pyftdi, or a small
 script); footprint sources and their licences; Nix packaging details; how a netlist
 change updates an already-routed board without losing placement.

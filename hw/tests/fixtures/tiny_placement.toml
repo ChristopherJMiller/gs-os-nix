@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: CERN-OHL-S-2.0
+# Placement for tiny.net (test_build_board.py).
+[board]
+length_mm = 100.0
+height_mm = 50.0
+
+[parts.R1]
+x = 12.0
+y = 30.5
+rot = 90
+side = "F"
+
+[parts.R2]
+x = 40.25
+y = 12.0
+rot = 0
+side = "B"
