@@ -116,6 +116,8 @@ uint16_t compile_file(const struct xn *program);
 /* --compile (a2min): the source at SRC_BASE compiled, the image's length at
  * RESULT_ADDR */
 void compile_dump(void);
+/* --run-nix (a2min): the source at SRC_BASE compiled, for the VM to run */
+void compile_run(void);
 
 /* The compiler's registers: the top of bank 12, above the import chain,
  * so they cost bank 0 nothing */
@@ -123,7 +125,8 @@ void compile_dump(void);
 #define FRONT_CHAIN_MAX 0x3EFEU                 /* the chain's bytes, below FRONT_CSTATE */
 
 /* The stage FRONT_MODE_ADDR names (vm_entry's one test of it: the dispatch
- * is here, in "front", so that a stage costs bank 0 nothing) */
-void front_run(void);
+ * is here, in "front", so that a stage costs bank 0 nothing): 1 if it left
+ * an image at IMAGE_BASE for the VM to run, 0 if its output is the result */
+int front_run(void);
 
 #endif

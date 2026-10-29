@@ -752,7 +752,8 @@ std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &see
 // first stage, printed as `nbc --tokens` prints rnix's, less the names
 // (docs/COMPILER.md, scripts/front-diff.py).
 constexpr uint32_t SRC_BASE = 0x0D0000, FRONT_OUT = 0x0F0000;
-uint8_t front_mode = 0;                   // 0 run the image; 1 --lex; 2 --cst; 3 --ast; 4 --compile
+uint8_t front_mode = 0;                   // 0 run the image; 1 --lex; 2 --cst; 3 --ast; 4 --compile;
+                                          // 5 --run-nix, compiled on the target and run
 const char *compile_out = nullptr;       // --compile's image file
 int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     if (!load_image(vm_path)) return 2;
@@ -815,10 +816,15 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     // A2MIN_MOUNT=<prefix>=<dir>: GS/OS answers the file calls from <dir>,
     // mounted at that pathname prefix (docs/GSOS.md); without it there is no
     // GS/OS (vm.h GSOS_ADDR) and those builtins are E_GSOS by name (D26).
+    // The on-target compiler's modes mount the host's root at /h as well, for
+    // its imports (SRC_NAME, below): always for --ast and --compile, which are
+    // diffed against nbc reading the host's files; for --run-nix only where
+    // there is a GS/OS -- with none, the compiler finds none either, as on a
+    // machine without one, and an import is the primop's E_GSOS at run time.
     const char *mount = std::getenv("A2MIN_MOUNT");
-    if (front_mode >= 3 && !(mount && *mount)) mount = "/h=/";     // --ast's and --compile's imports (SRC_NAME, below)
-    if (const char *m = mount; m && *m) {
-        if (!gsos.mount(m)) { std::fprintf(stderr, "A2MIN_MOUNT must be /prefix=dir\n"); return 2; }
+    if (mount && *mount && !gsos.mount(mount)) { std::fprintf(stderr, "A2MIN_MOUNT must be /prefix=dir\n"); return 2; }
+    if (front_mode == 3 || front_mode == 4 || (front_mode == 5 && !gsos.mounts.empty())) gsos.mount("/h=/");
+    if (!gsos.mounts.empty()) {
         gsos.rd = [](uint32_t a) { return rd8(a); };
         gsos.wr = [](uint32_t a, uint8_t v) { wr8(a, v); };
         gsos_on = true;
@@ -860,6 +866,10 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     const bool halted = run_to_halt();
     card->final();
     delete card;
+    if (front_mode == 5) {                  // the image the target compiled, for the printer's lambdas
+        const uint32_t n = std::min<uint32_t>(r16at(NBC_BASE, 8) | (r16at(NBC_BASE, 10) << 16), NBC_MAX);
+        read_chunk_kinds(std::vector<uint8_t>(&ram[NBC_BASE], &ram[NBC_BASE] + n));
+    }
 
     std::printf("a2min --run-nbc %s: %llu instructions, %llu CPU cycles, %llu slot accesses\n",
                 nbc_path, static_cast<unsigned long long>(cpu.instructions),
@@ -1165,6 +1175,10 @@ int main(int argc, char **argv) {
         front_mode = 4;
         compile_out = argc >= 5 ? argv[4] : nullptr;
         return run_nbc(argv[2], argv[3], false);
+    }
+    if (argc >= 4 && (std::string(argv[1]) == "--run-nix" || std::string(argv[1]) == "--run-nix-gc-stress")) {
+        front_mode = 5;                     // a .nix compiled by the VM, then run by it: one run
+        return run_nbc(argv[2], argv[3], std::string(argv[1]) == "--run-nix-gc-stress");
     }
 
     if (argc >= 5 && (std::string(argv[1]) == "--bench-mul64" || std::string(argv[1]) == "--bench-mul64-native"))

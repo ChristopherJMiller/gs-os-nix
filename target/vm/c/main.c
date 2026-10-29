@@ -67,9 +67,9 @@ void vm_entry(void)
     card_find();
     memcpy((void *)(IMAGE_BASE + APPLY_CODE_OFF), apply_code, sizeof apply_code);
     if (setjmp(top_jb) == 0) {
-        if (*(volatile uint8_t *)FRONT_MODE_ADDR) {
-            front_run();                        /* the on-target compiler's stages: in "front" */
-        } else {
+        /* the on-target compiler's stages, in "front": a dump is the result,
+         * or an image is compiled for the VM to run */
+        if (!*(volatile uint8_t *)FRONT_MODE_ADDR || front_run()) {
             load();                             /* its constants are roots, promoted like anything */
             run();                              /* the entry chunk; RETURN brings us back */
             deep_force_top();

@@ -286,13 +286,54 @@ imported file's token is in its own text -- `__curPos` in an imported file
 was a variable. It reads the lexer's text now (`lex_text`), and
 `eval-okay-import-curpos` imports one.
 
-## Later stages
+## Stage 4: M3
 
-Stage 4 is designed here before its code, when it starts. What is known
-already: it needs the compiler and the VM in one run -- today `a2min
---compile` hands the image back to the host, and `--run-nbc` loads one --
-a printer on the target -- a2min reads the result from the heap and prints
-it, which is host involvement -- and a way to read a line. The image is in
-bank 3 when the compiler is done, where the VM loads one, and the compiler's
-memory (banks 1, 2 and 7, the AST's arena and the code blocks) is the VM's
-to take back.
+An expression typed at the IIgs evaluates with no host involvement. Three
+steps, each with a gate of its own, so that the host leaves the loop a piece
+at a time:
+
+**4a. Compile and run in one run** (`a2min --run-nix`, `FRONT_RUN`). The
+front end compiles the source into bank 3 and `vm_entry` goes on to load
+and run the image as it would nbc's: everything the compiler used is the
+VM's again -- banks 1 and 2 (the arena) are an empty nursery and stage, bank
+7 (the code) a primop's scratch, banks 12 to 15 the compiler's alone. The
+host still supplies the source, and prints the result from the heap. A
+literal import is read through GS/OS: a2min mounts the host's root at `/h`
+beside the test's own mount -- its GS/OS now holds several, a pathname
+taking the longest prefix that is one -- and where a test has no GS/OS at
+all (`refuse-gsos-*`), neither does the compiler, which then compiles an
+import as the primop, as it would on a machine without one. The gate is
+the scoreboard with `--on-target`: every test compiled by the VM, no nbc
+and no image on the host, under the same ratchet (`checks.scoreboard-target`,
+`just scoreboard-target`), and the fixtures again under GC stress.
+
+**4a done** (2026-10-28): 644 / 655 with every test compiled on the target,
+as with nbc's images, and the 289 fixtures under GC stress. The first run
+said 642: the two `refuse-gsos-*` fixtures that read a file found the `/h`
+mount a2min had added for the compiler and answered `E_FILE` where a
+machine with no GS/OS answers `E_GSOS`, which is why `/h` now goes only
+where a GS/OS is. `vm_entry` +1 byte (its test is `!mode || front_run()`
+now); the benchmarks the same to the cycle.
+
+**4b. The printer** (`print.c`). The result as `nix-instantiate --eval
+--strict` prints it, which is a2min's printer, which every `.exp` has been
+held to: an integer in decimal, a float as `%g` (`f_g`), a string quoted as
+Nix quotes it, a path raw, `[ ... ]` and `{ name = value; }` with a list or
+set printed before as `«repeated»`, a name quoted unless it is an
+identifier, a lambda `<LAMBDA>`, `<PRIMOP>` or `<PRIMOP-APP>` by its chunk's
+kind; an error `error: E_NAME`, and its message where a2min prints one. It
+reads the heap as the VM does -- a mature object through a view, a large
+promoted string a block at a time -- and runs no bytecode, so nothing moves
+under it; the set of what it has printed is a table in bank 7. Its text goes
+to a buffer, and from there to standard output (GS/OS `Write`). The gate:
+a2min compares the target's text with its own printer's for every test, in
+every mode -- the two must be equal, byte for byte -- and planted printer
+bugs must be caught.
+
+**4c. A typed line** (`repl.c`). A prompt, a line read from standard input,
+compiled as a file with no name (no directory: positions are none, as for
+nbc's unit tests; a relative path is FIXTURE_PWD's, as everywhere), run,
+printed, and the VM reset for the next line -- each line its own
+evaluation, as `nix-instantiate --eval -E` is. a2min's standard input and
+output are the console. The gate: a session of typed lines, every fixture's
+expression among them, answers as the scoreboard does.

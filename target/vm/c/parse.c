@@ -750,15 +750,17 @@ void parse_file_at(const uint8_t *text, uint16_t n)
     finish_node();
 }
 
-void front_run(void)
+int front_run(void)
 {
     switch (*(volatile uint8_t *)FRONT_MODE_ADDR) {
     case FRONT_LEX: lex_dump(); break;
     case FRONT_CST: cst_dump(); break;
     case FRONT_AST: ast_dump(); break;
     case FRONT_COMPILE: compile_dump(); break;
+    case FRONT_RUN: compile_run(); return 1;
     default: err_exit(E_BADNBC);
     }
+    return 0;
 }
 
 /* The last tree's root: WORK[root_w]. Its children are the store's. */

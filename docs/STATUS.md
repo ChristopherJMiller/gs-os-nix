@@ -126,8 +126,11 @@ gates pass:
    nbc compiles, 720 of 723, and every fuzzed program it compiles give
    nbc's image byte for byte (`a2min --compile`); ten planted compiler bugs
    caught. On the way, a parser bug: `__curPos` in an imported file was
-   read from the importer's bytes. **4. M3**: a printer on the target and a
-   line typed in.
+   read from the importer's bytes. **4. M3** ([COMPILER.md](COMPILER.md)
+   "Stage 4"): ~~**4a.** compile and run in one run~~ **done** (2026-10-28):
+   `a2min --run-nix`, and the scoreboard with every test compiled by the VM
+   (`--on-target`, `checks.scoreboard-target`) is 644 / 655, as with nbc's
+   images; **4b.** a printer on the target; **4c.** a line typed in.
 
 ## Roadmap (2026-10-26, next): the VM's last errors, then GS/OS in simulation
 

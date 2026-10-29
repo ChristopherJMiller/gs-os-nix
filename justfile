@@ -298,6 +298,12 @@ scoreboard *flags: build-a2min cvm nbc-build
 
 scoreboard-update: (scoreboard "--update")
 
+# The same, the VM compiling every test itself (a2min --run-nix; COMPILER.md "Stage 4").
+scoreboard-target *flags: build-a2min cvm
+    python3 scripts/scoreboard.py --on-target --a2min ./sim/build_a2min/a2min \
+        --vm target/build/cvm.bin --corpus tests/corpus/tvix --corpus tests/fixtures \
+        --build target/build/nix-target --expected tests/corpus/expected-pass.txt {{flags}}
+
 # Just the fixtures, normally and with a collection at every boundary.
 fixtures *flags: build-a2min cvm nbc-build
     python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \

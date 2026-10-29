@@ -248,6 +248,33 @@
             echo "ratchet self-test: a planted regression is caught" | tee -a "$out"
           '';
 
+        # M3's first step (docs/COMPILER.md "Stage 4"): the scoreboard with the VM
+        # compiling every test itself -- the .nix in, compiled and run in one
+        # a2min run (--run-nix), no nbc and no image on the host -- under the
+        # same ratchet; then the fixtures again with a collection at every
+        # boundary, after the compiler has handed its banks back.
+        scoreboard-target = pkgs.runCommandCC "check-scoreboard-target"
+          { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ]; }
+          ''
+            cp -r ${self}/rtl ${self}/sim ${self}/tests ${self}/scripts .
+            chmod -R +w .
+            patchShebangs scripts
+            verilator --cc --exe --build -j $NIX_BUILD_CORES \
+              -Irtl --top-module a2nix_card \
+              -Wall -Wno-DECLFILENAME \
+              --Mdir build -o a2min \
+              rtl/a2nix_card.v sim/a2min.cpp
+            vm=${ours.cvm}/cvm.bin
+            python3 scripts/scoreboard.py --on-target --a2min ./build/a2min --vm "$vm" \
+              --corpus tests/corpus/tvix --corpus tests/fixtures --build build/target \
+              --expected tests/corpus/expected-pass.txt | tee "$out"
+            grep -q "^SCOREBOARD:" "$out"
+            python3 scripts/scoreboard.py --on-target --gc-stress --a2min ./build/a2min --vm "$vm" \
+              --corpus tests/fixtures --build build/target-gc \
+              --expected tests/corpus/expected-pass.txt \
+              | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
+          '';
+
         # The verb gate (DECISIONS.md, CARD-ISA.md): a verb must be justified by a
         # measured comparison against the 65816 doing the same work, or it gets
         # deleted. `just economics` does that card-side on synthetic operands;

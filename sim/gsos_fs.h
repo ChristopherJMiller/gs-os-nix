@@ -6,7 +6,8 @@
 // $0F, and our FST's symlink -- a file of type $F1, aux type "NSL", holding
 // its target (DECISIONS.md D30). So no host symlink is ever followed, in the
 // last component or any other: the VM resolves them itself, as Nix does, and
-// that is what this tests. The volumes are exactly the mounts.
+// that is what this tests. The volumes are exactly the mounts: A2MIN_MOUNT's,
+// and the host's root at /h for the on-target compiler's imports.
 //
 // Not orcarun's GS/OS, which has one volume (the host root), follows host
 // symlinks, and writes: that one serves the compiler.
@@ -27,7 +28,8 @@
 struct GsosFs {
     std::function<uint8_t(uint32_t)> rd;
     std::function<void(uint32_t, uint8_t)> wr;
-    std::string prefix, dir;                    // A2MIN_MOUNT=<prefix>=<dir>
+    struct Mount { std::string prefix, dir; };  // A2MIN_MOUNT=<prefix>=<dir>
+    std::vector<Mount> mounts;
 
     static constexpr uint16_t badSystemCall = 0x01, badPathSyntax = 0x40, invalidRefNum = 0x43,
                               pathNotFound = 0x44, volNotFound = 0x45, fileNotFound = 0x46,
@@ -44,10 +46,11 @@ struct GsosFs {
     bool mount(const char *spec) {
         const char *eq = std::strchr(spec, '=');
         if (!eq || spec[0] != '/') return false;
-        prefix.assign(spec, eq);
-        dir = eq + 1;
-        while (prefix.size() > 1 && prefix.back() == '/') prefix.pop_back();
-        return !dir.empty();
+        Mount m{std::string(spec, eq), eq + 1};
+        while (m.prefix.size() > 1 && m.prefix.back() == '/') m.prefix.pop_back();
+        if (m.dir.empty()) return false;
+        mounts.push_back(m);
+        return true;
     }
 
     uint16_t r16(uint32_t a) { return static_cast<uint16_t>(rd(a) | (rd(a + 1) << 8)); }
@@ -81,12 +84,16 @@ struct GsosFs {
     uint16_t lookup(const std::string &path, std::filesystem::path &host, Node &node) {
         namespace fs = std::filesystem;
         if (path.empty() || path[0] != '/' || path.find(':') != std::string::npos) return badPathSyntax;
-        if (prefix.empty() || path.compare(0, prefix.size(), prefix) != 0 ||
-            (path.size() > prefix.size() && path[prefix.size()] != '/'))
-            return volNotFound;
-        host = dir;
+        const Mount *m = nullptr;                       // the volume: the longest prefix that is one
+        for (const Mount &v : mounts)
+            if (path.compare(0, v.prefix.size(), v.prefix) == 0 &&
+                (path.size() == v.prefix.size() || path[v.prefix.size()] == '/') &&
+                (!m || v.prefix.size() > m->prefix.size()))
+                m = &v;
+        if (!m) return volNotFound;
+        host = m->dir;
         node = Node{FT_DIR, 0, true};
-        std::string rest = path.substr(prefix.size()), c;
+        std::string rest = path.substr(m->prefix.size()), c;
         for (size_t i = 0; i <= rest.size(); ++i) {
             if (i < rest.size() && rest[i] != '/') { c += rest[i]; continue; }
             if (c.empty()) continue;

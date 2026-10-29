@@ -29,6 +29,11 @@ what makes the headline number only able to go up.
 
 Compiled fixtures are left in --build next to a copy of their source so that
 scripts/fixture-purity.sh can check each one against what it was compiled from.
+
+--on-target compiles every test on the VM instead (a2min --run-nix, docs/
+COMPILER.md): the .nix in, compiled and run in one run, no nbc and no image
+on the host. A refusal is the compiler's E_UNSUP, so a test that does not
+pass and says E_UNSUP is unsupported, as nbc's rc 2 is.
 """
 import argparse
 import concurrent.futures
@@ -90,7 +95,7 @@ def vm_result(stdout):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--nbc", required=True, help="the fixture generator binary")
+    ap.add_argument("--nbc", help="the fixture generator binary (not with --on-target)")
     ap.add_argument("--a2min", required=True)
     ap.add_argument("--vm", required=True, help="target/build/cvm.bin (docs/VM.md)")
     ap.add_argument("--corpus", action="append", required=True)
@@ -102,11 +107,15 @@ def main():
     ap.add_argument("--verbose", "-v", action="store_true")
     ap.add_argument("--gc-stress", action="store_true",
                     help="collect the nursery at every bytecode boundary (slow; a collector test)")
+    ap.add_argument("--on-target", action="store_true",
+                    help="the VM compiles each test itself: a2min --run-nix (docs/COMPILER.md)")
     ap.add_argument("--jobs", "-j", type=int,
                     default=int(os.environ.get("NIX_BUILD_CORES") or 0) or os.cpu_count() or 1,
                     help="tests run side by side (default: NIX_BUILD_CORES, else every core)")
     args = ap.parse_args()
-    run_mode = "--run-nbc-gc-stress" if args.gc_stress else "--run-nbc"
+    if not args.on_target and not args.nbc:
+        ap.error("--nbc is needed, unless --on-target")
+    run_mode = ("--run-nix" if args.on_target else "--run-nbc") + ("-gc-stress" if args.gc_stress else "")
 
     os.makedirs(args.build, exist_ok=True)
     expected = set()
@@ -126,13 +135,18 @@ def main():
         # Keep source and fixture side by side for the purity check.
         base = os.path.join(args.build, name.replace(os.sep, "__"))
         shutil.copyfile(nix, base + ".nix")
-        rc, _, err = run([args.nbc, nix, "-o", base + ".nbc"])
+        if args.on_target:
+            rc, err = 0, ""
+        else:
+            rc, _, err = run([args.nbc, nix, "-o", base + ".nbc"])
         if rc == 2:
             bucket, got = "unsupported", err.strip().splitlines()[-1] if err.strip() else ""
         elif rc != 0:
             bucket, got = "error", f"generator rc={rc}: {err.strip()}"
         else:
-            rc, out, err = run([args.a2min, run_mode, args.vm, base + ".nbc"], timeout=600, env=gsos_env(nix))
+            # on the target, the source where it is: its imports are relative to it
+            prog = nix if args.on_target else base + ".nbc"
+            rc, out, err = run([args.a2min, run_mode, args.vm, prog], timeout=600, env=gsos_env(nix))
             kind, got = vm_result(out)
             if kind == "error":
                 got = "error: " + got
@@ -140,6 +154,8 @@ def main():
                     bucket = "pass"
                 elif got.startswith("error: E_GSOS"):
                     bucket = "gsos"
+                elif args.on_target and got == "error: E_UNSUP":
+                    bucket = "unsupported"
                 else:
                     bucket = "error"
             elif got == want:

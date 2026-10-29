@@ -1285,3 +1285,12 @@ void compile_dump(void)
     x = lower_file((const uint8_t *)SRC_BASE, n);
     *(uint16_t *)RESULT_ADDR = compile_file(x);
 }
+
+/* --run-nix (a2min): the same, the image left for vm_entry to load and run.
+ * What the compiler used is the VM's again: banks 1 and 2 (the arena) are
+ * the nursery and the stage, empty -- nothing has been allocated -- and bank
+ * 7 (the code) a primop's scratch. */
+void compile_run(void)
+{
+    compile_dump();
+}
