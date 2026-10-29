@@ -7,7 +7,11 @@
 A card may load each slot pin with at most 15 pF (and two LS loads). The estimate for one
 J1 net is its routed copper, in mm, times PF_PER_MM, plus the capacitance of every IC pin
 on it, from hw/carrier/pin_capacitance.toml (datasheet Ci for an input, Cio for an I/O or
-output pin). The SAFE and UART headers count 1 pF a pin, other passives 0.
+output pin; a pin the table does not list, a part value it lacks, a J1 net with no copper
+on the board, or a part that is not a U, R, C or J is a failure, never a silent zero). The
+SAFE and UART headers count 1 pF a pin, other passives 0. Apple's other limit, two LS loads,
+is moot for LVC/ALVC inputs (about 1 uA against an LS load's 0.4 mA IIL / 20 uA IIH) and is
+not gated.
 
 Which pins sit on a net comes from the netlist; the copper comes from the board's own
 tracks, by the net name KiCad gives them. A 0 ohm resistor (value "0", "0R" or "0 ohm")
@@ -59,7 +63,7 @@ def _is_zero_ohm(nl: Netlist, ref: str) -> bool:
 
 def j1_nets(nl: Netlist) -> list[str]:
     return sorted(n for n, nodes in nl.nets.items()
-                  if n not in POWER_NETS and any(r == J1 for r, _ in nodes))
+                  if _norm(n) not in POWER_NETS and any(r == J1 for r, _ in nodes))
 
 
 def _group(nl: Netlist, net: str) -> list[str]:
@@ -70,7 +74,7 @@ def _group(nl: Netlist, net: str) -> list[str]:
         for ref, _ in sorted(nl.nets[cur]):
             if _is_zero_ohm(nl, ref):
                 other = through(nl, ref, cur)
-                if other not in seen and other not in POWER_NETS:
+                if other not in seen and _norm(other) not in POWER_NETS:
                     seen.append(other)
                     todo.append(other)
     return seen
@@ -82,50 +86,77 @@ def ic_values_on_j1_nets(nl: Netlist) -> set[str]:
             for r, _ in nl.nets[m] if _is_ic(r)}
 
 
+def _norm(name: str) -> str:
+    """A net name as both sides compare it: KiCad writes '/NAME' for a root-sheet net."""
+    return name.lstrip("/")
+
+
 def _copper_mm(board) -> dict[str, float]:
     mm: dict[str, float] = {}
     for t in board.GetTracks():
         if t.Type() == pcbnew.PCB_VIA_T:
             continue
-        name = t.GetNetname().lstrip("/")
+        name = _norm(t.GetNetname())
         mm[name] = mm.get(name, 0.0) + pcbnew.ToMM(t.GetLength())
     return mm
 
 
+def _kind(ref: str) -> str:
+    """ic (U), zero-or-other resistor (R), passive (C), connector (J, JP), or unknown."""
+    prefix = ref.rstrip("0123456789")
+    return {"U": "ic", "R": "res", "C": "cap", "J": "conn", "JP": "conn"}.get(prefix, "unknown")
+
+
 def _pin_pf(caps: dict, value: str, pin: str) -> float | None:
-    e = caps.get(value)
-    if e is None:
-        return None
-    if int(pin) in e.get("io_pins", []):
-        return e["cio"]
-    return e["ci"]
+    """The capacitance of pin `pin` of part `value`, or None if the table does not list it."""
+    e = caps[value]
+    for pins, cap in (("in_pins", "ci"), ("io_pins", "cio"), ("od_pins", "co")):
+        if int(pin) in e.get(pins, []):
+            return e[cap]
+    return None
 
 
 def table(board, nl: Netlist, caps: dict, pf_per_mm: float = PF_PER_MM) -> list[dict]:
-    """One row per J1 signal net: length (mm), copper and pins (pF), total, the number of
-    IC pins, and `missing`, the (ref, value) of ICs with no table entry."""
+    """One row per J1 signal net: length (mm), copper and pins (pF), total, the number of IC
+    and header pins, whether 0 ohm parts joined other nets to it, and the faults found:
+    `nocopper` (the net itself has no track on the board), `missing` ((ref, value) with no
+    table entry), `unlisted` ((ref, pin, value) not in the part's pin lists) and `unknown`
+    (refs of an unrecognised kind of part)."""
     mm = _copper_mm(board)
     rows = []
     for net in j1_nets(nl):
         group = _group(nl, net)
-        length = sum(mm.get(m, 0.0) for m in group)
-        pins, n_ic, missing = 0.0, 0, set()
+        length = sum(mm.get(_norm(m), 0.0) for m in group)
+        pins, n_ic, n_hdr = 0.0, 0, 0
+        missing, unlisted, unknown = set(), [], set()
         for m in group:
             for ref, pin in sorted(nl.nets[m]):
                 if ref == J1:
                     continue
-                if _is_ic(ref):
+                kind = _kind(ref)
+                if kind == "ic":
                     n_ic += 1
-                    pf = _pin_pf(caps, nl.parts[ref].value, pin)
+                    value = nl.parts[ref].value
+                    if value not in caps:
+                        missing.add((ref, value))
+                        continue
+                    pf = _pin_pf(caps, value, pin)
                     if pf is None:
-                        missing.add((ref, nl.parts[ref].value))
+                        unlisted.append((ref, pin, value))
                     else:
                         pins += pf
-                elif _is_header(nl, ref):
+                elif kind == "conn" and _is_header(nl, ref):
+                    n_hdr += 1
                     pins += HEADER_PF
+                elif kind == "unknown":
+                    unknown.add(ref)
         copper = length * pf_per_mm
         rows.append({"net": net, "length": length, "copper": copper, "pins": pins,
-                     "total": copper + pins, "ic_pins": n_ic, "missing": sorted(missing)})
+                     "total": copper + pins, "ic_pins": n_ic, "header_pins": n_hdr,
+                     "joined": len(group) > 1,
+                     "nocopper": mm.get(_norm(net), 0.0) <= 0.0,
+                     "missing": sorted(missing), "unlisted": unlisted,
+                     "unknown": sorted(unknown)})
     return rows
 
 
@@ -133,13 +164,26 @@ def problems(board, nl: Netlist, caps: dict, limit_pf: float = LIMIT_PF,
              pf_per_mm: float = PF_PER_MM) -> list[str]:
     out, reported = [], set()
     for r in table(board, nl, caps, pf_per_mm):
+        net = r["net"]
+        if r["nocopper"]:
+            out.append(f"{net}: no copper on the board (no net of that name, or no tracks "
+                       "on it): the load would read as zero")
         for ref, value in r["missing"]:
             if value not in reported:
                 reported.add(value)
                 out.append(f"{ref}: no capacitance entry for part value '{value}' "
                            "in pin_capacitance.toml")
+        for ref, pin, value in r["unlisted"]:
+            out.append(f"{ref}.{pin} ({value}) on {net} is not in the pin table's input, "
+                       "I/O or open-drain pins")
+        for ref in r["unknown"]:
+            out.append(f"{ref}: unknown part (not U, R, C or J) on {net}; the gate cannot "
+                       "say what it loads")
+        if not (r["ic_pins"] or r["header_pins"] or r["joined"]):
+            out.append(f"{net}: no IC or header pin on it, so nothing to gate (is the "
+                       "netlist right?)")
         if r["total"] > limit_pf + 1e-9:
-            out.append(f"{r['net']}: {r['total']:.1f} pF over the {limit_pf:.1f} pF limit "
+            out.append(f"{net}: {r['total']:.1f} pF over the {limit_pf:.1f} pF limit "
                        f"(copper {r['copper']:.1f} pF over {r['length']:.1f} mm + "
                        f"{r['ic_pins']} IC pins {r['pins']:.1f} pF)")
     return out
@@ -176,7 +220,8 @@ def _track(board, net: str, mm: float, y: float) -> None:
 def synthetic(caps: dict):
     """A small board and netlist that pass: data nets D0/D1 (a translator pin and a 541
     input each), a clock through a 0 ohm part to a 2G17, a net behind a 1k resistor (the
-    walk stops there), a header net and a daisy chain through a 0 ohm part."""
+    walk stops there), a header net, an open-drain output and a daisy chain through a 0 ohm
+    part."""
     del caps
     P = PartInfo
     parts = {
@@ -185,6 +230,7 @@ def synthetic(caps: dict):
         "U4": P("74LVC541", "Package_SO:TSSOP-20", {}),
         "U5": P("74LVC541", "Package_SO:TSSOP-20", {}),
         "U6": P("74LVC2G17", "Package_TO_SOT_SMD:SOT-363", {}),
+        "U7": P("74LVC1G07", "Package_TO_SOT_SMD:SOT-23-5", {}),
         "R1": P("0", "Resistor_SMD:R_0603", {}),
         "R2": P("1k", "Resistor_SMD:R_0603", {}),
         "R3": P("0", "Resistor_SMD:R_0603", {}),
@@ -195,11 +241,12 @@ def synthetic(caps: dict):
         "SLOT_D1": {("J1", "2"), ("U1", "17"), ("U4", "3")},
         "SLOT_PH0": {("J1", "3"), ("R1", "1")},
         "ph0_in": {("R1", "2"), ("U6", "1")},
-        "SLOT_X": {("J1", "4"), ("R2", "1")},
+        "SLOT_X": {("J1", "4"), ("R2", "1"), ("U6", "3")},
         "x_far": {("R2", "2"), ("U5", "9")},
         "SLOT_JP": {("J1", "5"), ("JP1", "1")},
         "SLOT_CH_IN": {("J1", "6"), ("R3", "1")},
         "SLOT_CH_OUT": {("J1", "7"), ("R3", "2")},
+        "SLOT_OD": {("J1", "8"), ("U7", "4")},
         "+5V_SLOT": {("J1", "25")},
         "GND": {("J1", "26")},
     }
@@ -207,27 +254,70 @@ def synthetic(caps: dict):
     for net, mm, y in [("SLOT_D0", 30, 1), ("SLOT_D1", 50, 2), ("SLOT_PH0", 20, 3),
                        ("ph0_in", 10, 4), ("SLOT_X", 100, 5), ("x_far", 500, 6),
                        ("SLOT_JP", 5, 7), ("SLOT_CH_IN", 10, 8), ("SLOT_CH_OUT", 10, 9),
-                       ("+5V_SLOT", 400, 10)]:
+                       ("SLOT_OD", 10, 11), ("+5V_SLOT", 400, 10)]:
         _track(board, net, mm, y)
     return board, Netlist(parts=parts, nets=nets)
 
 
-def lengthen_track(board, net: str, extra_mm: float) -> None:
-    t = next(t for t in board.GetTracks() if t.GetNetname() == net)
+# --- the planted faults: each edits the synthetic (board, netlist, table) in place ---------
+
+def _lengthen(board, nl, caps):
+    t = next(t for t in board.GetTracks() if t.GetNetname() == "SLOT_D0")
     e = t.GetEnd()
-    t.SetEnd(pcbnew.VECTOR2I(e.x + pcbnew.FromMM(extra_mm), e.y))
+    t.SetEnd(pcbnew.VECTOR2I(e.x + pcbnew.FromMM(60.0), e.y))
 
 
-def add_third_buffer(nl: Netlist, net: str) -> None:
+def _third_buffer(board, nl, caps):
     nl.parts["U9"] = PartInfo("74LVC541", "Package_SO:TSSOP-20", {})
-    nl.nets[net].add(("U9", "2"))
+    nl.nets["SLOT_D0"].add(("U9", "2"))
 
 
-# name -> text the failure must contain (the net's total, so each fault is its own message)
+def _raise_ci(board, nl, caps):
+    caps["74LVC541"]["ci"] = 20.0
+
+
+def _no_tracks(board, nl, caps):
+    for t in [t for t in board.GetTracks() if t.GetNetname() == "SLOT_D1"]:
+        board.RemoveNative(t)
+
+
+def _drop_entry(board, nl, caps):
+    del caps["74LVC541"]
+
+
+def _output_pin(board, nl, caps):
+    nl.nets["SLOT_D1"].add(("U6", "4"))     # a 2G17 push-pull output on a slot net
+
+
+def _unknown_part(board, nl, caps):
+    nl.parts["Q1"] = PartInfo("2N7002", "Package_TO_SOT_SMD:SOT-23", {})
+    nl.nets["SLOT_D1"].add(("Q1", "1"))
+
+
+def _no_ic(board, nl, caps):
+    nl.nets["SLOT_D1"] = {("J1", "2")}
+
+
+PLANT = {
+    "track lengthened by 60 mm": _lengthen,
+    "third buffer input on SLOT_D0": _third_buffer,
+    "74LVC541 Ci raised to 20 pF": _raise_ci,
+    "no tracks on SLOT_D1": _no_tracks,
+    "74LVC541 missing from the table": _drop_entry,
+    "2G17 output pin on SLOT_D1": _output_pin,
+    "unknown part Q1 on SLOT_D1": _unknown_part,
+    "no IC pin on SLOT_D1": _no_ic,
+}
+# name -> text its failure must contain; each names the cause and no other fault's message has it
 EXPECT = {
-    "track lengthened by 60 mm": "SLOT_D0: 18.5 pF",
-    "third buffer input on SLOT_D0": "SLOT_D0: 16.5 pF",
-    "74LVC541 Ci raised to 20 pF": "SLOT_D0: 28.5 pF",
+    "track lengthened by 60 mm": "over 90.0 mm",
+    "third buffer input on SLOT_D0": "3 IC pins",
+    "74LVC541 Ci raised to 20 pF": "2 IC pins 25.5 pF",
+    "no tracks on SLOT_D1": "SLOT_D1: no copper",
+    "74LVC541 missing from the table": "no capacitance entry for part value '74LVC541'",
+    "2G17 output pin on SLOT_D1": "U6.4 (74LVC2G17) on SLOT_D1 is not in the pin table",
+    "unknown part Q1 on SLOT_D1": "Q1: unknown part",
+    "no IC pin on SLOT_D1": "SLOT_D1: no IC or header pin",
 }
 
 
@@ -237,25 +327,17 @@ def selftest(caps: dict) -> int:
     if clean:
         print("selftest: the synthetic baseline is not clean:\n  " + "\n  ".join(clean))
         return 1
-    cases = {}
-    b, n = synthetic(caps)
-    lengthen_track(b, "SLOT_D0", 60.0)
-    cases["track lengthened by 60 mm"] = problems(b, n, caps)
-    b, n = synthetic(caps)
-    add_third_buffer(n, "SLOT_D0")
-    cases["third buffer input on SLOT_D0"] = problems(b, n, caps)
-    b, n = synthetic(caps)
-    bad = copy.deepcopy(caps)
-    bad["74LVC541"]["ci"] = 20.0
-    cases["74LVC541 Ci raised to 20 pF"] = problems(b, n, bad)
     failed = 0
-    for name, found in cases.items():
+    for name, plant in PLANT.items():
+        b, n = synthetic(caps)
+        c = copy.deepcopy(caps)
+        plant(b, n, c)
+        found = problems(b, n, c)
         if not any(EXPECT[name] in p for p in found):
             print(f"selftest: planted fault '{name}' was not found as "
                   f"{EXPECT[name]!r} (got {found[:3]})")
             failed += 1
-        others = [v for k, v in EXPECT.items() if k != name]
-        if any(o in p for o in others for p in found):
+        if any(text in p for other, text in EXPECT.items() if other != name for p in found):
             print(f"selftest: planted fault '{name}' also produced another fault's message")
             failed += 1
     if failed:
