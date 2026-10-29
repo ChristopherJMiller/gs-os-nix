@@ -38,7 +38,8 @@ connector, with the nursery in fast RAM and mature space on the card.
 
 ```sh
 nix develop          # verilator, cocotb, yosys, nextpnr, trellis, cc65, mame
-nix flake check      # cocotb suites, lint, synth smoke, conformance scoreboard
+nix develop .#hw     # KiCad 10, SKiDL, Freerouting: the board itself (hw/README.md)
+nix flake check      # cocotb suites, lint, synth smoke, conformance scoreboard, hw-* gates
 ```
 
 `apple2gs` ROMs are not redistributable and must be supplied by you, explicitly, as

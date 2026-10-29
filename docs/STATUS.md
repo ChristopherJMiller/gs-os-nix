@@ -11,6 +11,7 @@
 | **L4** | Bytecode VM on 65816, driven by golden fixtures; scoreboard live | **in progress — the bytecode compiler is complete (2026-10-26): `nbc` refuses nothing in the vendored corpus, tvix's own notyetpassing tests included. Scoreboard 645 / 656: 0 fail, 0 error, 0 need GS/OS, 0 unsupported -- every corpus test passes but tvix's own 11 notyetpassing. Interpreter speed stopped at -37.5% (2026-10-27); next: capacity, then M3 (the roadmap below).** The history: `sim/a2min.cpp` models 65816 native mode (`checks.a2min-native`, `checks.mutation-a2min`). [BYTECODE.md](BYTECODE.md) defines `.nbc`; `tools/nbc` (Rust, no deps, D16) compiles the slice-1 subset — ints, bools, null, `let`, `if`, all arithmetic/boolean operators, thunk placement per tvix; `target/vm/vm.s` (native mode) evaluates it with lazy thunks, blackholing and in-place update, `MUL`/`DIV` on the card's `ALU64`. The tvix corpus is vendored (370 eval-okay tests, GPL-3 test data) and `checks.scoreboard` runs it: **246 / 405 pass** (207 tvix + 39 local fixtures), 0 fail, 3 error, 133 unsupported by the lowering, 23 notyetpassing. Slices 2 and 3 landed: strings, lists, attribute sets, 48 primops as synthesised lambdas, `tryEval` catch frames, `with` as marked environments, formals/`rec`/attribute-path/legacy-`let` desugarings, `__functor`, and `TAIL_CALL` `tests/corpus/expected-pass.txt` is the ratchet. `checks.fixture-purity` (D7), `checks.nbc-opcodes`, `checks.nbc-tests` gate it. **D18 (2026-09-22): the VM is now C** (`target/vm/c/`, [VM.md](VM.md)), compiled by ORCA/C under our own harness ([TOOLCHAIN.md](TOOLCHAIN.md)); it passes **248 / 406** (one more than the assembly it replaced: its 64 KB nursery finishes `eval-okay-ind-string`; the 406th test is slice 4's own `eval-okay-hash-collision`), 0 fail, all 40 fixtures under GC stress. The assembly VM was removed at parity (git has it: commit 05ce616 is the last with both), and `target/vm/promote.s` and `card.s` went with it once slice 4 was ported from them. The C is 2.5× slower and 3.4× larger than the assembly — measured, and the next optimisation targets are named in VM.md |
 | **L5** | Self-hosted lexer + parser + compiler; host leaves the loop | **in progress** (D33: C, a port of nbc, which is its oracle; [COMPILER.md](COMPILER.md)) — stages 1 to 4 done: rnix's tokens, rnix's syntax tree, nbc's AST and nbc's image byte for byte over every `.nix` in the repository and tens of thousands of fuzzed mutants and generated programs each, imports read through GS/OS (`checks.front`); every test compiled on the target (`checks.scoreboard-target`, 645 / 656), printed by the target (`A2MIN_PRINT`), and typed at it a line at a time (`checks.repl`) -- M3 in simulation |
 | **L6** | SHA-256 of strings, ATerm, `derivation` primop, string context; `NARHASH` with file I/O (D21) | **in progress** — `builtins.hashString "sha256"` on the card (`HASH_PUSH` for a young string, `HASH_STREAM` for a mature one, `sha256.c` without a card), matching Nix on FIPS padding edges; `md5`, `sha1` and `sha512` on the CPU (`hashes.c`). **`derivation`** ([DERIVATION.md](DERIVATION.md)): input-addressed, byte-identical to the host -- ATerm, `hashDerivationModulo`, output and `.drv` paths from the card's `HASH_FINAL` `P3`; `derivation.nix` embedded verbatim. **String context** carries inputs through `+`, `"${}"`, `concatStringsSep`, `toString`, `substring`, `baseNameOf`, `dirOf`, so a chain of derivations matches the host. **Fixed-output derivations** (`outputHash`, every `fetchurl`): the path from the declared hash (base16, nix32, Base64, SRI; md5, sha1, sha256, sha512; flat and NAR), and the modulo hash a dependent sees, as the host computes them. `drvPath` (`=`) context, the context builtins, `toFile` and `currentSystem` too (Phase B of the roadmap below, complete 2026-10-26). Next for L6: `NARHASH`, which needs file I/O (L7) |
+| **HW** | The physical card: board design as code, bus interface, capture, fab ([HARDWARE.md](HARDWARE.md), [hw/README.md](../hw/README.md)) | **in progress** — plan 1 of 3 done (2026-10-29): `nix develop .#hw` (KiCad 10, SKiDL, Freerouting), eight `hw-*` gates each proven able to fail, and the bus carrier for an iCESugar-Pro routed and order-ready (`nix build .#hw-carrier-fab`). Nothing fabricated; no IIgs on the bench yet. Next: plan 2 (the core's `mem_ready`, one card-clock constant) and plan 3 (board gateware, carrier bitstream, bring-up) -- the hardware roadmap below |
 | **L7** | GS/OS driver + FST, Ed25519 + Marinetti fetching, parallel mark | **started, in simulation** (2026-10-26): the file builtins call GS/OS (`gsos.c`, [GSOS.md](GSOS.md), D30) and a2min answers from a mounted directory; the FST's symlink is defined (a `$F1` file holding its target). The driver, the FST itself, the store and fetching are not started |
 
 ## Milestones
@@ -49,6 +50,47 @@
 
 M1/M2/M4 are byte-parity assertions against upstream Nix. They are what separate an
 implementation from a tribute.
+
+## Roadmap (2026-10-29): the hardware track
+
+Runs beside the software roadmaps below, in its own worktree, and merges through
+Chris ([HARDWARE.md](HARDWARE.md) HW-5). Owner decisions are HW-1..HW-10 there;
+the order is design, then the toolchain and a carrier, then the integrated card.
+
+1. ~~**Research and the design**~~ (2026-10-27): ECP5 LFE5U-25F with 32 MB SDRAM
+   (D10 stands; Gowin's open flow miscomputes carry chains), SKiDL + KiCad 10, a
+   bus carrier before rev A, board files CERN-OHL-S-2.0.
+2. ~~**Plan 1: the toolchain and the carrier**~~ (2026-10-29,
+   `docs/superpowers/plans/2026-10-27-hw-toolchain-carrier.md`): the `.#hw` shell,
+   `hw-tests`/`erc`/`intent`/`pinmap`/`edge`/`drc`/`bom`/`fab`, and an 80 × 68 mm
+   2-layer carrier, routed, DRC-clean and order-ready. The iCESugar-Pro keeps its
+   JTAG and UART on the module and gives the socket only 5 V, so the carrier is
+   programmed over the module's USB, makes its own 3.3 V, and feeds the module
+   through a diode (HW-13, HW-14). Its review checklist is in HARDWARE.md, "Owner's
+   review".
+3. **Plan 2: the core change** -- touches the RTL the software side owns, so it
+   merges with care:
+   - `mem_ready` on `a2nix_card`'s heap port (HW-7); MAME and the harness tie it
+     high, and a wait-state test proves the core tolerates stalls.
+   - One card-clock constant shared by the PLL and MAME's `CARD_CLOCK_HZ` (HW-8).
+     The core alone routes at **43.0 MHz** on a -6 part, not the 50 MHz MAME models,
+     so `checks.verb-economics` and the speed figures get re-measured at ~40 MHz.
+4. **Plan 3: the board gateware** -- `rtl/board/`: `a2bus_phy`, the capture recorders
+   and readout, `mem_bridge` + SDRAM controller, the carrier's top (today a stub
+   with safe tie-offs), `hw-timing` and `hw-rtl`, and the staged bring-up of HW-9
+   (listen-only bitstream first).
+5. **Order and run the carrier** -- Chris's call, once a IIgs is on the bench. The
+   card's own capture is the instrument; HARDWARE.md lists the seven open questions
+   only a real machine answers.
+6. **Rev A, the integrated ECP5 card** -- designed alongside the carrier's bring-up,
+   ordered only after the carrier has run in a real IIgs (HW-9).
+
+For the software side, found while designing the hardware (not yet acted on):
+- REFERENCES.md says every `$Cxxx` access runs at 1.024 MHz. Tech Note #68 lists
+  2.8 MHz exceptions, and puts an isolated slow cycle at ~1.5 µs, not ~1 µs.
+- CARD-ISA.md and the RTL cite `tb/test_isa.py` and `tb_card.py`; there is no `tb/`.
+- ARCHITECTURE.md's 11.2k LUT4 is the `-noabc9` count; nextpnr places 14.7k (60% of
+  a 25F).
 
 ## Roadmap (2026-10-27, next): capacity, then M3
 
