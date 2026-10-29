@@ -141,7 +141,7 @@
             python3 scripts/gen-nbc-tables.py --selftest | tee -a "$out"
             python3 scripts/gen-nbc-tables.py --check | tee -a "$out"
             grep -q "^NBC TABLES SELFTEST OK" "$out"
-            grep -q "^nbc_tables.h: nbc's tables and derivation.nix, exactly" "$out"
+            grep -q "^nbc_tables.h: nbc's tables, derivation.nix and the error names, exactly" "$out"
           '';
 
         # D7 made mechanical: the generator contains no hashing or store-path code,
@@ -174,6 +174,9 @@
               --Mdir build -o a2min \
               rtl/a2nix_card.v sim/a2min.cpp
             vm=${ours.cvm}/cvm.bin
+            # The VM prints every answer too (print.c), and a2min holds it to its own
+            # text: every run below, in every mode, is a test of the target's printer.
+            export A2MIN_PRINT=1
             python3 scripts/scoreboard.py \
               --nbc nbc --a2min ./build/a2min --vm "$vm" \
               --corpus tests/corpus/tvix --corpus tests/fixtures \
@@ -265,6 +268,7 @@
               --Mdir build -o a2min \
               rtl/a2nix_card.v sim/a2min.cpp
             vm=${ours.cvm}/cvm.bin
+            export A2MIN_PRINT=1                    # the VM's printer held to a2min's, as above
             python3 scripts/scoreboard.py --on-target --a2min ./build/a2min --vm "$vm" \
               --corpus tests/corpus/tvix --corpus tests/fixtures --build build/target \
               --expected tests/corpus/expected-pass.txt | tee "$out"

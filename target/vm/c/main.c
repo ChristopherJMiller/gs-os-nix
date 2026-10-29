@@ -78,6 +78,7 @@ void vm_entry(void)
         *(volatile uint8_t *)RESULT_STAT_ADDR = 1;
     }
     diag_write();
+    print_result();                     /* if a2min asks (PRINT_ADDR), in "print": its test there, not here */
 }
 
 

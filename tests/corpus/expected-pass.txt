@@ -250,6 +250,7 @@ fixtures/eval-okay-ordering
 fixtures/eval-okay-path-interp
 fixtures/eval-okay-paths
 fixtures/eval-okay-primop-display
+fixtures/eval-okay-print-rules
 fixtures/eval-okay-rec-paths-legacy
 fixtures/eval-okay-recursion
 fixtures/eval-okay-regex-rules

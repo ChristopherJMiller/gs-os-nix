@@ -176,7 +176,7 @@ mutation-a2min: (asm-test "native_test")
 # The quiet clock (docs/RUNNING.md): every fixture and the M2 run,
 # fast vs A2MIN_EXACT_CLOCK=1, must be byte-identical; then a broken copy must not be.
 quiet-clock: build-a2min cvm nbc-build asm-headless
-    python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
+    A2MIN_PRINT=1 python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
         --vm target/build/cvm.bin --corpus tests/fixtures --build target/build/nbc-fixtures \
         --expected tests/corpus/expected-pass.txt > /dev/null
     ./scripts/quiet-clock.sh ./sim/build_a2min/a2min target/build/cvm.bin \
@@ -291,7 +291,7 @@ run-nbc file: build-a2min cvm nbc-build
 # THE HEADLINE METRIC: run the vendored tvix corpus and the fixtures on the VM
 # and count. tests/corpus/expected-pass.txt is the ratchet.
 scoreboard *flags: build-a2min cvm nbc-build
-    python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
+    A2MIN_PRINT=1 python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
         --vm target/build/cvm.bin --corpus tests/corpus/tvix --corpus tests/fixtures \
         --build target/build/nbc --expected tests/corpus/expected-pass.txt {{flags}}
     ./scripts/fixture-purity.sh target/build/nbc
@@ -300,20 +300,20 @@ scoreboard-update: (scoreboard "--update")
 
 # The same, the VM compiling every test itself (a2min --run-nix; COMPILER.md "Stage 4").
 scoreboard-target *flags: build-a2min cvm
-    python3 scripts/scoreboard.py --on-target --a2min ./sim/build_a2min/a2min \
+    A2MIN_PRINT=1 python3 scripts/scoreboard.py --on-target --a2min ./sim/build_a2min/a2min \
         --vm target/build/cvm.bin --corpus tests/corpus/tvix --corpus tests/fixtures \
         --build target/build/nix-target --expected tests/corpus/expected-pass.txt {{flags}}
 
 # Just the fixtures, normally and with a collection at every boundary.
 fixtures *flags: build-a2min cvm nbc-build
-    python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
+    A2MIN_PRINT=1 python3 scripts/scoreboard.py --nbc {{NBC}} --a2min ./sim/build_a2min/a2min \
         --vm target/build/cvm.bin --corpus tests/fixtures \
         --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt {{flags}}
 
 # With a collection at every boundary the slowest fixture needs ~290M cycles,
 # within the default 500M budget.
 fixtures-gc: build-a2min cvm nbc-build
-    python3 scripts/scoreboard.py --nbc {{NBC}} \
+    A2MIN_PRINT=1 python3 scripts/scoreboard.py --nbc {{NBC}} \
         --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
         --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress
 

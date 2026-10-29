@@ -90,6 +90,8 @@
 #define FRONT_AST        3
 #define FRONT_COMPILE    4
 #define FRONT_RUN        5
+#define PRINT_ADDR       0x0337UL   /* a2min sets it: the VM prints its answer to standard
+                                       output itself, as a2min does (print.c) */
 #define SRC_LEN_ADDR     0x0338UL   /* a2min sets it: the source's length (u16), at SRC_BASE */
 #define MATURE_STRESS_ADDR 0x0335UL /* a2min sets it: k, and every k-th promotion is followed
                                        by a collection of mature space, needed or not -- with
@@ -406,6 +408,7 @@ void call_enter(void);
 obj_t *make_apply(obj_t *f, obj_t *x);
 uint16_t stack_ptr(void);
 void stack_check(void);
+void print_result(void);            /* print.c: if PRINT_ADDR, the answer as a2min prints it, to standard output */
 void stack_need(uint16_t n);        /* E_NOMEM unless n bytes more than STACK_MIN are free */
 
 /* --- gc.c: the nursery collector --------------------------------------------------- */

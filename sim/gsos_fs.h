@@ -43,6 +43,13 @@ struct GsosFs {
     std::map<uint16_t, Open> open;
     uint16_t next_ref = 1;
 
+    // The console (docs/COMPILER.md "Stage 4"): GetStdRefNum's standard
+    // input, output and error, prefixes 10 to 12, as the ORCA shell gives
+    // them. What the VM writes is kept here, for a2min to compare or print.
+    static constexpr uint16_t STD_IN = 0xFF0A, STD_OUT = 0xFF0B, STD_ERR = 0xFF0C;
+    static constexpr uint16_t paramRangeErr = 0x53;
+    std::string console_out, console_err;
+
     bool mount(const char *spec) {
         const char *eq = std::strchr(spec, '=');
         if (!eq || spec[0] != '/') return false;
@@ -153,6 +160,21 @@ struct GsosFs {
             while (n < req && o.mark < o.bytes.size()) wr(buf + n++, static_cast<uint8_t>(o.bytes[o.mark++]));
             w32(pb + 12, n);
             return n == 0 && req != 0 ? eofEncountered : 0;
+        }
+        case 0x2013: {                                  // Write: to the console only
+            const uint16_t ref = r16(pb + 2);
+            if (ref != STD_OUT && ref != STD_ERR) return invalidRefNum;
+            const uint32_t buf = r32(pb + 4) & 0xFFFFFF, req = r32(pb + 8);
+            std::string &to = ref == STD_OUT ? console_out : console_err;
+            for (uint32_t i = 0; i < req; ++i) to += static_cast<char>(rd(buf + i));
+            w32(pb + 12, req);
+            return 0;
+        }
+        case 0x2037: {                                  // GetStdRefNum: prefix 10, 11 or 12
+            const uint16_t which = r16(pb + 2);
+            if (which < 10 || which > 12) return paramRangeErr;
+            w16(pb + 4, static_cast<uint16_t>(0xFF00 | which));
+            return 0;
         }
         case 0x2014: return open.erase(r16(pb + 2)) ? 0 : invalidRefNum;   // Close
         case 0x2019: {                                  // GetEOF

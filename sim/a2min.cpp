@@ -681,12 +681,15 @@ std::string fmt_value(uint32_t ptr, int depth) {
     std::unordered_set<uint32_t> seen;
     return fmt_value(ptr, depth, seen);
 }
+// Its limits are the target's printer's (print.c), which must print what this
+// prints: a value nested past 1,000 is <DEEP>, a list or set counting more
+// than $4000 is not one (<OOB>).
 std::string fmt_value(uint32_t ptr, int depth, std::unordered_set<uint32_t> &seen) {
-    if (depth > 64) return "<DEEP>";
+    if (depth > 1000) return "<DEEP>";
     if (ptr == 0) return "<NULLPTR>";
     const uint8_t tag = mem8(ptr, 0);
     const uint32_t aux = (mem32(ptr, 0) >> 8) & 0x3FFFFF;
-    if (aux > 0x4000) return "<OOB>";
+    if (aux > 0x4000 && (tag == TAG_LIST || tag == TAG_ATTRS)) return "<OOB>";
     switch (tag) {
         case TAG_INT: {
             uint64_t u = 0;
@@ -755,6 +758,15 @@ constexpr uint32_t SRC_BASE = 0x0D0000, FRONT_OUT = 0x0F0000;
 uint8_t front_mode = 0;                   // 0 run the image; 1 --lex; 2 --cst; 3 --ast; 4 --compile;
                                           // 5 --run-nix, compiled on the target and run
 const char *compile_out = nullptr;       // --compile's image file
+// What the VM printed (A2MIN_PRINT) against what a2min prints: a line each.
+// A difference is an error line of its own, which the scoreboard counts.
+bool printed_as(const std::string &want) {
+    if (gsos.console_out == want + "\n") return true;
+    std::printf("error: PRINTER: the VM printed [%s] where a2min prints [%s]\n",
+                gsos.console_out.c_str(), want.c_str());
+    return false;
+}
+
 int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     if (!load_image(vm_path)) return 2;
     sp_floor = VM_STACK_FLOOR;                  // the C VM's stack floor (docs/VM.md)
@@ -821,14 +833,20 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
     // diffed against nbc reading the host's files; for --run-nix only where
     // there is a GS/OS -- with none, the compiler finds none either, as on a
     // machine without one, and an import is the primop's E_GSOS at run time.
+    // A2MIN_PRINT=1: the VM prints its answer itself (print.c, vm.h PRINT_ADDR)
+    // to standard output through GS/OS, and that must be what a2min prints --
+    // the target's printer held to this one, in every mode a run can be in.
+    const char *pr = std::getenv("A2MIN_PRINT");
+    const bool target_print = pr && pr[0] == '1' && (front_mode == 0 || front_mode == 5);
+    ram[0x0337] = target_print ? 1 : 0;
     const char *mount = std::getenv("A2MIN_MOUNT");
     if (mount && *mount && !gsos.mount(mount)) { std::fprintf(stderr, "A2MIN_MOUNT must be /prefix=dir\n"); return 2; }
     if (front_mode == 3 || front_mode == 4 || (front_mode == 5 && !gsos.mounts.empty())) gsos.mount("/h=/");
-    if (!gsos.mounts.empty()) {
+    if (!gsos.mounts.empty() || target_print) {     // the console is there with no volume too
         gsos.rd = [](uint32_t a) { return rd8(a); };
         gsos.wr = [](uint32_t a, uint8_t v) { wr8(a, v); };
         gsos_on = true;
-        ram[0x0334] = 1;
+        ram[0x0334] = gsos.mounts.empty() ? 0 : 1;
     }
     if (front_mode) {
         std::ifstream f(nbc_path, std::ios::binary);
@@ -951,10 +969,11 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
                 std::printf("  stack[%u] = %08X %s\n", dv - i, ram32(vbase + 4 * (i - 1)),
                             fmt_value(ram32(vbase + 4 * (i - 1)), 0).c_str());
         }
+        std::string line = std::string("error: ") + name;
         if (code == 0x09 || code == 0x0A || code == 0x12)   // a message, or E_GSOS's builtin, in RESULT
-            std::printf("error: %s %s\n", name, fmt_value(ram32(RESULT), 0).c_str());
-        else
-            std::printf("error: %s\n", name);
+            line += " " + fmt_value(ram32(RESULT), 0);
+        if (target_print && !printed_as(line)) return 1;
+        std::printf("%s\n", line.c_str());
         return 1;
     }
     if (status != 0x01) { std::printf("error: status $%02X\n", status); return 1; }
@@ -1001,7 +1020,9 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         std::printf("image: %u bytes\n", n);
         return 0;
     }
-    std::printf("result: %s\n", fmt_value(ram32(RESULT), 0).c_str());
+    const std::string value = fmt_value(ram32(RESULT), 0);
+    if (target_print && !printed_as(value)) return 1;
+    std::printf("result: %s\n", value.c_str());
     return 0;
 }
 

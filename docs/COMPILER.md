@@ -322,13 +322,33 @@ Nix quotes it, a path raw, `[ ... ]` and `{ name = value; }` with a list or
 set printed before as `«repeated»`, a name quoted unless it is an
 identifier, a lambda `<LAMBDA>`, `<PRIMOP>` or `<PRIMOP-APP>` by its chunk's
 kind; an error `error: E_NAME`, and its message where a2min prints one. It
-reads the heap as the VM does -- a mature object through a view, a large
-promoted string a block at a time -- and runs no bytecode, so nothing moves
-under it; the set of what it has printed is a table in bank 7. Its text goes
-to a buffer, and from there to standard output (GS/OS `Write`). The gate:
-a2min compares the target's text with its own printer's for every test, in
-every mode -- the two must be equal, byte for byte -- and planted printer
-bugs must be caught.
+reads every object where it lives -- in place, or across the bus with
+`card_read_at`, so it takes no view and the window ring never turns -- and
+runs no bytecode, so nothing moves under it. It is iterative, its open lists
+and sets a stack in bank 12, so nesting costs no C stack; the set of what it
+has printed is a table in bank 7. Its text goes out through GS/OS
+(`GetStdRefNum`, `Write`) to standard output, which a2min's GS/OS now has: a
+console, there with no volume mounted too. The gate: with `A2MIN_PRINT=1`
+the VM prints and a2min compares what it printed with its own printer's
+text, byte for byte, a difference an error line of its own; every scoreboard
+run in the flake sets it, in every mode, and so does `mutation-vm.sh`.
+
+**4b done** (2026-10-28): `print.c`, 4.7 KB in bank 10 (segment `print`).
+All 645 passing tests print the same on the target as on the host, with
+nbc's images and with the target's, and every fixture under every mode
+`mutation-vm.sh` runs -- GC stress, a full remembered set, mature
+collections -- so the printer reads stressed heaps too. A new fixture,
+`eval-okay-print-rules`, shows each rule in its answer, the host's: no test
+had a «repeated» or a keyword as a name before. Ten planted printer bugs are
+caught (an unescaped `${`, no «repeated», `if` left unquoted, a set's last
+`;`, an INDIRECT printed as itself, a float as toJSON prints it, a lost
+sign, a mature object read in place, a throw's message left out, a string
+cut at its first block). The two printers' limits are now the same and
+real: a value nested past 1,000 is `<DEEP>` (it was 64 on the host), a
+count past `$4000` is not one only for a list or set (it was any object's,
+a string's too); no passing test's answer had either. The VM pays bank 0
+4 bytes, the call (`print_result` tests the flag itself: in `vm_entry` the
+test cost 25), and each run 81 cycles for it.
 
 **4c. A typed line** (`repl.c`). A prompt, a line read from standard input,
 compiled as a file with no name (no directory: positions are none, as for

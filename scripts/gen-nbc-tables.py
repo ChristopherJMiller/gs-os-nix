@@ -9,6 +9,9 @@ from nbc, generated from nbc's own sources so the two cannot drift
   VALUE_TABLE        opcodes.rs BUILTIN_VALUES: each name, then its value: S
                      and a string, I and a decimal, or L (the empty list)
   DERIVATION_NIX     derivation.nix, the file nbc embeds
+  ERROR_TABLE        the VM's error names (target/vm/c/opcodes.h), by code from
+                     0 -- a2min's names[], which check-opcodes.py holds to it --
+                     for print.c
 
 A table's entry is a length byte, the bytes and a NUL -- a lookup steps
 over an entry without scanning it -- and it ends with a zero length. As
@@ -23,6 +26,7 @@ import re
 import sys
 
 RS, NIX, OUT = "tools/nbc/src/opcodes.rs", "tools/nbc/src/derivation.nix", "target/vm/c/nbc_tables.h"
+OPH = "target/vm/c/opcodes.h"
 
 
 def block(src, name):
@@ -54,8 +58,17 @@ def literal(items, width=96):
     return " \\\n".join(f'    "{l}"' for l in lines)
 
 
-def render(rs=None, text=None):
+def error_names(h):
+    """opcodes.h's E_ codes as a list by code: 0 is a2min's "E_NONE?", a gap "E_?" """
+    codes = {int(c, 16): n for n, c in re.findall(r"^#define (E_[A-Z]+)\s+0x([0-9A-Fa-f]{2})\b", h, re.M)}
+    if len(codes) < 20:
+        sys.exit(f"gen-nbc-tables: {OPH}'s error codes did not parse")
+    return ["E_NONE?"] + [codes.get(c, "E_?") for c in range(1, max(codes) + 1)]
+
+
+def render(rs=None, text=None, oph=None):
     rs = open(RS).read() if rs is None else rs
+    oph = open(OPH).read() if oph is None else oph
     prims = re.findall(r'\("([^"]+)", 0x([0-9A-Fa-f]{2}), (\d)\)', block(rs, "PRIMOPS"))
     globs = re.findall(r'"([^"]+)"', block(rs, "GLOBALS"))
     names = re.findall(r'"([^"]+)"', block(rs, "NIX_BUILTINS"))
@@ -82,6 +95,8 @@ def render(rs=None, text=None):
             "#define NIX_BUILTIN_TABLE \\\n" + literal([n.encode() for n in names]) + "\n\n"
             "/* BUILTIN_VALUES: a name, then its value: S and a string, I and a decimal, or L */\n"
             "#define VALUE_TABLE \\\n" + literal(vals) + "\n\n"
+            "/* the VM's error names, by code from 0 (opcodes.h) */\n"
+            "#define ERROR_TABLE \\\n" + literal([n.encode() for n in error_names(oph)]) + "\n\n"
             "/* derivation.nix, the file Nix wraps around derivationStrict */\n"
             f"#define DERIVATION_NIX_LEN {len(text)}U\n"
             "#define DERIVATION_NIX \\\n" + " \\\n".join(f'    "{l}"' for l in body) + "\n")
@@ -89,16 +104,18 @@ def render(rs=None, text=None):
 
 def selftest():
     """Each drift the header could fall behind, planted in a copy of its source"""
-    rs, text, have = open(RS).read(), open(NIX, "rb").read(), open(OUT).read()
+    rs, text, oph, have = open(RS).read(), open(NIX, "rb").read(), open(OPH).read(), open(OUT).read()
     plants = [("a primop's arity", rs.replace('("map", 0x04, 2)', '("map", 0x04, 3)'), text),
               ("a primop's id", rs.replace('("head", 0x01, 1)', '("head", 0x02, 1)'), text),
               ("a global", rs.replace('"placeholder", ', ""), text),
               ("a builtin's name", rs.replace('"warn", ', '"warm", '), text),
               ("a value builtin", rs.replace('BuiltinValue::Str("2.34.9")', 'BuiltinValue::Str("2.34.8")'), text),
               ("derivation.nix's text", rs, text.replace(b"outputsList", b"outputList", 1))]
+    plants = [(n, r, t, oph) for n, r, t in plants]
+    plants.append(("an error's name", rs, text, oph.replace("#define E_NOATTR ", "#define E_NOATR ")))
     ok = True
-    for name, r, t in plants:
-        caught = (r, t) != (rs, text) and render(r, t) != have
+    for name, r, t, h in plants:
+        caught = (r, t, h) != (rs, text, oph) and render(r, t, h) != have
         print(f"  {name:<24} {'caught' if caught else 'SURVIVED'}")
         ok &= caught
     print("NBC TABLES SELFTEST OK" if ok else "NBC TABLES SELFTEST FAILED")
@@ -114,7 +131,7 @@ def main():
             ok = open(OUT).read() == want
         except FileNotFoundError:
             ok = False
-        print("nbc_tables.h: " + ("nbc's tables and derivation.nix, exactly" if ok
+        print("nbc_tables.h: " + ("nbc's tables, derivation.nix and the error names, exactly" if ok
                                   else "STALE -- run scripts/gen-nbc-tables.py"))
         return 0 if ok else 1
     open(OUT, "w").write(want)
