@@ -59,6 +59,18 @@ let
       chmod -R +w .
       python3 -m hw.carrier.top --out "$out"
     '';
+
+  # The JLCPCB order package and the review artefacts (hw/tools/fab.py): gerbers, BOM, CPL,
+  # interactive BOM, renders, layer SVGs and the schematic PDF.
+  carrierFab = pkgs.runCommand "hw-carrier-fab"
+    (hwEnv // { nativeBuildInputs = tools; })
+    ''
+      export HOME=$TMPDIR
+      cp -r ${self}/hw ${self}/rtl .
+      chmod -R +w .
+      python3 -m hw.tools.fab --board hw/carrier/carrier.kicad_pcb \
+        --sch ${carrierBuild}/carrier.kicad_sch --out "$out"
+    '';
 in
 {
   # devShells.<system>.hw must exist on every system, so off Linux it is an
@@ -126,9 +138,26 @@ in
       python3 hw/tools/check_drc.py --netlist ${carrierBuild}/carrier.net \
         hw/carrier/carrier.kicad_pcb
     '' [ "^HW DRC SELFTEST OK" "^HW DRC OK" ];
+
+    # Every part that is ordered has an LCSC number (J1, the edge fingers, is the one
+    # exemption), on the board and in the netlist.
+    hw-bom = hwCheck "bom" ''
+      python3 hw/tools/check_bom.py --selftest --netlist ${carrierBuild}/carrier.net \
+        hw/carrier/carrier.kicad_pcb
+      python3 hw/tools/check_bom.py --netlist ${carrierBuild}/carrier.net \
+        hw/carrier/carrier.kicad_pcb
+    '' [ "^HW BOM SELFTEST OK" "^HW BOM OK" ];
+
+    # The order package's contents: gerbers, drill, one CPL row per machine-placed part.
+    hw-fab = hwCheck "fab" ''
+      python3 hw/tools/check_fab.py --selftest --board hw/carrier/carrier.kicad_pcb \
+        --sch ${carrierBuild}/carrier.kicad_sch
+      python3 hw/tools/check_fab.py --board hw/carrier/carrier.kicad_pcb ${carrierFab}
+    '' [ "^HW FAB SELFTEST OK" "^HW FAB OK" ];
   };
 
   packages =lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
     hw-carrier-build = carrierBuild;
+    hw-carrier-fab = carrierFab;
   };
 }

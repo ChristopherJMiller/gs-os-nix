@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Hardware tasks. Run inside `nix develop .#hw`. Every recipe runs from the repo
-# root. check, render and fab arrive with later tasks.
+# root.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -55,3 +55,20 @@ route PASSES="20":
            hw/carrier/carrier.kicad_pcb \
       && python3 hw/tools/check_drc.py --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb
+
+# The BOM gate, then the JLCPCB package and review artefacts (gerbers, BOM, CPL, ibom,
+# renders, layer SVGs, schematic PDF) in build/hw/fab, then the fab gate on them.
+fab: carrier
+    cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/check_bom.py --selftest --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_bom.py --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb \
+      && python3 -m hw.tools.fab --board hw/carrier/carrier.kicad_pcb \
+           --sch build/hw/carrier/carrier.kicad_sch --out build/hw/fab \
+      && python3 hw/tools/check_fab.py --selftest --board hw/carrier/carrier.kicad_pcb \
+           --sch build/hw/carrier/carrier.kicad_sch \
+      && python3 hw/tools/check_fab.py --board hw/carrier/carrier.kicad_pcb build/hw/fab
+
+# The renders alone: build/hw/fab/render-{top,bottom}.png and layers/*.svg.
+render: fab
