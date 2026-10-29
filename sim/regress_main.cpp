@@ -987,6 +987,61 @@ void l3_reserve() {
     bus->wr(R_CTRL, CTRL_RESET);
 }
 
+// The half's size is an input of the card (heap_half_log2), a board's constant
+// and a simulator's setting; GEOMETRY reports it, and RESERVE's bound and both
+// flips follow it (HEAP.md "Long lists", step 0). Each size on a card of its
+// own, from reset, at the smallest and the largest a harness runs.
+void l3_geometry() {
+    std::printf("L3 GEOMETRY\n");
+    for (unsigned lg : { 19u, 23u }) {
+        const std::uint32_t half = 1u << lg, roots = 0x70010;
+        auto *c = new Va2nix_card;
+        HeapMem<Va2nix_card> mem(2u << lg);
+        CardBus<Va2nix_card> b(c, &mem, lg);
+        b.reset();
+
+        b.wr(R_CMD, V_GEOMETRY);
+        std::uint8_t st = b.wait_verb();
+        check((st & ST_ERR) == 0 && b.get_len() == half,
+              lg == 19 ? "GEOMETRY reports a 512 KB half" : "GEOMETRY reports an 8 MB half",
+              "a harness or card whose half is not the one it was built for");
+
+        b.set_len(half - 64);
+        b.wr(R_CMD, V_RESERVE);
+        st = b.wait_verb();
+        b.set_len(128);
+        b.wr(R_CMD, V_RESERVE);
+        const std::uint8_t st2 = b.wait_verb();
+        check((st & ST_ERR) == 0 && (st2 & ST_ERR) && (st2 & 0x0F) == E_OOM,
+              lg == 19 ? "RESERVE stops at a 512 KB half's top" : "RESERVE stops at an 8 MB half's top",
+              "a bound left at 512 KB");
+
+        // One live INT in half A, moved to half B and back by two collections
+        mem.poke32(0x1000, TAG_INT);
+        mem.poke32(0x1004, 0x600DF00D);
+        mem.poke32(0x1008, 0);
+        mem.poke32(roots, 0x1000);
+        auto collect = [&]() {
+            b.set_areg(0, roots);
+            b.set_len(1);
+            b.wr(R_CMD, V_MARK);
+            const std::uint8_t m = b.wait_verb();
+            b.wr(R_CMD, V_COMPACT);
+            return static_cast<std::uint8_t>(m | b.wait_verb());
+        };
+        st = collect();
+        const std::uint32_t in_b = mem.peek32(roots);
+        st |= collect();
+        const std::uint32_t in_a = mem.peek32(roots);
+        check((st & ST_ERR) == 0 && in_b >= half + 0x10 && in_b < 2 * half &&
+              in_a >= 0x10 && in_a < half && mem.peek32(in_a + 4) == 0x600DF00D,
+              lg == 19 ? "both flips land in a 512 KB card's halves" : "both flips land in an 8 MB card's halves",
+              "a half's base fixed at 512 KB, which copies a survivor outside its half");
+        c->final();
+        delete c;
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -1011,6 +1066,7 @@ int main(int argc, char **argv) {
     l3_alu64();
     l3_gc();
     l3_reserve();
+    l3_geometry();
 
     card->final();
     delete card;

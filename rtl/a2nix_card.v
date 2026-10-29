@@ -52,6 +52,10 @@ module a2nix_card (
     output reg  [31:0]  mem_wdata,
     input  wire [31:0]  mem_rdata,
 
+    // The heap's half size, log2 bytes: a board ties it to its memory, a
+    // simulator sets it; held from reset (Heap geometry, below; CARD-ISA.md).
+    input  wire [4:0]   heap_half_log2,
+
     output wire         irq
 );
 
@@ -78,6 +82,7 @@ module a2nix_card (
                      V_ALLOC       = 8'h20,
                      V_FOLLOW      = 8'h21,
                      V_RESERVE     = 8'h25,
+                     V_GEOMETRY    = 8'h26,
                      V_MEMCMP      = 8'h22,
                      V_LOOKUP      = 8'h30,
                      V_MARK        = 8'h40,
@@ -103,13 +108,15 @@ module a2nix_card (
     localparam [7:0] CARD_ID = 8'hA2;
 
     // --- Heap geometry ---
-    // 1 MB in the harnesses; a real board sizes it to its SDRAM. The heap is two
-    // semispaces for the Cheney collector (docs/DECISIONS.md D15). Each starts 16
-    // bytes in so that neither can hand out address 0, the null pointer. Which half
-    // is being allocated from is `space_sel`.
-    localparam [31:0] SPACE_SIZE = 32'h0008_0000;              // 512 KB a side
+    // Two semispaces for the Cheney collector (docs/DECISIONS.md D15), each a
+    // power of two, 2^heap_half_log2 bytes: an input, so that a board sizes the
+    // heap to its memory and a simulator to its test, and GEOMETRY reports it
+    // (CARD-ISA.md). Each half starts 16 bytes in so that neither can hand out
+    // address 0, the null pointer. Which half is being allocated from is
+    // `space_sel`.
+    wire       [31:0] space_size = 32'd1 << heap_half_log2;
     localparam [31:0] SPACE_A    = 32'h0000_0010;
-    localparam [31:0] SPACE_B    = 32'h0008_0010;
+    wire       [31:0] space_b    = space_size + 32'h10;
 
     // Tags the collector needs to size or trace. BOOL and NULL take the 8-byte
     // default and carry no pointers, so they need no case of their own.
@@ -371,8 +378,8 @@ module a2nix_card (
 
     // to-space is simply the other half; COMPACT expresses the flip as "the old
     // from-space becomes the new to-space", so only from_base is needed here.
-    wire [31:0] from_base = space_sel ? SPACE_B : SPACE_A;
-    wire [31:0] from_top  = from_base + SPACE_SIZE - 32'd16;
+    wire [31:0] from_base = space_sel ? space_b : SPACE_A;
+    wire [31:0] from_top  = from_base + space_size - 32'd16;
     wire        obj_in_from = (gc_obj >= from_base) && (gc_obj < from_top);
 
     // DATA port: a pending write, and a prefetched byte so reads answer immediately.
@@ -513,7 +520,7 @@ module a2nix_card (
             mcur <= 32'd0; mword <= 32'd0; mbyte <= 8'h00;
             mcount <= 32'd0; hops <= 8'd0;
             alloc_ptr <= SPACE_A;
-            space_sel <= 1'b0; gc_free <= SPACE_B; gc_scan <= SPACE_B;
+            space_sel <= 1'b0; gc_free <= space_b; gc_scan <= space_b;
             gc_root_at <= 32'd0; gc_root_n <= 32'd0; gc_root_i <= 32'd0;
             gc_obj <= 32'd0; gc_new <= 32'd0; gc_size <= 32'd0;
             gc_off <= 32'd0; gc_field <= 32'd0; gc_ret <= M_IDLE;
@@ -1062,6 +1069,13 @@ module a2nix_card (
                                         alloc_ptr <= alloc_ptr + alloc_total(len) - 32'd4;
                                         done      <= 1'b1;
                                     end
+                                end
+
+                                // GEOMETRY: LEN = the bytes in a heap half, as the
+                                // board or the simulator set it. Single cycle.
+                                V_GEOMETRY: begin
+                                    len  <= space_size;
+                                    done <= 1'b1;
                                 end
 
                                 // MEMCMP: compare LEN bytes at A0 against LEN

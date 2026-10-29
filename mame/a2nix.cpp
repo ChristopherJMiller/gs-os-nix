@@ -98,6 +98,7 @@ void a2bus_a2nix_device::device_start()
 	m_heap = std::make_unique<u8 []>(HEAP_BYTES);
 	std::fill_n(m_heap.get(), HEAP_BYTES, 0);
 
+	m_card->heap_half_log2 = 19;	// a half of HEAP_BYTES: 512 KB
 	m_card->clk       = 0;
 	m_card->rst_n     = 0;
 	m_card->c0n_addr  = 0;

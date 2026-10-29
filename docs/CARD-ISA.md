@@ -176,6 +176,7 @@ end** of the byte string.
 |---|---|---|---|
 | `$20` | `ALLOC` | `LEN` = size, `P0` = tag | `A1` = address of new object |
 | `$25` | `RESERVE` | `LEN` = bytes | `A1` = base of a headerless block; bumps the allocator |
+| `$26` | `GEOMETRY` | — | `LEN` = bytes a heap half (a power of two) |
 | `$21` | `FOLLOW` | `A0` | `A1` = first non-indirection in the chain |
 | `$22` | `MEMCMP` | `A0`, `A1`, `LEN` (word-aligned) | `P0` byte 0 = sign: `$00`, `$01`, `$FF` |
 | `$23` | `MEMCPY` | `A0` → `A1`, `LEN` | — |
@@ -245,8 +246,17 @@ a Cheney copy inside CPU RAM into a staging area; survivors come out contiguous 
 their sizes preserved, so the whole staging area can be pushed to the card as **one
 `DATA` burst** into a reserved block, and every young pointer translates by a constant:
 `card = base + (addr − staging_base)`. One verb and ~1 access per surviving byte, with
-no per-object `ALLOC`. Young pointers carry bit 31, which the card's 1 MB heap never
+no per-object `ALLOC`. Young pointers carry bit 31, which the card's heap never
 uses, so the two address spaces cannot be confused.
+
+**The heap's size is the card's to report.** It is two halves, the semispaces
+`MARK` and `COMPACT` copy between, each 2^n bytes for an `n` the card is built
+with -- an input of the core (`heap_half_log2`), tied by a board to its memory,
+set by a simulator -- and `GEOMETRY` returns a half's size in `LEN`. Half A
+starts at `$10` and half B at the size plus `$10`, so neither hands out address
+0, the null pointer. Software never assumes a size: the VM asks once, when it
+finds the card (HEAP.md "Long lists", step 0). Each simulator says what it
+runs; the regress suite builds cards of 512 KB and 8 MB.
 
 The rule that makes this sound: **a mature object never points into the nursery,
 except through a field in the CPU's remembered set** ([DECISIONS.md](DECISIONS.md)

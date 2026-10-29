@@ -24,7 +24,7 @@ enum : std::uint8_t {
     V_HASH_INIT = 0x10, V_HASH_STREAM = 0x11, V_HASH_FINAL = 0x12,
     V_NARHASH = 0x13, V_STOREPATH = 0x14, V_HASH_PUSH = 0x15,
     V_ALLOC = 0x20, V_FOLLOW = 0x21, V_MEMCMP = 0x22, V_MEMCPY = 0x23,
-    V_RESERVE = 0x25,
+    V_RESERVE = 0x25, V_GEOMETRY = 0x26,
     V_LOOKUP = 0x30,
     V_MARK = 0x40, V_COMPACT = 0x41,
     V_ALU64 = 0x50,
@@ -56,10 +56,15 @@ enum : std::uint8_t {
     TAG_BLACKHOLE = 0x0B, TAG_FORWARDED = 0x0C, TAG_FLOAT = 0x0D,
 };
 
-// Semispace geometry (docs/DECISIONS.md D15); must match rtl/a2nix_card.v.
-constexpr std::uint32_t SPACE_SIZE = 0x00080000;
+// Semispace geometry (docs/DECISIONS.md D15). The half's size is an input of
+// the card (heap_half_log2), a board's constant or a simulator's setting, and
+// GEOMETRY reports it (CARD-ISA.md); this is the size the tests here build
+// their cards with, 512 KB a half. Half A starts 16 bytes in, half B 16 bytes
+// into the second half, as rtl/a2nix_card.v lays them out.
+constexpr unsigned HEAP_HALF_LOG2 = 19;
+constexpr std::uint32_t SPACE_SIZE = 1u << HEAP_HALF_LOG2;
 constexpr std::uint32_t SPACE_A    = 0x00000010;
-constexpr std::uint32_t SPACE_B    = 0x00080010;
+constexpr std::uint32_t SPACE_B    = SPACE_SIZE + 0x10;
 
 constexpr int FIFO_DEPTH = 32;
 constexpr int FIFO_BURST = 16;
@@ -73,8 +78,9 @@ constexpr int CARD_CYCLES_PER_ACCESS = 48;
 template <typename CardT>
 class CardBus {
 public:
-    CardBus(CardT *card, HeapMem<CardT> *heap)
-        : m_card(card), m_heap(heap) {}
+    // half_log2: the card's half size, log2 bytes, driven before reset and held
+    CardBus(CardT *card, HeapMem<CardT> *heap, unsigned half_log2 = HEAP_HALF_LOG2)
+        : m_card(card), m_heap(heap), m_half_log2(half_log2) {}
 
     // settle/commit straddle the edge per the port contract in heapmem.h.
     void tick() {
@@ -111,6 +117,7 @@ public:
     }
 
     void reset() {
+        m_card->heap_half_log2 = static_cast<std::uint8_t>(m_half_log2);
         m_card->rst_n     = 0;
         m_card->c0n_addr  = 0;
         m_card->c0n_read  = 0;
@@ -145,6 +152,14 @@ public:
         for (int i = 0; i < 4; ++i) wr(R_LEN, static_cast<std::uint8_t>(v >> (8 * i)));
     }
 
+    // The 4 LEN bytes, the index rewound first as for set_len
+    std::uint32_t get_len() {
+        wr(R_CTRL, CTRL_RESET_PORTS);
+        std::uint32_t v = 0;
+        for (int i = 0; i < 4; ++i) v |= static_cast<std::uint32_t>(rd(R_LEN)) << (8 * i);
+        return v;
+    }
+
     void write_pslot(int slot, const std::uint8_t *in, int n) {
         wr(R_PSEL, static_cast<std::uint8_t>(slot));
         for (int i = 0; i < n; ++i) wr(R_PPORT, in[i]);
@@ -177,6 +192,7 @@ private:
 
     CardT *m_card;
     HeapMem<CardT> *m_heap;
+    unsigned m_half_log2;
     std::uint64_t m_cycles = 0;
     std::uint64_t m_accesses = 0;
 };

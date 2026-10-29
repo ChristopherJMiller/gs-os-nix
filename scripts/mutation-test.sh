@@ -237,6 +237,16 @@ mutate "MEMCMP stops after the first word" rtl/a2nix_card.v \
 mutate "MEMCMP accepts an unaligned operand" rtl/a2nix_card.v \
        's/if (areg\[0\]\[1:0\] != 2.b00 || areg\[1\]\[1:0\] != 2.b00) begin/if (1'"'"'b0) begin/'
 
+# GEOMETRY: report the harnesses' old 512 KB whatever the card was built with,
+# so software sizes its halves wrong on any other card (HEAP.md "Long lists").
+mutate "GEOMETRY reports a fixed 512 KB" rtl/a2nix_card.v \
+       's/len  <= space_size;/len  <= 32'"'"'h0008_0000;/'
+
+# Half B at the old fixed 512 KB: on a bigger card the flip copies survivors
+# into the middle of half A, over live objects.
+mutate "half B starts at a fixed 512 KB" rtl/a2nix_card.v \
+       's/wire       \[31:0\] space_b    = space_size + 32'"'"'h10;/wire       [31:0] space_b    = 32'"'"'h0008_0010;/'
+
 echo
 echo "$pass mutations caught, $fail not caught"
 [ "$fail" -eq 0 ] || exit 1

@@ -325,6 +325,7 @@ bool load_image(const char *bin_path, size_t *size_out = nullptr) {
 
 void bring_up_card() {
     card = new Va2nix_card;
+    card->heap_half_log2 = 19;                  // its half: 512 KB, as the heap memory is sized
     card->clk = 0; card->rst_n = 0;
     card->c0n_addr = 0; card->c0n_read = 0; card->c0n_write = 0; card->c0n_wdata = 0;
     card->c8_addr = 0; card->mem_rdata = 0;

@@ -82,6 +82,7 @@ void wr(uint8_t off, uint8_t v) {
 }
 
 void reset() {
+    dut->heap_half_log2 = HEAP_HALF_LOG2;      // the tests' card: 512 KB a half
     dut->rst_n     = 0;
     dut->c0n_addr  = 0;
     dut->c0n_read  = 0;
