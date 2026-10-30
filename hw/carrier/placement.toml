@@ -19,6 +19,11 @@
 # 0, so the module lies over the empty band above it, where nothing tall may go (the
 # silkscreen art goes there). Everything is on F (single-sided assembly).
 #
+# Rulings (controller): the height is 64 mm deliberately, not the smallest that fits (62), so
+# J2 keeps the art band above it. /IOSEL's 37.7 mm run from its finger (pin 1, at the front)
+# to U5 is accepted: about 8 pF of copper at 0.1 pF/mm plus 4 pF of input, under 15 pF; Task
+# 5's hw-load is the check.
+#
 # [decouple] maps each decoupling cap to the IC supply pin(s) it serves; the tests check
 # each is within 2 mm (pad edge to pad edge).
 
@@ -261,7 +266,7 @@ rot = 90
 side = "F"
 
 [parts.R7]
-x = 55.0
+x = 54.7
 y = 54.862
 rot = 90
 side = "F"
@@ -291,14 +296,14 @@ rot = 90
 side = "F"
 
 [parts.R12]
-x = 21.023
+x = 21.1
 y = 58.7
 rot = 90
 side = "F"
 
 [parts.R13]
-x = 21.95
-y = 48.938
+x = 21.9
+y = 46.4
 rot = 90
 side = "F"
 
@@ -309,14 +314,14 @@ rot = 0
 side = "F"
 
 [parts.R15]
-x = 35.65
+x = 35.1
 y = 60.763
 rot = 0
 side = "F"
 
 [parts.R16]
 x = 64.3
-y = 52.0
+y = 52.1
 rot = 90
 side = "F"
 

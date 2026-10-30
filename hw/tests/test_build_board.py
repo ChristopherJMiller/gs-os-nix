@@ -240,3 +240,25 @@ def test_tall_parts_are_clear_of_the_module(carrier_board):
             continue
         if any(p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH for p in f.Pads()):
             assert not area.Intersects(f.GetBoundingBox(False)), f.GetReference()
+
+
+def test_front_courtyards_do_not_overlap(carrier_board):
+    """No two parts' courtyards overlap (touching is fine). Courtyards here are rectangles,
+    so their bounding boxes are exact."""
+    boxes = {}
+    for f in carrier_board.GetFootprints():
+        cy = f.GetCourtyard(pcbnew.F_CrtYd)
+        if f.GetReference() != "J1" and cy.OutlineCount():
+            b = cy.BBox()
+            boxes[f.GetReference()] = (mm(b.GetLeft()), mm(b.GetTop()),
+                                       mm(b.GetRight()), mm(b.GetBottom()))
+    refs = sorted(boxes)
+    bad = []
+    for i, a in enumerate(refs):
+        for b in refs[i + 1:]:
+            A, B = boxes[a], boxes[b]
+            dx = min(A[2], B[2]) - max(A[0], B[0])
+            dy = min(A[3], B[3]) - max(A[1], B[1])
+            if dx > 0.005 and dy > 0.005:
+                bad.append((a, b, round(dx, 3), round(dy, 3)))
+    assert not bad, bad
