@@ -131,8 +131,10 @@ def test_carrier_top_lints_clean():
     assert r.returncode == 0 and "%Warning" not in r.stderr, r.stderr
 
 
-def test_balls_within_one_bank_per_bus():
-    """Each bus is one bank (the grouping the comment in pins.toml promises)."""
+def test_buses_run_in_order_along_the_socket():
+    """hw/tools/assign_pins.py picks each bit's contact for the placement (fewest ratsnest
+    crossings), so a bus no longer sits in one bank; what it keeps is the bit order: each
+    bus runs ascending or descending along the SODIMM, and every ball is a 3.3 V PIO."""
     import json
     import os
     mod = modmod.load(MODULE)
@@ -142,9 +144,7 @@ def test_balls_within_one_bank_per_bus():
     cab = db["packages"]["CABGA256"]
     pm = pinsmod.load(PINS)
     for name in ("slot_a", "slot_d", "slot_dl"):
-        banks = {bank[(cab[b]["row"], cab[b]["col"], cab[b]["pio"])]
-                 for b in pm.ports[name].balls}
-        assert len(banks) == 1, (name, banks)
+        for b in pm.ports[name].balls:
+            assert mod.bank_vccio[bank[(cab[b]["row"], cab[b]["col"], cab[b]["pio"])]] == 3.3
         pins = [modmod.pin_for_ball(mod, b) for b in pm.ports[name].balls]
-        assert pins == sorted(pins), name  # bit i on the i-th contact of the run
-        assert pins[-1] - pins[0] < 40, name
+        assert pins == sorted(pins) or pins == sorted(pins, reverse=True), name

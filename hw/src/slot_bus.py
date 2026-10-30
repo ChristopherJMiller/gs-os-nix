@@ -249,9 +249,15 @@ def slot_bus(p5v: Net, p3v3: Net, gnd: Net) -> SlotBus:
     b.tie(g, *_named(d, "GND"))
     b.tie(fpga("slot_d_dir"), *_named(d, "A->B"))
     b.tie(fpga("slot_d_oe_n"), *_named(d, "CE"))
+    # Bit i rides channel 7 - i, so the slot pins B7..B0 (11..18) read D0..D7 and the pins
+    # ascend with the bit number (11 + i), as do the data fingers along the card. The
+    # pairing is arbitrary (any channel carries any bit; A and B of one channel are the
+    # same bit), and this order lets the part sit with its slot side toward the fingers
+    # without crossing its wires (the 541 below already ascends: A0..A7 are pins 2..9).
     for i in range(8):
-        b.tie(fpga(f"slot_d{i}"), *_named(d, f"A{i}"))
-        b.tie(b.net(f"SLOT_D{i}"), *_named(d, f"B{i}"))
+        ch = 7 - i
+        b.tie(fpga(f"slot_d{i}"), *_named(d, f"A{ch}"))
+        b.tie(b.net(f"SLOT_D{i}"), *_named(d, f"B{ch}"))
     b.c(C_100N, n3, g)  # VCC
 
     # --- address: 74ALVC164245, A0-A15. A = FPGA, B = slot. Either DIR low = B->A. ---
@@ -298,10 +304,13 @@ def slot_bus(p5v: Net, p3v3: Net, gnd: Net) -> SlotBus:
         b.c(C_100N, n3, g)
 
     lvc541([(f"SLOT_D{i}", f"slot_dl{i}") for i in range(8)])
-    lvc541([("SLOT_DEVSEL_N", "slot_devsel_n"), ("SLOT_IOSEL_N", "slot_iosel_n"),
-            ("SLOT_IOSTRB_N", "slot_iostrb_n"), ("SLOT_M2SEL_N", "slot_m2sel_n"),
-            ("SLOT_M2B0", "slot_m2b0"), ("SLOT_RESET_N", "slot_reset_n"),
-            ("SLOT_SYNC_N", "slot_sync_n")])
+    # The control inputs take the pins in the order of their fingers along the card (pins 1,
+    # 41, 39, 35, 19, 20, 31: IOSEL, DEVSEL, M2SEL, M2B0, SYNC, IOSTRB, RESET), so the part
+    # sits above them without their wires crossing.
+    lvc541([("SLOT_IOSEL_N", "slot_iosel_n"), ("SLOT_DEVSEL_N", "slot_devsel_n"),
+            ("SLOT_M2SEL_N", "slot_m2sel_n"), ("SLOT_M2B0", "slot_m2b0"),
+            ("SLOT_SYNC_N", "slot_sync_n"), ("SLOT_IOSTRB_N", "slot_iostrb_n"),
+            ("SLOT_RESET_N", "slot_reset_n")])
 
     # --- clocks: 74LVC2G17 Schmitt buffers, each output through a 0 ohm series
     #     resistor (a footprint for a damping resistor if an edge rings). ---

@@ -91,7 +91,8 @@ def test_lvcr2245_polarity(nl):
     assert p["20"] == "+3V3" and p["10"] == "GND"
     assert p["1"] == "slot_d_dir" and p["19"] == "slot_d_oe_n"
     for i in range(8):
-        assert p[str(2 + i)] == f"slot_d{i}" and p[str(18 - i)] == f"SLOT_D{i}"
+        # bit i rides channel 7 - i: FPGA side pin 9 - i, slot side pin 11 + i
+        assert p[str(9 - i)] == f"slot_d{i}" and p[str(11 + i)] == f"SLOT_D{i}"
     assert "+5V" not in p.values() and "+5V_SLOT" not in p.values()
     assert nl.parts[u].footprint.startswith("Package_SO:SSOP-20_3.9x8.7mm_P0.635mm")
     assert nl.parts[u].fields["MPN"] == "SN74LVCR2245ADBQR"
@@ -122,12 +123,12 @@ def test_1t45_polarity(nl):
 def test_541s(nl):
     u4, u5 = by_value(nl, "74LVC541")
     for u, pairs in ((u4, [(f"SLOT_D{i}", f"slot_dl{i}") for i in range(8)]),
-                     (u5, [("SLOT_DEVSEL_N", "slot_devsel_n"),
-                           ("SLOT_IOSEL_N", "slot_iosel_n"),
-                           ("SLOT_IOSTRB_N", "slot_iostrb_n"),
+                     (u5, [("SLOT_IOSEL_N", "slot_iosel_n"),
+                           ("SLOT_DEVSEL_N", "slot_devsel_n"),
                            ("SLOT_M2SEL_N", "slot_m2sel_n"), ("SLOT_M2B0", "slot_m2b0"),
-                           ("SLOT_RESET_N", "slot_reset_n"),
-                           ("SLOT_SYNC_N", "slot_sync_n")])):
+                           ("SLOT_SYNC_N", "slot_sync_n"),
+                           ("SLOT_IOSTRB_N", "slot_iostrb_n"),
+                           ("SLOT_RESET_N", "slot_reset_n")])):
         p = pins_on(nl, u)
         assert p["20"] == "+3V3" and p["10"] == "GND"
         assert p["1"] == "GND" and p["19"] == "GND"  # always enabled
