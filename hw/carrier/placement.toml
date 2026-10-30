@@ -1,184 +1,202 @@
 # SPDX-License-Identifier: CERN-OHL-S-2.0
 # The carrier floorplan: x, y in mm from the card's front-top corner (x toward the
 # rear, y downward), rot in degrees. J1 (the fingers) is placed from slotgeom, not here.
+#
+# Plan 1b, task 4: every translator sits above its own fingers so the slot nets stay short
+# (the load gate wants <= 15 pF a pin), bottom to top:
+#   row 1 (nearest the fingers): the data translator U1 (74LVCR2245A) over D0-D7 at the
+#     front, the address translator U2 over A0..A15, the clock 2G17s U6/U7 over 7M, Q3, PH1,
+#     PH0, the R/W 1T45 U3, the open-drain 1G07s U8-U13 over /IRQ, /NMI, /INH, /DMA, RDY and
+#     /RESET. Both translators face their slot side to the fingers and their bit pins ascend
+#     with the fingers. The lane below each row (2-5 mm) carries the A0-A15 copper on F.Cu.
+#   row 2: the listen '541 U4 over U1 (its D0..D7 inputs run on B.Cu, where the data fingers
+#     are), the control '541 U5 over the select fingers, and the 1G07s whose fingers are on
+#     the top side (RDY, /DMA).
+#   power at the rear: F1, D1 by the +5V / GND fingers; VR1 and its capacitors at the front,
+#     where the module's 5V pins are.
+# J2 (the module socket) lies above, 3 mm clear of row 2 (a courtyard to courtyard gap
+# >= 3 mm between every pair of rows), with the headers over the module's far edge. J2 is rot
+# 0, so the module lies over the empty band above it, where nothing tall may go (the
+# silkscreen art goes there). Everything is on F (single-sided assembly).
+#
 # [decouple] maps each decoupling cap to the IC supply pin(s) it serves; the tests check
-# each is within 2 mm (pad edge to pad edge). J2 is rot 0, so the module lies over the
-# empty band above it, where nothing tall may go; the headers sit above that band.
+# each is within 2 mm (pad edge to pad edge).
+
 [board]
 length_mm = 80.0
-height_mm = 68.0
+height_mm = 64.0
 
 [parts.C1]
-x = 68.0
-y = 60.5
-rot = 0
+x = 70.463
+y = 57.8
+rot = 180
 side = "F"
 
 [parts.C2]
-x = 71.5
-y = 49.75
+x = 77.0
+y = 56.4
 rot = 0
 side = "F"
 
 [parts.C3]
-x = 11.0
-y = 43.5
+x = 7.138
+y = 44.95
 rot = 0
 side = "F"
 
 [parts.C4]
-x = 7.0
-y = 60.0
-rot = 0
+x = 7.095
+y = 59.8
+rot = 90
 side = "F"
 
 [parts.C5]
-x = 47.75
-y = 60.0
+x = 46.7
+y = 59.0
 rot = 90
 side = "F"
 
 [parts.C6]
-x = 50.5
-y = 60.5
-rot = 0
+x = 48.3
+y = 59.0
+rot = 90
 side = "F"
 
 [parts.C7]
-x = 8.0
-y = 47.25
-rot = 270
+x = 19.457
+y = 61.7
+rot = 0
 side = "F"
 
 [parts.C8]
-x = 34.5
-y = 46.0
+x = 26.15
+y = 47.538
 rot = 90
 side = "F"
 
 [parts.C9]
-x = 34.5
-y = 51.5
+x = 31.65
+y = 47.538
 rot = 90
 side = "F"
 
 [parts.C10]
-x = 22.5
-y = 46.0
-rot = 90
+x = 26.15
+y = 60.163
+rot = 270
 side = "F"
 
 [parts.C11]
-x = 22.5
-y = 51.5
-rot = 90
+x = 31.65
+y = 60.163
+rot = 270
 side = "F"
 
 [parts.C12]
-x = 62.25
-y = 48.0
+x = 52.1
+y = 54.862
 rot = 90
 side = "F"
 
 [parts.C13]
-x = 68.75
-y = 48.0
-rot = 90
+x = 51.1
+y = 61.638
+rot = 180
 side = "F"
 
 [parts.C14]
-x = 48.5
-y = 46.25
-rot = 270
+x = 13.575
+y = 41.837
+rot = 180
 side = "F"
 
 [parts.C15]
-x = 59.5
-y = 46.25
-rot = 270
+x = 40.075
+y = 44.638
+rot = 180
 side = "F"
 
 [parts.C16]
-x = 11.25
-y = 57.25
+x = 38.2
+y = 55.95
 rot = 90
 side = "F"
 
 [parts.C17]
-x = 19.75
-y = 57.25
+x = 43.2
+y = 55.95
 rot = 90
 side = "F"
 
 [parts.C18]
-x = 29.0
-y = 57.5
-rot = 270
+x = 62.55
+y = 61.638
+rot = 180
 side = "F"
 
 [parts.C19]
-x = 37.5
-y = 56.5
-rot = 90
+x = 68.95
+y = 60.638
+rot = 270
 side = "F"
 
 [parts.C20]
-x = 46.25
-y = 56.5
-rot = 90
+x = 54.95
+y = 61.638
+rot = 180
 side = "F"
 
 [parts.C21]
-x = 54.75
-y = 56.5
-rot = 90
+x = 60.95
+y = 54.438
+rot = 180
 side = "F"
 
 [parts.C22]
-x = 63.5
-y = 56.5
-rot = 90
+x = 57.25
+y = 54.438
+rot = 180
 side = "F"
 
 [parts.C23]
-x = 72.0
-y = 56.5
-rot = 90
+x = 58.75
+y = 61.638
+rot = 180
 side = "F"
 
 [parts.C24]
-x = 5.0
-y = 46.75
-rot = 0
+x = 1.862
+y = 47.55
+rot = 270
 side = "F"
 
 [parts.C25]
-x = 13.75
-y = 41.5
-rot = 90
+x = 2.862
+y = 43.4
+rot = 0
 side = "F"
 
 [parts.C26]
-x = 2.75
-y = 43.5
-rot = 90
+x = 2.862
+y = 44.95
+rot = 180
 side = "F"
 
 [parts.C27]
-x = 11.0
-y = 41.5
+x = 8.637
+y = 46.55
 rot = 0
 side = "F"
 
 [parts.D1]
-x = 71.5
-y = 52.75
+x = 74.0
+y = 53.8
 rot = 0
 side = "F"
 
 [parts.F1]
-x = 74.25
-y = 60.5
+x = 73.6
+y = 61.0
 rot = 0
 side = "F"
 
@@ -207,63 +225,63 @@ rot = 90
 side = "F"
 
 [parts.R1]
-x = 8.5
-y = 55.25
-rot = 0
-side = "F"
-
-[parts.R2]
-x = 10.5
-y = 60.0
-rot = 0
-side = "F"
-
-[parts.R3]
-x = 17.0
-y = 55.25
-rot = 0
-side = "F"
-
-[parts.R4]
-x = 18.0
-y = 60.0
-rot = 0
-side = "F"
-
-[parts.R5]
-x = 22.5
-y = 57.5
+x = 36.55
+y = 55.95
 rot = 90
 side = "F"
 
+[parts.R2]
+x = 39.85
+y = 55.95
+rot = 90
+side = "F"
+
+[parts.R3]
+x = 41.55
+y = 55.95
+rot = 90
+side = "F"
+
+[parts.R4]
+x = 44.85
+y = 55.95
+rot = 90
+side = "F"
+
+[parts.R5]
+x = 64.0
+y = 55.362
+rot = 0
+side = "F"
+
 [parts.R6]
-x = 31.0
-y = 57.5
+x = 69.0
+y = 55.462
 rot = 90
 side = "F"
 
 [parts.R7]
-x = 41.75
-y = 60.5
-rot = 0
+x = 55.0
+y = 54.862
+rot = 90
 side = "F"
 
 [parts.R8]
-x = 48.25
-y = 56.5
+x = 63.6
+y = 48.962
 rot = 90
 side = "F"
 
 [parts.R9]
-x = 56.75
-y = 57.5
+x = 54.7
+y = 49.163
 rot = 90
 side = "F"
 
 [parts.R10]
-x = 49.75
-y = 40.75
-rot = 0
+x = 54.0
+y = 52.362
+rot = 180
 side = "F"
 
 [parts.R11]
@@ -273,38 +291,38 @@ rot = 90
 side = "F"
 
 [parts.R12]
-x = 18.0
-y = 48.75
+x = 21.023
+y = 58.7
 rot = 90
 side = "F"
 
 [parts.R13]
-x = 35.25
-y = 48.75
-rot = 0
+x = 21.95
+y = 48.938
+rot = 90
 side = "F"
 
 [parts.R14]
-x = 7.25
-y = 50.0
+x = 19.457
+y = 52.5
 rot = 0
 side = "F"
 
 [parts.R15]
-x = 38.5
-y = 49.0
-rot = 90
-side = "F"
-
-[parts.R16]
-x = 40.0
-y = 53.75
+x = 35.65
+y = 60.763
 rot = 0
 side = "F"
 
+[parts.R16]
+x = 64.3
+y = 52.0
+rot = 90
+side = "F"
+
 [parts.R17]
-x = 39.5
-y = 56.5
+x = 66.7
+y = 52.0
 rot = 90
 side = "F"
 
@@ -328,102 +346,102 @@ side = "F"
 
 [parts.R21]
 x = 27.5
-y = 5.5
+y = 4.8
 rot = 90
 side = "F"
 
 [parts.U1]
-x = 13.0
-y = 49.0
-rot = 0
+x = 15.6
+y = 57.1
+rot = 270
 side = "F"
 
 [parts.U2]
-x = 28.5
-y = 49.0
-rot = 0
+x = 28.9
+y = 53.85
+rot = 90
 side = "F"
 
 [parts.U3]
-x = 65.5
-y = 49.0
-rot = 0
+x = 51.15
+y = 58.5
+rot = 270
 side = "F"
 
 [parts.U4]
-x = 43.5
-y = 49.0
-rot = 0
+x = 17.5
+y = 46.7
+rot = 90
 side = "F"
 
 [parts.U5]
-x = 54.5
-y = 49.0
-rot = 0
+x = 44.0
+y = 49.5
+rot = 90
 side = "F"
 
 [parts.U6]
-x = 8.5
-y = 57.5
-rot = 0
+x = 38.2
+y = 59.1
+rot = 90
 side = "F"
 
 [parts.U7]
-x = 17.1
-y = 57.5
-rot = 0
+x = 43.2
+y = 59.1
+rot = 90
 side = "F"
 
 [parts.U8]
-x = 25.7
-y = 57.5
-rot = 0
+x = 62.6
+y = 58.5
+rot = 270
 side = "F"
 
 [parts.U9]
-x = 34.3
-y = 57.5
-rot = 0
+x = 66.4
+y = 58.5
+rot = 270
 side = "F"
 
 [parts.U10]
-x = 42.9
-y = 57.5
-rot = 0
+x = 55.0
+y = 58.5
+rot = 270
 side = "F"
 
 [parts.U11]
-x = 51.5
-y = 57.5
-rot = 0
+x = 61.0
+y = 51.3
+rot = 270
 side = "F"
 
 [parts.U12]
-x = 60.1
-y = 57.5
-rot = 0
+x = 57.3
+y = 51.3
+rot = 270
 side = "F"
 
 [parts.U13]
-x = 68.7
-y = 57.5
-rot = 0
+x = 58.8
+y = 58.5
+rot = 270
 side = "F"
 
 [parts.VR1]
-x = 6.0
-y = 43.5
+x = 5.0
+y = 47.5
 rot = 0
 side = "F"
 
 [decouple]
-C10 = "U2.7"
-C11 = "U2.18"
-C13 = "U3.6"
 C7 = "U1.20"
 C8 = "U2.42"
 C9 = "U2.31"
+C10 = "U2.7"
+C11 = "U2.18"
 C12 = "U3.1"
+C13 = "U3.6"
 C14 = "U4.20"
 C15 = "U5.20"
 C16 = "U6.5"
