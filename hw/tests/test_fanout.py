@@ -105,6 +105,37 @@ def test_a_decoupling_cap_pad_prefers_the_ic_side(tmp_path):
     assert any(x.GetX() < cap.GetX() for x in mine), "the cap's via is not on the IC side"
 
 
+def _ic(tmp_path, extra=None):
+    """U1 with a GND pad at (10, 6) and a +3V3 pad at (10, 9): its middle is y = 7.5, so
+    the GND pad's outer side (where its signals escape) is up (smaller y)."""
+    pads = {"GND": [(10, 6)], "+3V3": [(10, 9)]}
+    pads.update(extra or {})
+    b = make_board(tmp_path, pads)
+    fps = {p.GetNetname(): fp for fp in b.GetFootprints() for p in fp.Pads()}
+    u, other = fps["GND"], fps["+3V3"]
+    u.SetReference("U1")
+    pad = other.Pads()[0]
+    other.Remove(pad)
+    u.Add(pad)
+    return b, u
+
+
+def test_an_ic_pad_puts_its_via_on_the_inner_side_not_where_signals_escape(tmp_path):
+    b, u = _ic(tmp_path)
+    route.fan_out_planes(b)
+    gnd_pad = next(p for p in u.Pads() if p.GetNetname() == "GND")
+    (via,) = _vias(b, "GND")
+    assert via.GetY() > gnd_pad.GetY()                # toward the middle of the part
+
+
+def test_an_ic_pad_uses_the_outer_side_when_the_inner_has_no_room(tmp_path):
+    b, u = _ic(tmp_path, {"N1": [(9.2, 7.2), (10.8, 7.2), (10, 7.4)]})
+    route.fan_out_planes(b)
+    gnd_pad = next(p for p in u.Pads() if p.GetNetname() == "GND")
+    (via,) = _vias(b, "GND")
+    assert via.GetY() < gnd_pad.GetY()
+
+
 def test_plane_nets_are_the_nets_of_inner_zones(tmp_path):
     b = _stub(tmp_path)
     assert route.plane_nets(b) == set()
@@ -154,6 +185,17 @@ def test_the_real_board_fans_out_with_none_in_the_tab(tmp_path):
         near = [x for x in _vias(b, p.GetNetname())
                 if _pad_dist(p, x.GetPosition(), lay) <= 1.0]
         assert len(near) >= 1, (fp.GetReference(), p.GetNumber())
+
+
+def test_route_py_runs_as_a_script_and_finds_the_hw_package():
+    """`python3 hw/tools/route.py` (the justfile's way) must import hw.tools.check_edge."""
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, str(ROOT / "hw/tools/route.py"), "--help"],
+                       capture_output=True, text=True, cwd="/")
+    assert r.returncode == 0, r.stderr
+    src = (ROOT / "hw/tools/route.py").read_text()
+    assert "sys.path.insert" in src
 
 
 def _plane_board(tmp_path):

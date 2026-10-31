@@ -55,6 +55,12 @@ import numpy as np
 import pcbnew
 from PIL import Image, ImageDraw, ImageFilter
 
+if __package__ in (None, ""):                   # run as a script: find the hw package
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from hw.tools import check_edge
+
 EDGE_CLEARANCE_UM = 500
 ROUTER_CLEARANCE_UM = 170          # what freerouting keeps (see prepare_dsn)
 MIN_TRACK_MM = 0.15
@@ -749,7 +755,8 @@ PLANE_VIA_MIN_MM = VIA_MM / 2 + 0.1    # ...and at least this: a via beside its 
 NECK_SLACK_MM = 0.04               # the neck test uses a track this much thinner than the neck
 NECK_MAX_3V3_MM = 1.45            # hw-drc: a Power-class neck is at most 1.5 mm long
 SAME_NET_VIA_MM = VIA_MM + CLEARANCE_MM + MARGIN_MM   # centre to centre, two vias of one net
-FAR_SIDE_PENALTY_MM = 1.0          # a cap's via on the side away from its IC pin costs this
+OUTER_SIDE_PENALTY_MM = 1.5        # an IC/socket pin's via on its outer side blocks the escape lane
+FAR_SIDE_PENALTY_MM = 1.0         # a cap's via on the side away from its IC pin costs this
 
 
 def plane_nets(board) -> set[str]:
@@ -819,7 +826,25 @@ def _pad_layer(pad) -> int:
     return pcbnew.F_Cu if pad.IsOnLayer(pcbnew.F_Cu) else pcbnew.B_Cu
 
 
-def _fan_one(board, grids, placed_pts, pad, ic_pts, tab, reach_mm):
+def _outward(fp, pad):
+    """Unit vector (along x or y) from the middle of the part's pads out through `pad`, or
+    None for a part with no such direction (a two-pad passive, say, is not asked)."""
+    pads = list(fp.Pads())
+    cx = sum(p.GetX() for p in pads) / len(pads)
+    cy = sum(p.GetY() for p in pads) / len(pads)
+    dx, dy = pad.GetX() - cx, pad.GetY() - cy
+    if max(abs(dx), abs(dy)) < pcbnew.FromMM(0.3):
+        return None
+    bb = pad.GetBoundingBox()                  # a pin's long axis is the way its signal leaves
+    w, h = bb.GetWidth(), bb.GetHeight()
+    if w > 1.5 * h:
+        return (math.copysign(1, dx), 0.0)
+    if h > 1.5 * w:
+        return (0.0, math.copysign(1, dy))
+    return (math.copysign(1, dx), 0.0) if abs(dx) > abs(dy) else (0.0, math.copysign(1, dy))
+
+
+def _fan_one(board, grids, placed_pts, pad, ic_pts, tab, reach_mm, outward=None):
     """Find the via for `pad`: (via centre in mm, neck start in mm, neck width, layer) or None."""
     name, layer = pad.GetNetname(), _pad_layer(pad)
     net = pad.GetNetCode()
@@ -879,6 +904,10 @@ def _fan_one(board, grids, placed_pts, pad, ic_pts, tab, reach_mm):
         if not len(pts):
             continue
         score = d.copy()
+        if outward is not None:         # an IC pin's signals escape outward: keep that lane free
+            ox, oy = outward
+            score = score + OUTER_SIDE_PENALTY_MM * (
+                (pts[:, 0] - _mm(px)) * ox + (pts[:, 1] - _mm(py)) * oy > 0.05)
         if ic_pts:                      # a decoupling cap: the IC pin's side is the short loop
             cx, cy = _mm(px), _mm(py)
             ic = min(ic_pts, key=lambda q: math.hypot(q[0] - cx, q[1] - cy))
@@ -947,7 +976,6 @@ def fan_out_planes(board, nets=PLANE_NETS, reach_mm: float = PLANE_VIA_REACH_MM
     its via is above the tab (check_edge forbids vias in it) and the neck leaves the tab.
     A decoupling cap's via goes on the side of the IC's pin of that net if there is room.
     Returns (the tracks and vias added, the pads that found no room as 'REF.PAD (NET)')."""
-    from hw.tools import check_edge
     tab = check_edge.tab_geometry(board)
     pads = [(fp, p) for fp in board.GetFootprints() for p in fp.Pads()
             if p.GetNetname() in nets and p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD]
@@ -959,7 +987,10 @@ def fan_out_planes(board, nets=PLANE_NETS, reach_mm: float = PLANE_VIA_REACH_MM
     for fp, pad in pads:
         name = pad.GetNetname()
         ic_pts = ics[name] if fp.GetReference().startswith("C") else []
-        found = _fan_one(board, grids, placed_pts, pad, ic_pts, tab, reach_mm)
+        ref = fp.GetReference()
+        out_dir = _outward(fp, pad) if (ref.startswith("U") or ref.startswith("J")) \
+            and ref != "J1" else None
+        found = _fan_one(board, grids, placed_pts, pad, ic_pts, tab, reach_mm, out_dir)
         if found is None:
             failed.append(f"{fp.GetReference()}.{pad.GetNumber()} ({name})")
             continue
