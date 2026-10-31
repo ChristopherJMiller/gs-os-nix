@@ -13,8 +13,10 @@ the routed board is committed: hw-drc (check_drc.py) is what ties it to the netl
 The board has four copper layers (2026-10-31): In1.Cu is a solid GND plane and In2.Cu a +3V3
 plane. The 2-layer machinery for GND (outer pours, stitching vias, bridging vias, a narrow
 GND class) is gone. KiCad 10's DSN export writes In1.Cu and In2.Cu as `(type power)` layers
-with a `(plane GND ...)` and `(plane +3V3 ...)` entry each; prepare_dsn still drops those
-entries (a 2-layer step) and Task 5b decides what the router does with them.
+with a `(plane GND ...)` and `(plane +3V3 ...)` entry each, and prepare_dsn keeps them (P20),
+so the router knows the planes. Before anything else, fan_out_planes (P19) gives every SMD pad
+on GND or +3V3 a short neck and a locked, tented via: that is what joins the pad to its plane,
+whatever the router does. Anything the router lays for a plane net anyway is dropped.
 
 What is fixed in the DSN between pcbnew and freerouting (prepare_dsn):
 
@@ -31,8 +33,8 @@ What is fixed in the DSN between pcbnew and freerouting (prepare_dsn):
   clearance is 0.17 mm, not 0.15: the router squeezes a track to 0.112 mm to leave a
   fine-pitch pad, and widening it to the 0.15 mm minimum afterwards (widen_stubs) takes
   its margin.
-* No planes: a plane tells the router that its pins are joined already, which pours cut
-  up by tracks are not.
+* The planes stay (P20): on 4 layers In1/In2 are whole planes, not pours cut up by tracks, so
+  telling the router that their nets' pins are joined by them is true.
 
 finish_unrouted is a small grid router (A*, two layers, vias) for the connections that
 freerouting gives up on. It joins the pieces of a net that the router left apart, keeping
@@ -170,7 +172,6 @@ def edge_strips(pts: list[tuple[int, int]], width: int) -> list[list[tuple[int, 
 
 def prepare_dsn(dsn: str) -> tuple[str, dict[str, str]]:
     """The DSN freerouting gets, and the net renames (new -> old) to undo in the SES."""
-    dsn = re.sub(r"\n[ \t]*\(plane \S+\s+\(polygon[^)]*\)\)", "", dsn)
     rename = case_twins(net_names(dsn))
     dsn = _retoken(dsn, rename)
     dsn = re.sub(r"\s*\(clearance\s+[\d.]+\s+\(type smd_smd\)\)", "", dsn)
@@ -723,8 +724,9 @@ def finish_unrouted(board, width_mm: float | None = None) -> list[str]:
     tests): a rail that cannot be joined at 0.5 mm is reported, not joined thin. Returns
     what could not be joined, as messages."""
     failed = []
+    planes = plane_nets(board)               # a net with a plane is joined by it, via its fanout
     names = sorted({p.GetNetname() for fp in board.GetFootprints() for p in fp.Pads()
-                    if p.GetNetCode()} - {"GND"}) + ["GND"]
+                    if p.GetNetCode()} - {"GND"} - planes) + ([] if "GND" in planes else ["GND"])
     refill(board)
     for name in names:
         net = board.FindNet(name).GetNetCode()
@@ -737,6 +739,255 @@ def finish_unrouted(board, width_mm: float | None = None) -> list[str]:
         else:
             print(f"finish: {name} joined by moving {moved}")
     return failed
+
+
+# --- the plane fanout (P19) -------------------------------------------------------------
+
+PLANE_NETS = ("GND", "+3V3")
+PLANE_VIA_REACH_MM = 1.0           # via centre to pad edge, at most
+PLANE_VIA_MIN_MM = VIA_MM / 2 + 0.1    # ...and at least this: a via beside its pad, not in it
+NECK_SLACK_MM = 0.04               # the neck test uses a track this much thinner than the neck
+NECK_MAX_3V3_MM = 1.45            # hw-drc: a Power-class neck is at most 1.5 mm long
+SAME_NET_VIA_MM = VIA_MM + CLEARANCE_MM + MARGIN_MM   # centre to centre, two vias of one net
+FAR_SIDE_PENALTY_MM = 1.0          # a cap's via on the side away from its IC pin costs this
+
+
+def plane_nets(board) -> set[str]:
+    """The nets that have a plane: those of the zones on the inner layers."""
+    return {z.GetNetname() for z in board.Zones()
+            if not z.GetIsRuleArea()
+            and (z.IsOnLayer(pcbnew.In1_Cu) or z.IsOnLayer(pcbnew.In2_Cu))}
+
+
+def thermal_tht(board, nets) -> int:
+    """Through-hole pads on a plane net join the plane with thermal reliefs (they are
+    soldered by hand or wave; the zones are solid for the SMD vias)."""
+    n = 0
+    for fp in board.GetFootprints():
+        for p in fp.Pads():
+            if p.GetNetname() in nets and p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH:
+                p.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_THERMAL)
+                n += 1
+    return n
+
+
+def drop_plane_copper(board, nets) -> int:
+    """Remove the unlocked tracks and vias of `nets`: the planes join them, and anything the
+    router laid for them is a detour. The locked fanout stays. Returns how many."""
+    gone = [t for t in board.GetTracks() if t.GetNetname() in nets and not t.IsLocked()]
+    for t in gone:
+        board.RemoveNative(t)
+    return len(gone)
+
+
+def _dist_to_polys(pts: np.ndarray, polys: list) -> np.ndarray:
+    """Distance from each of `pts` (N x 2) to the nearest edge of the closed polygons."""
+    best = np.full(len(pts), 1e9)
+    for poly in polys:
+        a = np.asarray(poly, dtype=float)
+        ab = np.roll(a, -1, axis=0) - a
+        l2 = np.maximum((ab ** 2).sum(1), 1e-12)
+        ap = pts[:, None, :] - a[None, :, :]
+        t = np.clip((ap * ab[None]).sum(2) / l2[None], 0.0, 1.0)
+        d = np.linalg.norm(ap - t[..., None] * ab[None], axis=2).min(axis=1)
+        best = np.minimum(best, d)
+    return best
+
+
+def _disk(mask: np.ndarray, x: float, y: float, r: float) -> None:
+    y0, y1 = max(0, int(y - r) - 1), min(mask.shape[0], int(y + r) + 2)
+    x0, x1 = max(0, int(x - r) - 1), min(mask.shape[1], int(x + r) + 2)
+    yy, xx = np.ogrid[y0:y1, x0:x1]
+    mask[y0:y1, x0:x1] |= (xx + 0.5 - x) ** 2 + (yy + 0.5 - y) ** 2 <= r * r
+
+
+def _thick_line(mask: np.ndarray, a, b, r: float) -> None:
+    n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) * 2))
+    for k in range(n + 1):
+        _disk(mask, a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n, r)
+
+
+def _fan_widths(board, name: str) -> list[float]:
+    """Neck widths to try, widest first: a Power-class net keeps the 0.3 mm hw-drc wants of
+    a neck; the rest go as thin as the minimum."""
+    if net_width_mm(board, name) > 0.4 and name != "GND":
+        return [0.3]
+    return [0.3, 0.2, MIN_TRACK_MM]
+
+
+def _pad_layer(pad) -> int:
+    return pcbnew.F_Cu if pad.IsOnLayer(pcbnew.F_Cu) else pcbnew.B_Cu
+
+
+def _fan_one(board, grids, placed_pts, pad, ic_pts, tab, reach_mm):
+    """Find the via for `pad`: (via centre in mm, neck start in mm, neck width, layer) or None."""
+    name, layer = pad.GetNetname(), _pad_layer(pad)
+    net = pad.GetNetCode()
+    polys_mm = []
+    poly = pcbnew.SHAPE_POLY_SET()
+    pad.TransformShapeToPolygon(poly, layer, 0, 10000, pcbnew.ERROR_INSIDE)
+    for k in range(poly.OutlineCount()):
+        o = poly.Outline(k)
+        polys_mm.append([(_mm(o.CPoint(i).x), _mm(o.CPoint(i).y)) for i in range(o.PointCount())])
+    px, py = pad.GetPosition().x, pad.GetPosition().y
+    allpts = np.array([p for pl in polys_mm for p in pl])
+    lo, hi = allpts.min(axis=0) - reach_mm - 0.4, allpts.max(axis=0) + reach_mm + 0.4
+    others = []                      # same-net pads (other than this one) near the window
+    for fp in board.GetFootprints():
+        for q in fp.Pads():
+            if q.GetNetCode() != net or q is pad or not q.IsOnLayer(layer):
+                continue
+            c = (_mm(q.GetPosition().x), _mm(q.GetPosition().y))
+            if lo[0] - 3 <= c[0] <= hi[0] + 3 and lo[1] - 3 <= c[1] <= hi[1] + 3:
+                qp = pcbnew.SHAPE_POLY_SET()
+                q.TransformShapeToPolygon(qp, layer, 0, 10000, pcbnew.ERROR_INSIDE)
+                for k in range(qp.OutlineCount()):
+                    o = qp.Outline(k)
+                    others.append([(_mm(o.CPoint(i).x), _mm(o.CPoint(i).y))
+                                   for i in range(o.PointCount())])
+    for width in _fan_widths(board, name):
+        key = (net, width)
+        if key not in grids:
+            # A neck as wide as a fine-pitch pad (0.3 mm at 0.5 mm pitch) leaves 0.2 mm to its
+            # neighbours; the grid's own 0.03 mm margin and its 0.05 mm cells would refuse it.
+            g = _Grid(board, net, width - NECK_SLACK_MM)
+            for qx, qy in placed_pts:          # vias of this fan-out are on the board already
+                gi, gj = g.px(qx * 1e6, qy * 1e6)
+                _disk(g.via, gi, gj, SAME_NET_VIA_MM / RES_MM)
+            grids[key] = g
+        g = grids[key]
+        # window in cells
+        i0, j0 = (int((lo[0] * 1e6 - g.x0) / 1e6 / RES_MM), int((lo[1] * 1e6 - g.y0) / 1e6 / RES_MM))
+        i1, j1 = (int((hi[0] * 1e6 - g.x0) / 1e6 / RES_MM), int((hi[1] * 1e6 - g.y0) / 1e6 / RES_MM))
+        i0, j0, i1, j1 = max(i0, 0), max(j0, 0), min(i1, g.w - 1), min(j1, g.h - 1)
+        if i1 <= i0 or j1 <= j0:
+            continue
+        jj, ii = np.mgrid[j0:j1 + 1, i0:i1 + 1]
+        free = ~g.via[j0:j1 + 1, i0:i1 + 1]
+        ci, cj = ii[free], jj[free]
+        xs = (g.x0 + (ci + 0.5) * RES_MM * 1e6) / 1e6
+        ys = (g.y0 + (cj + 0.5) * RES_MM * 1e6) / 1e6
+        pts = np.stack([xs, ys], axis=1)
+        d = _dist_to_polys(pts, polys_mm)
+        ok = (d <= reach_mm) & (d >= PLANE_VIA_MIN_MM)
+        if others:
+            ok &= _dist_to_polys(pts, others) >= PLANE_VIA_MIN_MM
+        if tab:
+            ok &= ~((xs >= tab["tab_l"] - 0.5) & (xs <= tab["tab_r"] + 0.5)
+                    & (ys > tab["body_bottom"] - VIA_MM / 2 - 0.05))
+        pts, d = pts[ok], d[ok]
+        if not len(pts):
+            continue
+        score = d.copy()
+        if ic_pts:                      # a decoupling cap: the IC pin's side is the short loop
+            cx, cy = _mm(px), _mm(py)
+            ic = min(ic_pts, key=lambda q: math.hypot(q[0] - cx, q[1] - cy))
+            near = math.hypot(ic[0] - cx, ic[1] - cy)
+            far = np.hypot(pts[:, 0] - ic[0], pts[:, 1] - ic[1]) > near
+            score = score + FAR_SIDE_PENALTY_MM * far
+        for k in np.argsort(score, kind="stable"):
+            vx, vy = float(pts[k][0]), float(pts[k][1])
+            sx, sy = _neck_start(pad, (vx, vy), allpts)
+            if _neck_clear(g, layer, (sx, sy), (vx, vy)) and \
+                    (name != "+3V3" or math.hypot(vx - sx, vy - sy) <= NECK_MAX_3V3_MM):
+                return (vx, vy), (sx, sy), width, layer
+    return None
+
+
+def _neck_start(pad, via_mm, allpts) -> tuple[float, float]:
+    """Where the neck leaves the pad: the pad point nearest the via that has a track's
+    half-width of copper round it (the pad centre if that is not on the pad)."""
+    cx, cy = _mm(pad.GetPosition().x), _mm(pad.GetPosition().y)
+    lo, hi = allpts.min(axis=0) + 0.12, allpts.max(axis=0) - 0.12
+    s = (float(min(max(via_mm[0], lo[0]), hi[0])), float(min(max(via_mm[1], lo[1]), hi[1])))
+    pt = pcbnew.VECTOR2I(pcbnew.FromMM(s[0]), pcbnew.FromMM(s[1]))
+    return s if pad.HitTest(pt) else (cx, cy)
+
+
+def _neck_clear(grid: _Grid, layer: int, a, b) -> bool:
+    n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) / (RES_MM / 2)))
+    for k in range(n + 1):
+        x = a[0] + (b[0] - a[0]) * k / n
+        y = a[1] + (b[1] - a[1]) * k / n
+        i, j = grid.px(x * 1e6, y * 1e6)
+        if not (0 <= int(i) < grid.w and 0 <= int(j) < grid.h) or grid.track[layer][int(j), int(i)]:
+            return False
+    return True
+
+
+def _stamp(grids, placed_net: int, via_mm, neck, layer: int) -> None:
+    """Teach every cached grid about a new via and its neck."""
+    for (net, width), g in grids.items():
+        vi, vj = g.px(via_mm[0] * 1e6, via_mm[1] * 1e6)
+        _disk(g.via, vi, vj, SAME_NET_VIA_MM / RES_MM)
+        if net == placed_net:
+            continue
+        r = (VIA_MM / 2 + CLEARANCE_MM + width / 2 + MARGIN_MM) / RES_MM
+        for lay in _LAYERS:
+            _disk(g.track[lay], vi, vj, r)
+        _disk(g.via, vi, vj, (VIA_MM + CLEARANCE_MM + MARGIN_MM) / RES_MM)
+        a, b = g.px(neck[0][0] * 1e6, neck[0][1] * 1e6), g.px(neck[1][0] * 1e6, neck[1][1] * 1e6)
+        _thick_line(g.track[layer], a, b, (neck[2] / 2 + CLEARANCE_MM + width / 2 + MARGIN_MM) / RES_MM)
+        _thick_line(g.via, a, b, (neck[2] / 2 + CLEARANCE_MM + VIA_MM / 2 + MARGIN_MM) / RES_MM)
+
+
+def _ic_power_pads(board, name: str) -> list[tuple[float, float]]:
+    """The centres (mm) of the pads of net `name` on the ICs (U*)."""
+    return [(_mm(p.GetPosition().x), _mm(p.GetPosition().y))
+            for fp in board.GetFootprints() if fp.GetReference().startswith("U")
+            for p in fp.Pads() if p.GetNetname() == name]
+
+
+def fan_out_planes(board, nets=PLANE_NETS, reach_mm: float = PLANE_VIA_REACH_MM
+                   ) -> tuple[list, list[str]]:
+    """P19: for every SMD pad on `nets`, a short neck and a tented via (0.6/0.3 mm) within
+    `reach_mm` of the pad's edge, clear of every other pad and via, outside the finger tab,
+    so the pad meets its inner plane. Everything is locked (the DSN gets it as fixed). A
+    pad with no room is reported, not forced. The edge fingers' ground pad sits in the tab:
+    its via is above the tab (check_edge forbids vias in it) and the neck leaves the tab.
+    A decoupling cap's via goes on the side of the IC's pin of that net if there is room.
+    Returns (the tracks and vias added, the pads that found no room as 'REF.PAD (NET)')."""
+    from hw.tools import check_edge
+    tab = check_edge.tab_geometry(board)
+    pads = [(fp, p) for fp in board.GetFootprints() for p in fp.Pads()
+            if p.GetNetname() in nets and p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD]
+    rank = lambda fp: (0 if fp.GetReference()[0] in "JU" else 1, fp.GetReference())
+    pads.sort(key=lambda fp_p: (rank(fp_p[0]), fp_p[1].GetNumber()))
+    grids: dict = {}
+    placed, failed, placed_pts = [], [], []
+    ics = {n: _ic_power_pads(board, n) for n in nets}
+    for fp, pad in pads:
+        name = pad.GetNetname()
+        ic_pts = ics[name] if fp.GetReference().startswith("C") else []
+        found = _fan_one(board, grids, placed_pts, pad, ic_pts, tab, reach_mm)
+        if found is None:
+            failed.append(f"{fp.GetReference()}.{pad.GetNumber()} ({name})")
+            continue
+        (vx, vy), (sx, sy), width, layer = found
+        nets_item = board.FindNet(name)
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(sx), pcbnew.FromMM(sy)))
+        t.SetEnd(pcbnew.VECTOR2I(pcbnew.FromMM(vx), pcbnew.FromMM(vy)))
+        t.SetLayer(layer)
+        t.SetWidth(pcbnew.FromMM(width))
+        t.SetNet(nets_item)
+        t.SetLocked(True)
+        board.Add(t)
+        x = pcbnew.PCB_VIA(board)
+        x.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(vx), pcbnew.FromMM(vy)))
+        x.SetViaType(pcbnew.VIATYPE_THROUGH)
+        x.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+        x.SetWidth(pcbnew.FromMM(VIA_MM))
+        x.SetDrill(pcbnew.FromMM(VIA_DRILL_MM))
+        x.SetFrontTentingMode(pcbnew.TENTING_MODE_TENTED)
+        x.SetBackTentingMode(pcbnew.TENTING_MODE_TENTED)
+        x.SetNet(nets_item)
+        x.SetLocked(True)
+        board.Add(x)
+        placed += [t, x]
+        placed_pts.append((vx, vy))
+        _stamp(grids, pad.GetNetCode(), (vx, vy), ((sx, sy), (vx, vy), width), layer)
+    return placed, failed
 
 
 # --- the first pass -------------------------------------------------------------------
@@ -805,7 +1056,7 @@ def lay_first(board, names: list[str], rounds: int = FIRST_ROUNDS) -> list[str]:
     return failed
 
 
-# --- repair passes (after the router, before stitching) --------------------------------
+# --- repair passes (after the router, before the finisher) -----------------------------
 
 CLOCK_TOL_MM = 0.002
 REPAIR_ROUNDS = 3
@@ -979,6 +1230,14 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
         b = pcbnew.LoadBoard(str(board))
         strip_routing(b, keep_locked, keep_all)
         solid_zones(b)
+        planes = plane_nets(b)
+        if planes:
+            thermal_tht(b, planes)
+            placed, no_room = fan_out_planes(b, tuple(sorted(planes)))
+            print(f"plane fanout: {len(placed) // 2} vias for {', '.join(sorted(planes))}"
+                  + (f"; no room for: {', '.join(no_room)}" if no_room else ""))
+            if no_room:
+                raise SystemExit("route: no room for a plane via at " + ", ".join(no_room))
         names: list[str] = []
         if first is not None:
             names = first or default_first(b)
@@ -1000,6 +1259,8 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
         ses.write_text(restore_ses(ses.read_text(), back))
         if not pcbnew.ImportSpecctraSES(b, str(ses)):
             raise SystemExit(f"pcbnew could not import {ses}")
+        if planes:
+            print(f"dropped {drop_plane_copper(b, planes)} router tracks/vias on plane nets")
         print(f"widened {widen_stubs(b)} stubs")
         pcbnew.SaveBoard(str(board), b)                 # the router's own result, kept
         if repair:

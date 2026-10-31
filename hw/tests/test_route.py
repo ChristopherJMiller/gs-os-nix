@@ -57,10 +57,13 @@ def test_case_twins_are_renamed_and_restored():
     assert route.restore_ses("(net slot_d3_dup1 (wire))", back) == "(net slot_d3 (wire))"
 
 
-def test_planes_are_dropped_and_nets_kept():
-    dsn = DSN.replace("(boundary", '(plane GND (polygon F.Cu 0  0 0  10 0  10 -10))\n    (boundary')
+def test_planes_stay_in_the_dsn_and_nets_are_kept():
+    """P20: In1/In2 are planes to the router too, so it knows the plane nets' pins are joined
+    by them (the fanout vias are what put them on the plane)."""
+    plane = "(plane GND (polygon In1.Cu 0  0 0  10 0  10 -10))"
+    dsn = DSN.replace("(boundary", plane + "\n    (boundary")
     out, _ = route.prepare_dsn(dsn)
-    assert "(plane" not in out and "(net GND" in out
+    assert plane in out and "(net GND" in out
 
 
 def test_smd_smd_rule_is_dropped():

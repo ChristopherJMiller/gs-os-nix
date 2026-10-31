@@ -6,9 +6,12 @@
 * detour: per net with two or more pads (GND and the other rails excluded: the pours carry
   them), routed track length over the minimum spanning tree of its pad centres; median, p90
   and max, and the worst five nets;
-* vias, and how many of them are GND stitching vias;
-* GND fill on the back layer under the translator row: the share of the box round U1, U2,
-  U4 and U5 that is filled copper of the back GND pour;
+* vias, and how many of them are plane-fanout vias (on GND and +3V3; at 7430efe the second
+  figure counted the GND stitching vias);
+* GND-plane fill on In1.Cu under the translator row: the share of the box round U1, U2, U4
+  and U5 that is filled copper of the In1 GND plane (the voids are the signal vias' antipads).
+  The 2-layer definition, kept for the 'before' (7430efe) numbers, is the same share of the
+  back (B.Cu) GND pour: back_gnd_fill;
 * the longest clock run within 0.3 mm (edge to edge) of another signal's track.
 """
 import math
@@ -64,8 +67,12 @@ def detours(board) -> dict[str, float]:
     return out
 
 
-def back_gnd_fill(board) -> float:
-    boxes = [board.FindFootprintByReference(r).GetBoundingBox() for r in ROW]
+def plane_fill(board, layer: int, net: str = "GND", refs=ROW) -> float:
+    """The share of the box round the footprints `refs` that is filled copper of the `net`
+    zones on `layer`. On the 4-layer board, layer In1.Cu is the GND plane and the voids are
+    the antipads of the signal vias; the 2-layer board's figure (the 'before', 7430efe) was
+    the same measure on B.Cu, the back GND pour chopped up by traces: `back_gnd_fill`."""
+    boxes = [board.FindFootprintByReference(r).GetBoundingBox() for r in refs]
     x0, y0 = min(b.GetLeft() for b in boxes), min(b.GetTop() for b in boxes)
     x1, y1 = max(b.GetRight() for b in boxes), max(b.GetBottom() for b in boxes)
     rect = pcbnew.SHAPE_POLY_SET()
@@ -74,11 +81,23 @@ def back_gnd_fill(board) -> float:
         rect.Append(x, y)
     fill = pcbnew.SHAPE_POLY_SET()
     for z in board.Zones():
-        if not z.GetIsRuleArea() and z.GetNetname() == "GND" and z.IsOnLayer(pcbnew.B_Cu):
-            fill.Append(z.GetFilledPolysList(pcbnew.B_Cu))
+        if not z.GetIsRuleArea() and z.GetNetname() == net and z.IsOnLayer(layer):
+            fill.Append(z.GetFilledPolysList(layer))
     fill.Simplify()
     fill.BooleanIntersection(rect)
     return 100.0 * fill.Area() / rect.Area()
+
+
+def back_gnd_fill(board) -> float:
+    """The 2-layer metric: the B.Cu GND pour under the translator row (7 % at 7430efe)."""
+    return plane_fill(board, pcbnew.B_Cu, "GND", ROW)
+
+
+def via_counts(board, plane_nets: set[str]) -> tuple[int, int]:
+    """(all vias, those on a plane net: the plane fanout). At 7430efe the second figure was
+    the count of GND stitching vias."""
+    vias = [t for t in board.GetTracks() if t.GetClass() == "PCB_VIA"]
+    return len(vias), sum(1 for v in vias if v.GetNetname() in plane_nets)
 
 
 def _seg_dist(a0, a1, b0, b1) -> float:
@@ -113,14 +132,15 @@ def main(argv: list[str] | None = None) -> None:
     route.refill(board)
     d = detours(board)
     vals = sorted(d.values())
-    vias = [t for t in board.GetTracks() if t.GetClass() == "PCB_VIA"]
-    gnd = [v for v in vias if v.GetNetname() == "GND"]
+    total, fan = via_counts(board, route.plane_nets(board) or {"GND"})
     print(f"detour over {len(vals)} nets: median {statistics.median(vals):.2f}  "
           f"p90 {vals[int(0.9 * (len(vals) - 1))]:.2f}  max {vals[-1]:.2f}")
     worst = sorted(d, key=d.get, reverse=True)[:5]
     print("  worst:", ", ".join(f"{n} {d[n]:.2f}" for n in worst))
-    print(f"vias: {len(vias)} ({len(gnd)} on GND)")
-    print(f"B.Cu GND fill under {'/'.join(ROW)}: {back_gnd_fill(board):.0f} %")
+    print(f"vias: {total} ({fan} plane-fanout vias on {', '.join(sorted(route.plane_nets(board)))})")
+    print(f"In1 GND-plane fill under {'/'.join(ROW)}: "
+          f"{plane_fill(board, pcbnew.In1_Cu, 'GND', ROW):.0f} %"
+          f"   (old metric, B.Cu GND pour: {back_gnd_fill(board):.0f} %)")
     run, name = clock_parallel_mm(board)
     print(f"longest clock run within {NEAR_MM} mm of another signal: {run:.1f} mm ({name})")
 
