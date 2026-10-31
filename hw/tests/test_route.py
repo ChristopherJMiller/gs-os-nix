@@ -360,3 +360,14 @@ def test_a_rule_area_that_restricts_nothing_does_not_block_the_finisher(tmp_path
         z.Outline().Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
     b.Add(z)
     assert route._join_pieces(b, b.FindNet("N").GetNetCode(), 0.15, [])
+
+
+def test_narrow_gnd_puts_gnd_in_its_own_narrower_class():
+    dsn = DSN.replace("(class kicad_default SLOT_D3 slot_d3 GND",
+                      "(class Power,Default +5V GND")
+    dsn = dsn.replace("      (rule (width 150))\n    )\n  )\n)", "      (rule (width 500))\n    )\n  )\n  (wiring\n  )\n)")
+    out = route.narrow_gnd(dsn)
+    assert "(class Ground GND" in out and "(width 250)" in out
+    power = out[out.index("(class Power"):out.index("(rule", out.index("(class Power"))]
+    assert "GND" not in power and "+5V" in power
+    assert out.count("(") == out.count(")")

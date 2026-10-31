@@ -235,6 +235,27 @@ def halo_wires(board, names: list[str]) -> str:
     return "".join(f"    {l}\n" for l in lines)
 
 
+GND_ROUTE_UM = 250
+
+
+def narrow_gnd(dsn: str) -> str:
+    """GND stays a routed net (plan 1's lesson, P15) but in a class of its own, 0.25 mm wide
+    instead of the Power class's 0.5 mm: the pours carry the current (hw-drc exempts GND
+    from the power-width rule), and 0.5 mm GND tracks took so much room that the router
+    left twenty signal nets unrouted."""
+    m = re.search(r"\(class (Power[^\s]*)([^()]*)", dsn)
+    if not m or not re.search(r"(?<![\w+\-.])GND(?![\w+\-.])", m.group(2)):
+        return dsn
+    head = re.sub(r"(?<![\w+\-.])GND(?![\w+\-.])", "", m.group(2))
+    dsn = dsn[:m.start(2)] + head + dsn[m.end(2):]
+    block = (f"    (class Ground GND\n      (circuit\n        (use_via \"Via[0-1]_600:300_um\")\n"
+             f"      )\n      (rule\n        (width {GND_ROUTE_UM})\n        (clearance {ROUTER_CLEARANCE_UM})\n"
+             f"      )\n    )\n")
+    w = dsn.index("  (wiring")
+    close = dsn.rindex("  )", 0, w)
+    return dsn[:close] + block + dsn[close:]
+
+
 def restore_ses(ses: str, back: dict[str, str]) -> str:
     return _retoken(ses, back)
 
@@ -1159,7 +1180,7 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
             halos = halo_wires(b, names)
             i = dsn_text.index("(wiring") + len("(wiring\n")
             dsn_text = dsn_text[:i] + halos + dsn_text[i:]
-        text, back = prepare_dsn(dsn_text)
+        text, back = prepare_dsn(narrow_gnd(dsn_text))
         dsn.write_text(text)
         router(dsn, ses, passes, timeout_s, log, extra)
         if not ses.exists():
