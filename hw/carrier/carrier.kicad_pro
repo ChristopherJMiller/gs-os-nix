@@ -32,7 +32,7 @@
       },
       {
         "name": "Clock",
-        "clearance": 0.4,
+        "clearance": 0.3,
         "track_width": 0.2,
         "via_diameter": 0.6,
         "via_drill": 0.3

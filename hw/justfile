@@ -53,7 +53,7 @@ board: carrier
 route PASSES="20":
     cd {{justfile_directory()}}/.. \
       && python3 hw/tools/route.py hw/carrier/carrier.kicad_pcb --passes {{PASSES}} \
-           --first --stitch \
+           --first --repair --stitch \
       && python3 hw/tools/check_drc.py --selftest --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb \
       && python3 hw/tools/check_drc.py --netlist build/hw/carrier/carrier.net \

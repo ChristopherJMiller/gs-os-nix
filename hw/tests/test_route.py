@@ -154,14 +154,14 @@ def test_parity_finds_a_pad_on_the_wrong_net(tmp_path):
 
 def _first_board(tmp_path):
     """A 24 x 12 mm board: a clock CLK across the middle, a data net D1 above it, and X
-    for the router to do (below). CLK is in a Clock class of 0.2 mm / 0.4 mm clearance."""
+    for the router to do (below). CLK is in a Clock class of 0.2 mm / 0.3 mm clearance."""
     from hw.tests.test_finish import make_board
     b = make_board(tmp_path, {"CLK": [(3, 6), (21, 6)], "D1": [(3, 3), (21, 3)],
                               "X": [(3, 9), (21, 9)], "GND": [(22, 11)]})
     ns = b.GetDesignSettings().m_NetSettings
     clock = pcbnew.NETCLASS("Clock")
     clock.SetTrackWidth(pcbnew.FromMM(0.2))
-    clock.SetClearance(pcbnew.FromMM(0.4))
+    clock.SetClearance(pcbnew.FromMM(0.3))
     ns.SetNetclass("Clock", clock)
     ns.SetNetclassPatternAssignment("CLK", "Clock")
     ns.RecomputeEffectiveNetclasses()
@@ -196,8 +196,8 @@ def test_first_nets_are_routed_first_and_locked(tmp_path):
         text = Path(dsn).read_text()
         seen["wires"] = [l.strip() for l in text.splitlines() if l.strip().startswith("(wire")]
         seen["clock_class"] = "(width 200)" in text          # the Clock class reached the DSN
-        # ...and its 0.4 mm is given back as fat fixed wires (0.2 + 2 * (0.4 - 0.17) mm)
-        seen["halo"] = any("(path F.Cu 660 " in w and "(net CLK)" in w for w in seen["wires"])
+        # ...and its 0.3 mm is given back as fat fixed wires (0.2 + 2 * (0.3 - 0.17) mm)
+        seen["halo"] = any("(path F.Cu 460 " in w and "(net CLK)" in w for w in seen["wires"])
         Path(ses).write_text(_ses("X", -9000))
         return 0
 
@@ -214,7 +214,7 @@ def test_first_nets_are_routed_first_and_locked(tmp_path):
         assert any(f"(net {name})(type fix)" in w for w in seen["wires"]), seen["wires"]
     assert not any("(net X)" in w for w in seen["wires"])        # X was the router's to do
     assert seen["clock_class"] and seen["halo"]
-    assert not any("(path F.Cu 660 " in w and "(net D1)" in w for w in seen["wires"])
+    assert not any("(path F.Cu 460 " in w and "(net D1)" in w for w in seen["wires"])
     # the router's pass did not move them: still the straight shortest run between the pads
     for name, y in (("CLK", 6.0), ("D1", 3.0)):
         ts = by[name]
@@ -232,3 +232,92 @@ def test_drop_net_removes_the_net_and_its_class_entry_but_not_its_pins():
     assert "U2-2" not in out.split("(network")[1].split("(class")[0]    # the net block is gone
     assert "(net SLOT_D3" in out and "(net slot_d3" in out              # the others stay
     assert out.count("(") == out.count(")")
+
+
+# --- the repair passes: clock clearance, and GND fragments --------------------------------
+
+def _track(b, net, layer, a, c, w=0.15):
+    from hw.tests.test_finish import v
+    t = pcbnew.PCB_TRACK(b)
+    t.SetStart(v(*a))
+    t.SetEnd(v(*c))
+    t.SetLayer(layer)
+    t.SetWidth(pcbnew.FromMM(w))
+    t.SetNet(b.FindNet(net))
+    b.Add(t)
+    return t
+
+
+def _clock_board(tmp_path):
+    """CLK runs along y = 3 (Clock class: 0.2 mm wide, 0.3 mm clearance); N's pads are at
+    y = 5 and its track climbs to y = 3.4 and runs beside the clock, 0.225 mm from it."""
+    from hw.tests.test_finish import make_board
+    b = make_board(tmp_path, {"CLK": [(3, 3), (21, 3)], "N": [(3, 5), (21, 5)], "GND": [(22, 11)]})
+    ns = b.GetDesignSettings().m_NetSettings
+    clock = pcbnew.NETCLASS("Clock")
+    clock.SetTrackWidth(pcbnew.FromMM(0.2))
+    clock.SetClearance(pcbnew.FromMM(0.3))
+    ns.SetNetclass("Clock", clock)
+    ns.SetNetclassPatternAssignment("CLK", "Clock")
+    ns.RecomputeEffectiveNetclasses()
+    F = pcbnew.F_Cu
+    _track(b, "CLK", F, (3, 3), (21, 3), 0.2)
+    for a, c in (((3, 5), (3, 3.4)), ((3, 3.4), (21, 3.4)), ((21, 3.4), (21, 5))):
+        _track(b, "N", F, a, c)
+    return b
+
+
+def test_clock_violations_finds_a_track_too_near_a_clock(tmp_path):
+    b = _clock_board(tmp_path)
+    assert route.clock_violations(b) == {"N"}
+    assert route.clock_violations(_first_board(tmp_path)) == set()      # nothing laid: none
+
+
+def test_repair_clock_clearance_relays_the_offender_clear_of_the_clock(tmp_path):
+    b = _clock_board(tmp_path)
+    assert route.repair_clock_clearance(b) == []
+    assert route.clock_violations(b) == set()
+    assert len(route._components(b, b.FindNet("N").GetNetCode())) == 1   # still one piece
+    clk = [t for t in b.GetTracks() if t.GetNetname() == "CLK"]
+    assert len(clk) == 1 and clk[0].GetWidth() == pcbnew.FromMM(0.2)     # the clock is untouched
+
+
+def test_repair_leaves_locked_tracks_alone(tmp_path):
+    b = _clock_board(tmp_path)
+    for t in b.GetTracks():
+        t.SetLocked(True)
+    assert route.repair_clock_clearance(b) == ["N"]                      # reported, not moved
+    assert route.clock_violations(b) == {"N"}
+
+
+def _gnd_board(tmp_path):
+    """GND pours on both layers; a wall of N on the front splits the front pour in two, and
+    the right half holds a GND pad. The back pour is whole."""
+    from hw.tests.test_finish import make_board, W, H
+    b = make_board(tmp_path, {"N": [(12, -2), (12, H + 2)], "GND": [(3, 6), (21, 6)]})
+    _track(b, "N", pcbnew.F_Cu, (12, -2), (12, H + 2), 0.3)
+    for layer, name in ((pcbnew.F_Cu, "GND_F"), (pcbnew.B_Cu, "GND_B")):
+        z = pcbnew.ZONE(b)
+        ls = pcbnew.LSET()
+        ls.AddLayer(layer)
+        z.SetLayerSet(ls)
+        z.SetZoneName(name)
+        z.Outline().NewOutline()
+        for x, y in ((0, 0), (W, 0), (W, H), (0, H)):
+            z.Outline().Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+        z.SetNet(b.FindNet("GND"))
+        z.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)
+        b.Add(z)
+    route.refill(b)
+    return b
+
+
+def test_bridge_gnd_puts_a_via_in_the_cut_off_fragment(tmp_path):
+    b = _gnd_board(tmp_path)
+    gnd = b.FindNet("GND").GetNetCode()
+    assert len(route._components(b, gnd)) == 3     # front left, front right, the back pour
+    placed = route.bridge_gnd(b)
+    assert 2 <= placed <= 3                         # one per cut-off piece, a round or two
+    assert len(route._components(b, gnd)) == 1
+    vias = [t for t in b.GetTracks() if t.GetClass() == "PCB_VIA"]
+    assert len(vias) == placed and all(x.GetNetname() == "GND" for x in vias)

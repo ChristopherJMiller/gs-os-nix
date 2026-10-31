@@ -19,8 +19,10 @@
 # 0, so the module lies over the empty band above it, where nothing tall may go (the
 # silkscreen art goes there). Everything is on F (single-sided assembly).
 #
-# Rulings (controller): the height is 64 mm deliberately, not the smallest that fits (62), so
-# J2 keeps the art band above it. /IOSEL's 37.7 mm run from its finger (pin 1, at the front)
+# Rulings (controller): P11 supersedes P10: the height is 68 mm (the cap, and plan 1's height).
+# At 64 and 66 mm the finger lane was too tight for the router to close the route; only J1 (the
+# fingers) moves when the height grows, so the lane widens. The owner's "shrink if the re-layout
+# allows" is answered: it doesn't. /IOSEL's 37.7 mm run from its finger (pin 1, at the front)
 # to U5 is accepted: about 8 pF of copper at 0.1 pF/mm plus 4 pF of input, under 15 pF; Task
 # 5's hw-load is the check.
 #
@@ -29,7 +31,7 @@
 
 [board]
 length_mm = 80.0
-height_mm = 64.0
+height_mm = 68.0
 
 [parts.C1]
 x = 70.463

@@ -56,11 +56,11 @@ GND = "GND"
 POWER_TRACK_MM = 0.5
 POWER_NETS = ["+5V_SLOT", "+5V", "+5V_MOD", "+3V3", "GND", "+12V_SLOT", "-5V_SLOT",
               "-12V_SLOT"]
-# The "Clock" net class (plan 1b): the slot clocks and their FPGA-side twins keep 0.4 mm from
+# The "Clock" net class (plan 1b): the slot clocks and their FPGA-side twins keep 0.3 mm from
 # everything and are 0.2 mm wide. Patterns are case-sensitive in the project file, and the
 # netlist has both SLOT_PH0 and slot_ph0.
 CLOCK_TRACK_MM = 0.2
-CLOCK_CLEARANCE_MM = 0.4
+CLOCK_CLEARANCE_MM = 0.3
 CLOCK_NETS = ["SLOT_PH0", "SLOT_PH1", "SLOT_Q3", "SLOT_7M",
               "slot_ph0", "slot_ph1", "slot_q3", "slot_7m"]
 FIXED = "J1"                               # the fingers: placed from slotgeom
