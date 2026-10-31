@@ -60,7 +60,7 @@ EDGE_CLEARANCE_MM = 0.5
 VIA_MM = 0.6
 VIA_DRILL_MM = 0.3
 DUP_SUFFIX = "_dup"
-GND_JOIN_MM = 0.25                 # width of the GND tracks finish_unrouted lays (hw-drc exempts GND)
+GND_JOIN_MM = 0.15                 # width of the GND tracks finish_unrouted lays (hw-drc exempts GND)
 RES_MM = 0.05                      # finish_unrouted's grid
 MARGIN_MM = 0.03                   # what it keeps over the minimum
 HOLE_CLEARANCE_MM = 0.25           # copper to hole wall, KiCad's default
@@ -75,9 +75,9 @@ _TOKEN = re.compile(r'"[^"\s()]*"|[^\s()"]+')
 
 # --- the board --------------------------------------------------------------------------
 
-def strip_routing(board, keep_locked: bool = False) -> None:
+def strip_routing(board, keep_locked: bool = False, keep_all: bool = False) -> None:
     for t in list(board.GetTracks()):
-        if not (keep_locked and t.IsLocked()):
+        if not (keep_all or (keep_locked and t.IsLocked())):
             board.RemoveNative(t)
 
 
@@ -190,7 +190,7 @@ def prepare_dsn(dsn: str) -> tuple[str, dict[str, str]]:
     return dsn[:i] + text + dsn[i:], {v: k for k, v in rename.items()}
 
 
-HALO_FROM_PAD_MM = 1.2             # no halo where a track is this near a pad
+HALO_FROM_PAD_MM = 0.9             # no halo where a track is this near a pad of its own net
 HALO_PIECE_MM = 0.5
 
 
@@ -200,15 +200,16 @@ def halo_wires(board, names: list[str]) -> str:
     wires (width + twice the difference) in pieces, none near a pad, whose pads sit too
     close to neighbours for a wide berth; and, for each via, a keepout circle. The wires
     are for the router only; the board keeps the real ones."""
-    pads = [p.GetBoundingBox() for fp in board.GetFootprints() for p in fp.Pads()]
-    for bb in pads:
-        bb.Inflate(pcbnew.FromMM(HALO_FROM_PAD_MM))
     lines = []
     um = lambda v: int(round(v / 1000))
     for name in names:
         extra = net_clearance_mm(board, name) - ROUTER_CLEARANCE_UM / 1000
         if extra <= 0:
             continue
+        pads = [p.GetBoundingBox() for fp in board.GetFootprints() for p in fp.Pads()
+                if p.GetNetname() == name]
+        for bb in pads:
+            bb.Inflate(pcbnew.FromMM(HALO_FROM_PAD_MM))
         for t in board.GetTracks():
             if t.GetNetname() != name:
                 continue
@@ -917,7 +918,7 @@ def run_freerouting(dsn: Path, ses: Path, passes: int, timeout_s: int, log: Path
 
 def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | None = None,
           extra: list[str] = (), first: list[str] | None = None,
-          router=run_freerouting, stitch: bool = False, keep_locked: bool = False) -> None:
+          router=run_freerouting, stitch: bool = False, keep_locked: bool = False, keep_all: bool = False) -> None:
     """Route `board` in place. `first` (net names; [] for the default set) are laid by the
     finisher before the router sees the board and locked, so the router keeps them as
     fixed wires. `router` is run_freerouting's signature (a test passes a stub)."""
@@ -927,7 +928,7 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
         work.mkdir(parents=True, exist_ok=True)
         dsn, ses, log = work / "carrier.dsn", work / "carrier.ses", work / "freerouting.log"
         b = pcbnew.LoadBoard(str(board))
-        strip_routing(b, keep_locked)
+        strip_routing(b, keep_locked, keep_all)
         solid_zones(b)
         names: list[str] = []
         if first is not None:
@@ -952,9 +953,9 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
             raise SystemExit(f"pcbnew could not import {ses}")
         print(f"widened {widen_stubs(b)} stubs")
         pcbnew.SaveBoard(str(board), b)                 # the router's own result, kept
-        if stitch:
-            print(f"stitched {stitch_gnd(b)} GND vias")
         left = finish_unrouted(b)
+        if stitch:                      # last, into the room that is left: it walls nothing in
+            print(f"stitched {stitch_gnd(b)} GND vias")
         refill(b)
         pcbnew.SaveBoard(str(board), b)
     if left:
@@ -973,13 +974,17 @@ def main(argv: list[str] | None = None) -> None:
                     "no value: the clocks, then SLOT_D0-7 and slot_d0-7")
     ap.add_argument("--keep-locked", action="store_true",
                     help="keep the locked tracks of the board (a first pass done before)")
+    ap.add_argument("--keep-all", action="store_true",
+                    help="keep every track and via: the router continues a route (the GND "
+                    "stitching vias of a finished route are not kept: strip them first)")
     ap.add_argument("--stitch", action="store_true",
                     help="after routing, add GND stitching vias (a 4 mm grid) where there is room")
     ap.add_argument("--router-args", default="", help="more arguments for freerouting")
     a = ap.parse_args(argv)
     first = None if a.first is None else [n for n in a.first.split(",") if n]
     route(a.board, a.passes, a.timeout, a.keep, extra=a.router_args.split(), first=first,
-          stitch=a.stitch, keep_locked=a.keep_locked)
+          stitch=a.stitch, keep_locked=a.keep_locked,
+          keep_all=a.keep_all)
 
 
 if __name__ == "__main__":
