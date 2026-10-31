@@ -226,12 +226,12 @@ def test_first_nets_are_routed_first_and_locked(tmp_path):
     assert route.finish_unrouted(b) == []
 
 
-def test_drop_net_removes_the_net_and_its_class_entry_but_not_its_pins():
-    out = route.drop_net(DSN, "GND")
-    assert "(net GND" not in out and "GND" not in out.split("(class")[1]
-    assert "U2-2" not in out.split("(network")[1].split("(class")[0]    # the net block is gone
-    assert "(net SLOT_D3" in out and "(net slot_d3" in out              # the others stay
-    assert out.count("(") == out.count(")")
+def test_gnd_stays_in_the_dsn_as_a_routed_net():
+    """P15 (plan 1's lesson): GND is routed like every other net and the pours add to it;
+    left to the pours alone, a GND pad that tracks have walled in is not connected."""
+    out, _ = route.prepare_dsn(DSN)
+    assert "(net GND" in out and "U2-2" in out
+    assert not hasattr(route, "drop_net")
 
 
 # --- the repair passes: clock clearance, and GND fragments --------------------------------

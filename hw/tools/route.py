@@ -235,24 +235,6 @@ def halo_wires(board, names: list[str]) -> str:
     return "".join(f"    {l}\n" for l in lines)
 
 
-def drop_net(dsn: str, name: str) -> str:
-    """The DSN without net `name`: its `(net ...)` block, and its entry in the class lists.
-    Its pins stay, as copper no net is joined to, so the router keeps clear of them. (GND
-    is left to the pours and to finish_unrouted: routed as a net it takes 0.5 mm tracks
-    across the back layer and chops the pour.)"""
-    m = re.search(r'\(net\s+"?' + re.escape(name) + r'"?\s', dsn)
-    if m:
-        depth, i = 0, m.start()
-        while True:
-            depth += {"(": 1, ")": -1}.get(dsn[i], 0)
-            i += 1
-            if depth == 0:
-                break
-        dsn = dsn[:m.start()].rstrip(" \t") + dsn[i:].lstrip(" \t")
-    word = re.compile(r'(?<![\w+\-.])"?' + re.escape(name) + r'"?(?![\w+\-.])')
-    return re.sub(r"\(class [^()]*", lambda mm: word.sub("", mm.group(0)), dsn)
-
-
 def restore_ses(ses: str, back: dict[str, str]) -> str:
     return _retoken(ses, back)
 
@@ -835,14 +817,14 @@ def clock_nets(board) -> list[str]:
 
 
 def _in_exempt_courtyard(board, a, b) -> bool:
-    """Are both points inside the courtyard of J2, the module socket? Its pads are 0.15 mm
-    apart, so the tracks that leave two neighbouring pins cannot keep the Clock clearance
-    there (carrier.kicad_dru relaxes it the same way)."""
-    j2 = board.FindFootprintByReference("J2")
-    if j2 is None:
-        return False
-    cy = j2.GetCourtyard(pcbnew.F_CrtYd)
-    return cy.Contains(a) and cy.Contains(b)
+    """Are both points inside the J2_ESCAPE rule area (J2's courtyard grown by 2 mm)? The
+    module socket's pads are 0.15 mm apart, so the tracks that leave two neighbouring pins
+    cannot keep the Clock clearance there (carrier.kicad_dru relaxes it for the same area)."""
+    for z in board.Zones():
+        if z.GetIsRuleArea() and z.GetZoneName() == "J2_ESCAPE":
+            o = z.Outline()
+            return o.Contains(a) and o.Contains(b)
+    return False
 
 
 def clock_offenders(board) -> dict[str, list]:
@@ -965,6 +947,50 @@ def repair_clock_clearance(board, rounds: int = REPAIR_ROUNDS) -> list[str]:
     return sorted(set(clock_violations(board)) | set(thin_power(board)))
 
 
+def _gnd_via(board, pt) -> None:
+    """A tented GND via at `pt`."""
+    v = pcbnew.PCB_VIA(board)
+    v.SetPosition(pt)
+    v.SetViaType(pcbnew.VIATYPE_THROUGH)
+    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+    v.SetWidth(pcbnew.FromMM(VIA_MM))
+    v.SetDrill(pcbnew.FromMM(VIA_DRILL_MM))
+    v.SetFrontTentingMode(pcbnew.TENTING_MODE_TENTED)
+    v.SetBackTentingMode(pcbnew.TENTING_MODE_TENTED)
+    v.SetNet(board.FindNet("GND"))
+    board.Add(v)
+
+
+def _edge_segments(board) -> list:
+    """The board outline as (x0, y0, x1, y1) segments in nm."""
+    outline = pcbnew.SHAPE_POLY_SET()
+    board.GetBoardPolygonOutlines(outline, False)
+    segs = []
+    for k in range(outline.OutlineCount()):
+        o = outline.Outline(k)
+        n = o.PointCount()
+        for i in range(n):
+            a, b = o.CPoint(i), o.CPoint((i + 1) % n)
+            segs.append((a.x, a.y, b.x, b.y))
+    return segs
+
+
+def _clear_of_edge(segs: list, pt) -> bool:
+    """Is a via at `pt` the board-edge clearance (and a little over) from every outline
+    segment `segs` (from _edge_segments)?"""
+    need = pcbnew.FromMM(EDGE_CLEARANCE_MM + VIA_MM / 2 + 0.05)
+    for x0, y0, x1, y1 in segs:
+        dx, dy = x1 - x0, y1 - y0
+        t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((pt.x - x0) * dx + (pt.y - y0) * dy)
+                                                    / (dx * dx + dy * dy)))
+        if math.hypot(pt.x - (x0 + t * dx), pt.y - (y0 + t * dy)) < need:
+            return False
+    return True
+
+
+BRIDGE_PAD_CLEARANCE_MM = 0.2      # a bridging via keeps this from every pad
+
+
 def bridge_gnd(board, rounds: int = 12) -> int:
     """Each GND piece that is cut off from the rest (a pour fragment with its pads) gets a
     via inside one of its fragments where the pour of the other layer is also present and
@@ -979,8 +1005,9 @@ def bridge_gnd(board, rounds: int = 12) -> int:
             break
         comps.sort(key=_size, reverse=True)
         fills = _fills(board, gnd)
-        grid = _Grid(board, 0, MIN_TRACK_MM)
-        blocked = grid.via
+        edge = _edge_segments(board)
+        grid = _Grid(board, 0, MIN_TRACK_MM, clearance_mm=BRIDGE_PAD_CLEARANCE_MM)
+        blocked = grid.via                  # courtyards are allowed: the via is tented
         added = 0
         for comp in comps[1:]:
             spot = None
@@ -997,7 +1024,7 @@ def bridge_gnd(board, rounds: int = 12) -> int:
                         if blocked[j, i]:
                             continue
                         pt = grid.centre(i, j)
-                        if poly.Contains(pt, k) and other.Contains(pt):
+                        if poly.Contains(pt, k) and other.Contains(pt) and _clear_of_edge(edge, pt):
                             spot = pt
                             break
                     if spot:
@@ -1005,14 +1032,7 @@ def bridge_gnd(board, rounds: int = 12) -> int:
                 if spot:
                     break
             if spot:
-                v = pcbnew.PCB_VIA(board)
-                v.SetPosition(spot)
-                v.SetViaType(pcbnew.VIATYPE_THROUGH)
-                v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
-                v.SetWidth(pcbnew.FromMM(VIA_MM))
-                v.SetDrill(pcbnew.FromMM(VIA_DRILL_MM))
-                v.SetNet(board.FindNet(gnd))
-                board.Add(v)
+                _gnd_via(board, spot)
                 added += 1
         placed += added
         if not added:
@@ -1049,6 +1069,7 @@ def stitch_gnd(board, pitch_mm: float = STITCH_PITCH_MM) -> int:
     first and after. Returns how many it placed."""
     gnd = board.FindNet("GND").GetNetCode()
     refill(board)
+    edge = _edge_segments(board)
     grid = _Grid(board, 0, MIN_TRACK_MM)               # net 0: every pad and track is in the way
     blocked = grid.via | _courtyards(grid, board)
     pour = {}
@@ -1079,18 +1100,11 @@ def stitch_gnd(board, pitch_mm: float = STITCH_PITCH_MM) -> int:
                 if not (0 <= i < grid.w and 0 <= j < grid.h) or blocked[j, i]:
                     continue
                 pt = grid.centre(i, j)
-                if not all(pour[l].Contains(pt) for l in _LAYERS):
+                if not all(pour[l].Contains(pt) for l in _LAYERS) or not _clear_of_edge(edge, pt):
                     continue
                 if any((pt - q).EuclideanNorm() < _mm_to_nm(pitch_mm * 0.6) for q in placed):
                     continue
-                v = pcbnew.PCB_VIA(board)
-                v.SetPosition(pt)
-                v.SetViaType(pcbnew.VIATYPE_THROUGH)
-                v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
-                v.SetWidth(pcbnew.FromMM(VIA_MM))
-                v.SetDrill(pcbnew.FromMM(VIA_DRILL_MM))
-                v.SetNet(board.FindNet(gnd))
-                board.Add(v)
+                _gnd_via(board, pt)
                 placed.append(pt)
                 break
     refill(board)
@@ -1145,7 +1159,7 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
             halos = halo_wires(b, names)
             i = dsn_text.index("(wiring") + len("(wiring\n")
             dsn_text = dsn_text[:i] + halos + dsn_text[i:]
-        text, back = prepare_dsn(drop_net(dsn_text, "GND"))
+        text, back = prepare_dsn(dsn_text)
         dsn.write_text(text)
         router(dsn, ses, passes, timeout_s, log, extra)
         if not ses.exists():

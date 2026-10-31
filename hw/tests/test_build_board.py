@@ -262,3 +262,18 @@ def test_front_courtyards_do_not_overlap(carrier_board):
             if dx > 0.005 and dy > 0.005:
                 bad.append((a, b, round(dx, 3), round(dy, 3)))
     assert not bad, bad
+
+
+def test_j2_escape_rule_area_exists_and_the_dru_names_it():
+    """P16: the Clock clearance is relaxed at the module socket by a named rule area."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    board = pcbnew.LoadBoard(str(root / "hw/carrier/carrier.kicad_pcb"))
+    areas = [z for z in board.Zones() if z.GetZoneName() == bb.J2_ESCAPE]
+    assert len(areas) == 1 and areas[0].GetIsRuleArea()
+    box = areas[0].GetBoundingBox()
+    cy = board.FindFootprintByReference("J2").GetCourtyard(pcbnew.F_CrtYd).BBox()
+    assert box.GetLeft() < cy.GetLeft() and box.GetRight() > cy.GetRight()
+    assert box.GetTop() < cy.GetTop() and box.GetBottom() > cy.GetBottom()
+    dru = (root / "hw/carrier/carrier.kicad_dru").read_text()
+    assert f"intersectsArea('{bb.J2_ESCAPE}')" in dru

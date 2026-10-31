@@ -192,6 +192,41 @@ def _add_zones(board, length: float, height: float) -> None:
     ra.SetDoNotAllowFootprints(False)
 
 
+J2_ESCAPE = "J2_ESCAPE"
+J2_ESCAPE_GROW_MM = 2.0
+
+
+def _add_j2_escape(board) -> None:
+    """A rule area over J2's courtyard grown by 2 mm, named J2_ESCAPE, with no restriction
+    of its own: carrier.kicad_dru relaxes the Clock clearance inside it (the module
+    socket's pads are 0.15 mm apart, so the tracks that leave two neighbouring pins cannot
+    be 0.3 mm apart until they have fanned out). Left alone if the board has it."""
+    j2 = board.FindFootprintByReference("J2")
+    if j2 is None or any(z.GetZoneName() == J2_ESCAPE for z in board.Zones()):
+        return
+    box = j2.GetCourtyard(pcbnew.F_CrtYd).BBox()
+    grow = _mm(J2_ESCAPE_GROW_MM)
+    ls = pcbnew.LSET()
+    ls.AddLayer(pcbnew.F_Cu)
+    ls.AddLayer(pcbnew.B_Cu)
+    z = pcbnew.ZONE(board)
+    z.SetLayerSet(ls)
+    z.SetZoneName(J2_ESCAPE)
+    z.SetIsRuleArea(True)
+    z.SetDoNotAllowTracks(False)
+    z.SetDoNotAllowVias(False)
+    z.SetDoNotAllowZoneFills(False)
+    z.SetDoNotAllowPads(False)
+    z.SetDoNotAllowFootprints(False)
+    z.Outline().NewOutline()
+    for x, y in ((box.GetLeft() - grow, box.GetTop() - grow),
+                 (box.GetRight() + grow, box.GetTop() - grow),
+                 (box.GetRight() + grow, box.GetBottom() + grow),
+                 (box.GetLeft() - grow, box.GetBottom() + grow)):
+        z.Outline().Append(x, y)
+    board.Add(z)
+
+
 # --- the build ----------------------------------------------------------------------
 
 def read_placement(path: Path) -> dict:
@@ -258,6 +293,7 @@ def build(netlist: Path, placement: Path, out: Path, update: bool) -> None:
     _add_outline(board, length, height)
     if not list(board.Zones()):
         _add_zones(board, length, height)
+    _add_j2_escape(board)
 
     ds = board.GetDesignSettings()
     ds.m_MinClearance = _mm(CLEARANCE_MM)

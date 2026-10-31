@@ -26,6 +26,10 @@
 # to U5 is accepted: about 8 pF of copper at 0.1 pF/mm plus 4 pF of input, under 15 pF; Task
 # 5's hw-load is the check.
 #
+# P14: R14 (the DIR pull) moved out of the U1-U4 channel to the 2 mm column between U1 and
+# U2 (beside U1 pin 1), so the channel carries only copper; nothing else of x 14-20, y 49-55
+# but U1 and U4 is left in it.
+#
 # [decouple] maps each decoupling cap to the IC supply pin(s) it serves; the tests check
 # each is within 2 mm (pad edge to pad edge).
 
@@ -310,9 +314,9 @@ rot = 90
 side = "F"
 
 [parts.R14]
-x = 19.457
-y = 52.5
-rot = 0
+x = 21.35
+y = 55.2
+rot = 90
 side = "F"
 
 [parts.R15]
