@@ -341,3 +341,22 @@ def test_repair_relays_a_thinned_rail_at_its_class_width(tmp_path):
     assert route.repair_clock_clearance(b) == []
     ts = [t for t in b.GetTracks()]
     assert ts and all(t.GetWidth() == pcbnew.FromMM(0.5) for t in ts if t.GetClass() != "PCB_VIA")
+
+
+def test_a_rule_area_that_restricts_nothing_does_not_block_the_finisher(tmp_path):
+    """J2_ESCAPE (build_board) only names an area for carrier.kicad_dru; the A* grid must
+    not read it as a keep-out (it did, once, and no clock could be laid)."""
+    from hw.tests.test_finish import make_board, v
+    b = make_board(tmp_path, {"N": [(3, 6), (21, 6)], "GND": [(22, 11)]})
+    z = pcbnew.ZONE(b)
+    ls = pcbnew.LSET()
+    ls.AddLayer(pcbnew.F_Cu)
+    ls.AddLayer(pcbnew.B_Cu)
+    z.SetLayerSet(ls)
+    z.SetIsRuleArea(True)
+    z.SetDoNotAllowTracks(False)
+    z.Outline().NewOutline()
+    for x, y in ((1, 1), (23, 1), (23, 11), (1, 11)):
+        z.Outline().Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+    b.Add(z)
+    assert route._join_pieces(b, b.FindNet("N").GetNetCode(), 0.15, [])

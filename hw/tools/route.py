@@ -416,7 +416,7 @@ class _Grid:
                 for x, y in (a, b):
                     d.ellipse([x - r, y - r, x + r, y + r], fill=255)
         for z in board.Zones():                       # the bevel keepout
-            if z.GetIsRuleArea():
+            if z.GetIsRuleArea() and z.GetDoNotAllowTracks():   # J2_ESCAPE restricts nothing
                 k = z.GetBoundingBox()
                 (xa, ya), (xb, yb) = (self.px(k.GetLeft(), k.GetTop()),
                                       self.px(k.GetRight(), k.GetBottom()))
