@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """fab.py's Interactive HTML BOM step."""
 import os
-
-import pytest
 import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from hw.tools.fab import IBOM_ENV, ibom_command
 

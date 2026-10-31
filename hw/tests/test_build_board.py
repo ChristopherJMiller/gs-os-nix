@@ -222,7 +222,8 @@ def test_carrier_board_is_clean(carrier_board):
 
 @pytest.mark.parametrize("name", ["move_pad_13", "flip_J1_to_back", "stretch_to_180mm",
                                   "track_in_bevel", "inner_copper_in_tab",
-                                  "inner_zone_to_edge", "inner_via_in_tab"])
+                                  "inner_zone_to_edge", "inner_via_in_tab",
+                                  "inner_track", "pth_pad_at_edge"])
 def test_edge_mutation_fails(name, carrier_board):
     assert name in ce.MUTATIONS
     ce.MUTATIONS[name](carrier_board)
@@ -361,3 +362,50 @@ def test_j2_escape_rule_area_exists_and_the_dru_names_it():
     assert box.GetTop() < cy.GetTop() and box.GetBottom() > cy.GetBottom()
     dru = (root / "hw/carrier/carrier.kicad_dru").read_text()
     assert f"intersectsArea('{bb.J2_ESCAPE}')" in dru
+
+
+# --- fix round 1: inner layers are plane-only (P18); through-hole pads --------------------
+
+def test_an_inner_layer_track_fails_wherever_it_is(carrier_board):
+    t = ce.tab_geometry(carrier_board)
+    assert ce.problems_inner(carrier_board) == []
+    ce.MUTATIONS["inner_track"](carrier_board)
+    found = ce.problems_inner(carrier_board)
+    assert any(ce.EXPECT["inner_track"] in p for p in found), found
+
+
+def test_an_inner_arc_fails(carrier_board):
+    arc = pcbnew.PCB_ARC(carrier_board)
+    arc.SetStart(pcbnew.VECTOR2I(bb._mm(20), bb._mm(20)))
+    arc.SetMid(pcbnew.VECTOR2I(bb._mm(22), bb._mm(21)))
+    arc.SetEnd(pcbnew.VECTOR2I(bb._mm(24), bb._mm(20)))
+    arc.SetWidth(bb._mm(0.15))
+    arc.SetLayer(pcbnew.In1_Cu)
+    carrier_board.Add(arc)
+    assert any("inner copper: arc" in p for p in ce.problems_inner(carrier_board))
+
+
+def test_outer_tracks_are_not_inner_copper(carrier_board):
+    ce.MUTATIONS["track_in_bevel"](carrier_board)      # an F.Cu track
+    assert not any("inner copper: track" in p for p in ce.problems_inner(carrier_board))
+
+
+def test_a_through_hole_pad_near_the_side_edge_fails(carrier_board):
+    ce.MUTATIONS["pth_pad_at_edge"](carrier_board)
+    found = ce.problems_inner(carrier_board)
+    assert any(ce.EXPECT["pth_pad_at_edge"] in p for p in found), found
+
+
+def test_an_npth_pad_is_not_inner_copper(carrier_board):
+    t = ce.tab_geometry(carrier_board)
+    fp = pcbnew.FootprintLoad(str(bb._lib_dir("Resistor_SMD")), "R_0603_1608Metric")
+    pad = pcbnew.PAD(fp)
+    pad.SetAttribute(pcbnew.PAD_ATTRIB_NPTH)
+    pad.SetShape(pcbnew.PAD_SHAPE_CIRCLE)
+    pad.SetSize(pcbnew.VECTOR2I(bb._mm(2), bb._mm(2)))
+    pad.SetDrillSize(pcbnew.VECTOR2I(bb._mm(2), bb._mm(2)))
+    pad.SetPosition(pcbnew.VECTOR2I(bb._mm(t["xmin"] + 0.9), bb._mm(t["body_bottom"] + 2)))
+    fp.Add(pad)
+    fp.SetPosition(pad.GetPosition())
+    carrier_board.Add(fp)
+    assert not any("through-hole" in p for p in ce.problems_inner(carrier_board))

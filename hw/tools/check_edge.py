@@ -11,7 +11,9 @@ the footprint file or the schematic: the outline against slotgeom, J1's pads (si
 pitch, opposite pairs, pin 1 toward the front, which pins carry power) and the bevel
 keepout. The board has four copper layers: no copper of In1.Cu or In2.Cu (zones, vias, through
 pads) may lie below the tab's top edge, and none within EDGE_MIN_MM of the board edge, so
-the bevel never exposes an inner layer. The selftest plants seven faults on a copy of the
+the bevel never exposes an inner layer. The inner layers are planes only (ruling P18): any
+track or arc on them fails. NPTH pads have no inner copper and are skipped. The selftest
+plants nine faults on a copy of the
 board; each must be found.
 """
 import argparse
@@ -237,6 +239,11 @@ def problems_inner(board) -> list[str]:
                     break
     for item in board.GetTracks():
         if item.Type() != pcbnew.PCB_VIA_T:
+            if item.GetLayer() in INNER:          # P18: the inner layers are planes only
+                kind = "arc" if item.Type() == pcbnew.PCB_ARC_T else "track"
+                out.append(f"inner copper: {kind} on {item.GetLayerName()} at "
+                           f"({_mm(item.GetX()):.2f}, {_mm(item.GetY()):.2f}); the inner "
+                           "layers hold planes only")
             continue
         x, y, r = _mm(item.GetX()), _mm(item.GetY()), _mm(item.GetWidth(pcbnew.F_Cu)) / 2
         if y + r > line:
@@ -247,9 +254,20 @@ def problems_inner(board) -> list[str]:
                        "the board edge on the inner layers")
     for fp in board.GetFootprints():
         for p in fp.Pads():
-            if p.HasHole() and _mm(p.GetBoundingBox().GetBottom()) > line:
-                out.append(f"inner copper: through-hole pad {fp.GetReference()}.{p.GetNumber()} "
-                           "has its inner pad below the tab's top edge")
+            if not p.HasHole() or p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
+                continue                           # an NPTH pad has no inner copper
+            bb = p.GetBoundingBox()
+            name = f"{fp.GetReference()}.{p.GetNumber()}"
+            if _mm(bb.GetBottom()) > line:
+                out.append(f"inner copper: through-hole pad {name} has its inner pad below "
+                           "the tab's top edge")
+            elif (_mm(bb.GetLeft()) < t["xmin"] + EDGE_MIN_MM - EDGE_TOL_MM
+                  or _mm(bb.GetRight()) > t["xmax"] - EDGE_MIN_MM + EDGE_TOL_MM
+                  or _mm(bb.GetTop()) < t["top"] + EDGE_MIN_MM - EDGE_TOL_MM
+                  or (not (t["tab_l"] <= _mm(bb.GetLeft()) and _mm(bb.GetRight()) <= t["tab_r"])
+                      and _mm(bb.GetBottom()) > t["body_bottom"] - EDGE_MIN_MM + EDGE_TOL_MM)):
+                out.append(f"inner copper: through-hole pad {name} is within {EDGE_MIN_MM} mm "
+                           "of the board edge on the inner layers")
     return out
 
 
@@ -336,16 +354,48 @@ def inner_via_in_tab(board) -> None:
     board.Add(v)
 
 
+def inner_track(board) -> None:
+    """A track on In2.Cu in the middle of the body: the inner layers are planes only."""
+    t = tab_geometry(board)
+    tr = pcbnew.PCB_TRACK(board)
+    tr.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(t["xmin"] + 20), pcbnew.FromMM(t["top"] + 20)))
+    tr.SetEnd(pcbnew.VECTOR2I(pcbnew.FromMM(t["xmin"] + 30), pcbnew.FromMM(t["top"] + 20)))
+    tr.SetWidth(pcbnew.FromMM(0.15))
+    tr.SetLayer(pcbnew.In2_Cu)
+    board.Add(tr)
+
+
+def pth_pad_at_edge(board) -> None:
+    """A through-hole pad whose inner pad is 0.2 mm from the front edge."""
+    t = tab_geometry(board)
+    fp = pcbnew.FOOTPRINT(board)
+    fp.SetReference("PLANT")
+    pad = pcbnew.PAD(fp)
+    pad.SetAttribute(pcbnew.PAD_ATTRIB_PTH)
+    pad.SetShape(pcbnew.PAD_SHAPE_CIRCLE)
+    pad.SetSize(pcbnew.VECTOR2I(pcbnew.FromMM(1.6), pcbnew.FromMM(1.6)))
+    pad.SetDrillSize(pcbnew.VECTOR2I(pcbnew.FromMM(0.8), pcbnew.FromMM(0.8)))
+    pad.SetLayerSet(pad.PTHMask())
+    pad.SetNumber("1")
+    fp.Add(pad)
+    fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(t["xmin"] + 1.0),
+                                   pcbnew.FromMM(t["top"] + 30)))
+    board.Add(fp)
+
+
 MUTATIONS = {"move_pad_13": move_pad_13, "flip_J1_to_back": flip_J1_to_back,
              "stretch_to_180mm": stretch_to_180mm, "track_in_bevel": track_in_bevel,
              "inner_copper_in_tab": inner_copper_in_tab,
-             "inner_zone_to_edge": inner_zone_to_edge, "inner_via_in_tab": inner_via_in_tab}
+             "inner_zone_to_edge": inner_zone_to_edge, "inner_via_in_tab": inner_via_in_tab,
+             "inner_track": inner_track, "pth_pad_at_edge": pth_pad_at_edge}
 # The message each planted fault must produce (a substring of one of the problems).
 EXPECT = {"move_pad_13": "pitch", "flip_J1_to_back": "J1 is on B.Cu",
           "stretch_to_180mm": "outline length", "track_in_bevel": "bevel keepout",
           "inner_copper_in_tab": "zone 'PLANT_TAB' reaches y",
           "inner_zone_to_edge": "zone 'PLANT_EDGE' comes within",
-          "inner_via_in_tab": "inner pad below the tab's top edge"}
+          "inner_via_in_tab": "inner pad below the tab's top edge",
+          "inner_track": "inner copper: track on In2.Cu",
+          "pth_pad_at_edge": "through-hole pad PLANT.1 is within"}
 
 
 def selftest(path: Path) -> int:

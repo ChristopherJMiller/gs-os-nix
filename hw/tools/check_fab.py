@@ -31,7 +31,8 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # KiKit names the gerbers by layer role; the KiCad plot names are accepted too.
-GERBERS = {"F_Cu": "CuTop", "In1_Cu": "inner1", "In2_Cu": "inner2", "B_Cu": "CuBottom", "F_Mask": "MaskTop", "B_Mask": "MaskBottom",
+GERBERS = {"F_Cu": "CuTop", "In1_Cu": "inner1", "In2_Cu": "inner2", "B_Cu": "CuBottom",
+           "F_Mask": "MaskTop", "B_Mask": "MaskBottom",
            "F_Silkscreen": "SilkTop", "B_Silkscreen": "SilkBottom", "Edge_Cuts": "EdgeCuts"}
 FILES = ["bom.csv", "cpl.csv", "ibom.html", "render-top.png", "render-bottom.png",
          "schematic.pdf", "order-notes.txt", "layers/F.Cu.svg", "layers/In1.Cu.svg",

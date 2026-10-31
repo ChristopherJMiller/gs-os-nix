@@ -6,9 +6,10 @@
 
 A card may load each slot pin with at most 15 pF (and two LS loads). The estimate for one
 J1 net is its routed copper, in mm, times PF_PER_MM, plus VIA_PF for every via on it, plus
-the capacitance of every IC pin on it, from hw/carrier/pin_capacitance.toml (datasheet Ci for an input, Cio for an I/O or
-output pin; a pin the table does not list, a part value it lacks, a J1 net with no copper
-on the board, or a part that is not a U, R, C or J is a failure, never a silent zero). The
+the capacitance of every IC pin on it, from hw/carrier/pin_capacitance.toml (datasheet Ci
+for an input, Cio for an I/O or output pin; a pin the table does not list, a part value it
+lacks, a J1 net with no copper on the board, or a part that is not a U, R, C or J is a
+failure, never a silent zero). The
 SAFE and UART headers count 1 pF a pin, other passives 0. Apple's other limit, two LS loads,
 is moot for LVC/ALVC inputs (about 1 uA against an LS load's 0.4 mA IIL / 20 uA IIH) and is
 not gated.
@@ -27,8 +28,11 @@ Copper and vias, 4-layer stackup (JLCPCB JLC04161H-7628, hw/carrier/pin_capacita
 * A via through the planes: Howard Johnson, High-Speed Digital Design, C = 1.41 er T D1 /
   (D2 - D1) pF with T, D1, D2 in inches: T the board thickness (1.6 mm), D1 the via pad
   (0.6 mm), D2 the antipad in the planes (0.6 + 2 x 0.2 mm clearance = 1.0 mm), er 4.4. That is
-  VIA_PF = 0.586 pF a via. The formula is applied once per via, not once per plane it crosses;
-  counting each of the two planes would double it (1.17 pF a via).
+  VIA_PF = 0.586 pF a via. The formula is applied once per via (ruling P17), not once per
+  plane it crosses. Johnson's form takes T as the whole board; a signal via crosses two
+  antipads (GND and +3V3), so 0.586 pF is a lower bound (counting both planes gives 1.17 pF).
+  The margin is the copper term: 0.10 pF/mm is used against 0.073 computed, about 27 %
+  headroom. The constant is not changed.
 
 The selftest runs on a small synthetic board that passes (the routed carrier does not, until
 its re-route), and plants faults on fresh copies of it; each must fail with its own

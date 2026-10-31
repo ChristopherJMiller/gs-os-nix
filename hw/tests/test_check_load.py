@@ -187,3 +187,11 @@ def test_the_via_plant_fails_only_through_its_vias(caps):
     found = _planted("5 vias on SLOT_D1", caps)
     assert len(found) == 1 and cl.EXPECT["5 vias on SLOT_D1"] in found[0], found
     assert "IC pins" in found[0]
+
+
+def test_the_via_term_is_documented_as_a_lower_bound():
+    # P17: once per via, T the whole board; a signal via crosses two antipads, so it is a
+    # lower bound, and the margin is the copper term (0.10 used against 0.073 computed)
+    for text in (cl.__doc__, TABLE.read_text()):
+        assert "lower bound" in text and "once per via" in text
+    assert cl.PF_PER_MM / cl.MICROSTRIP_PF_PER_MM > 1.25
