@@ -6,3 +6,9 @@
 (rule "clock_pad_clearance"
   (condition "(A.Type == 'Pad' || B.Type == 'Pad') && (A.NetClass == 'Clock' || B.NetClass == 'Clock')")
   (constraint clearance (min 0.15mm)))
+
+# Likewise inside the module socket's courtyard: the tracks that leave two neighbouring J2
+# pins (0.15 mm apart) cannot be 0.3 mm apart until they have fanned out.
+(rule "clock_clearance_at_the_socket"
+  (condition "A.insideCourtyard('J2') && B.insideCourtyard('J2')")
+  (constraint clearance (min 0.15mm)))

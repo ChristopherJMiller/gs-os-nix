@@ -321,3 +321,23 @@ def test_bridge_gnd_puts_a_via_in_the_cut_off_fragment(tmp_path):
     assert len(route._components(b, gnd)) == 1
     vias = [t for t in b.GetTracks() if t.GetClass() == "PCB_VIA"]
     assert len(vias) == placed and all(x.GetNetname() == "GND" for x in vias)
+
+
+def test_prune_dangling_takes_a_spur_and_keeps_a_joined_track(tmp_path):
+    from hw.tests.test_finish import make_board
+    b = make_board(tmp_path, {"N": [(3, 6), (21, 6)], "GND": [(22, 11)]})
+    F = pcbnew.F_Cu
+    _track(b, "N", F, (3, 6), (21, 6))                  # joins the two pads
+    _track(b, "N", F, (10, 6), (10, 9))                 # leaves the track and ends on nothing
+    assert route.prune_dangling(b) == 1
+    assert len(list(b.GetTracks())) == 1
+
+
+def test_repair_relays_a_thinned_rail_at_its_class_width(tmp_path):
+    from hw.tests.test_finish import make_board
+    b = make_board(tmp_path, {"+5V": [(3, 6), (21, 6)], "GND": [(22, 11)]})
+    _track(b, "+5V", pcbnew.F_Cu, (3, 6), (21, 6), 0.2)       # Freerouting's squeezed rail
+    assert set(route.thin_power(b)) == {"+5V"}
+    assert route.repair_clock_clearance(b) == []
+    ts = [t for t in b.GetTracks()]
+    assert ts and all(t.GetWidth() == pcbnew.FromMM(0.5) for t in ts if t.GetClass() != "PCB_VIA")

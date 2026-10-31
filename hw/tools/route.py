@@ -834,61 +834,135 @@ def clock_nets(board) -> list[str]:
             if n.GetNetCode() and net_clearance_mm(board, n.GetNetname()) > CLEARANCE_MM + 1e-6]
 
 
-def clock_violations(board) -> set[str]:
-    """Names of the nets (not Clock-class) with a track or via nearer, edge to edge, to
-    Clock-class copper than the Clock clearance. Pads are exempt (carrier.kicad_dru). A
-    Clock-class net's own copper is not compared with another clock's."""
+def _in_exempt_courtyard(board, a, b) -> bool:
+    """Are both points inside the courtyard of J2, the module socket? Its pads are 0.15 mm
+    apart, so the tracks that leave two neighbouring pins cannot keep the Clock clearance
+    there (carrier.kicad_dru relaxes it the same way)."""
+    j2 = board.FindFootprintByReference("J2")
+    if j2 is None:
+        return False
+    cy = j2.GetCourtyard(pcbnew.F_CrtYd)
+    return cy.Contains(a) and cy.Contains(b)
+
+
+def clock_offenders(board) -> dict[str, list]:
+    """{net name: [the tracks and vias]} of nets (not Clock-class) with copper nearer, edge
+    to edge, to Clock-class copper than the Clock clearance. Pads are exempt, and so is
+    copper inside J2's courtyard (see _in_exempt_courtyard)."""
     clk = {n: net_clearance_mm(board, n) for n in clock_nets(board)}
+    out: dict[str, list] = {}
     if not clk:
-        return set()
+        return out
     items = [t for t in board.GetTracks()]
-    bad: set[str] = set()
     for c in (t for t in items if t.GetNetname() in clk):
         need = clk[c.GetNetname()] - CLOCK_TOL_MM
         c0, c1, cr = _shape(c)
-        box = c.GetBoundingBox()
-        box.Inflate(pcbnew.FromMM(clk[c.GetNetname()] + 1.0))
+        reach = pcbnew.FromMM(clk[c.GetNetname()] + 1.0)
+        # (own box from the end points: a cached GetBoundingBox of new items can be stale)
+        cx0, cx1 = sorted((c0.x, c1.x))
+        cy0, cy1 = sorted((c0.y, c1.y))
         for o in items:
-            if o is c or o.GetNetname() in clk or o.GetNetname() in bad:
+            if o is c or o.GetNetname() in clk:
                 continue
-            if not box.Intersects(o.GetBoundingBox()):
+            o0, o1, _ = _shape(o)
+            if (max(o0.x, o1.x) < cx0 - reach or min(o0.x, o1.x) > cx1 + reach
+                    or max(o0.y, o1.y) < cy0 - reach or min(o0.y, o1.y) > cy1 + reach):
                 continue
             via = "PCB_VIA" in (c.GetClass(), o.GetClass())
             if not via and c.GetLayer() != o.GetLayer():
                 continue
             o0, o1, orad = _shape(o)
-            if _seg_dist(c0, c1, o0, o1) - cr - orad < need:
-                bad.add(o.GetNetname())
-    return bad
+            if _seg_dist(c0, c1, o0, o1) - cr - orad < need and \
+                    not _in_exempt_courtyard(board, c0, o0):
+                if o not in out.setdefault(o.GetNetname(), []):
+                    out[o.GetNetname()].append(o)
+    return out
+
+
+def thin_power(board) -> dict[str, list]:
+    """{net: [tracks]} of power-class nets (class width over 0.4 mm, not GND) with a track
+    thinner than hw-drc allows: under 0.3 mm, or under the class width and over 1.5 mm
+    long (a neck is short)."""
+    out: dict[str, list] = {}
+    for t in board.GetTracks():
+        if t.GetClass() == "PCB_VIA" or t.GetNetname() == "GND":
+            continue
+        cw = net_width_mm(board, t.GetNetname())
+        if cw <= 0.4:
+            continue
+        w, ln = _mm(t.GetWidth()), _mm(int(t.GetLength()))
+        if w < 0.3 - 1e-6 or (w < cw - 1e-6 and ln > 1.5):
+            out.setdefault(t.GetNetname(), []).append(t)
+    return out
+
+
+def clock_violations(board) -> set[str]:
+    """Names of the nets with copper too near a clock (see clock_offenders)."""
+    return set(clock_offenders(board))
+
+
+def prune_dangling(board) -> int:
+    """Remove unlocked tracks with a free end: one that touches no pad, via or other track
+    end of its net. (A rip-up of the short offending piece of a net leaves such spurs.)"""
+    removed = 0
+    while True:
+        pads = [p for fp in board.GetFootprints() for p in fp.Pads()]
+        tracks = list(board.GetTracks())
+        drop = []
+        for t in tracks:
+            if t.GetClass() == "PCB_VIA" or t.IsLocked():
+                continue
+            for pt in (t.GetStart(), t.GetEnd()):
+                ok = any(p.GetNetCode() == t.GetNetCode() and p.HitTest(pt) for p in pads)
+                ok = ok or any(
+                    o is not t and o.GetNetCode() == t.GetNetCode() and
+                    ((o.GetClass() == "PCB_VIA" and
+                      (o.GetPosition() - pt).EuclideanNorm() <= o.GetWidth(pcbnew.F_Cu) / 2)
+                     or (o.GetClass() != "PCB_VIA" and o.GetLayer() == t.GetLayer()
+                         and o.HitTest(pt))) for o in tracks)
+                if not ok:
+                    drop.append(t)
+                    break
+        if not drop:
+            return removed
+        for t in drop:
+            board.RemoveNative(t)
+            removed += 1
 
 
 def repair_clock_clearance(board, rounds: int = REPAIR_ROUNDS) -> list[str]:
-    """Rip up the unlocked copper of each net that runs too near a clock and lay it again
-    with the A* finisher (which keeps the Clock clearance from every clock). A net that
-    cannot be laid again is put back as it was. Returns the nets still too near a clock."""
+    """Take away the unlocked copper that is too near a clock and join the net again with
+    the A* finisher (which keeps the Clock clearance from every clock): first only the
+    offending tracks and vias, then (if that fails) the whole net. What cannot be laid again
+    is put back as it was. Returns the nets still too near a clock."""
     refill(board)
     for _ in range(rounds):
-        todo = sorted(clock_violations(board))
         moved = 0
-        for name in todo:
+        offenders = clock_offenders(board)
+        for name, bad in thin_power(board).items():       # a thinned rail is re-laid the same way
+            offenders.setdefault(name, []).extend(t for t in bad if t not in offenders[name])
+        for name, bad in sorted(offenders.items()):
             net = board.FindNet(name).GetNetCode()
-            old = [t for t in board.GetTracks() if t.GetNetCode() == net and not t.IsLocked()]
-            if not old:
-                continue
-            saved = [_clone(t) for t in old]
-            for t in old:
-                board.RemoveNative(t)
-            made: list = []
-            if _join_pieces(board, net, net_width_mm(board, name), made):
-                moved += 1
-                continue
-            for t in made:
-                board.RemoveNative(t)
-            for t in saved:
-                board.Add(t)
+            w = net_width_mm(board, name)
+            whole = [t for t in board.GetTracks() if t.GetNetCode() == net and not t.IsLocked()]
+            for old in ([t for t in bad if not t.IsLocked()], whole):
+                if not old:
+                    continue
+                saved = [_clone(t) for t in old]
+                for t in old:
+                    board.RemoveNative(t)
+                made: list = []
+                if _join_pieces(board, net, w, made):
+                    prune_dangling(board)
+                    moved += 1
+                    break
+                for t in made:
+                    board.RemoveNative(t)
+                for t in saved:
+                    board.Add(t)
         if not moved:
             break
-    return sorted(clock_violations(board))
+    return sorted(set(clock_violations(board)) | set(thin_power(board)))
 
 
 def bridge_gnd(board, rounds: int = 12) -> int:
