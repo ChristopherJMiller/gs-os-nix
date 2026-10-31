@@ -137,10 +137,10 @@ def test_carrier_board_is_four_layer_and_clean():
     assert "7628" in CARRIER_BOARD.read_text()
 
 
-def test_carrier_height_is_64_mm():
-    # the 4-layer attempt starts at 64 mm; 68 mm (P11) is the fallback
-    assert tomllib.loads(PLACEMENT.read_text())["board"]["height_mm"] == 64.0
-    assert ce.tab_geometry(pcbnew.LoadBoard(str(CARRIER_BOARD)))["height"] == pytest.approx(64.0)
+def test_carrier_height_is_68_mm():
+    # the 4-layer attempts: 64 mm first (5b attempts 1 and 2 did not close), 68 mm (P11) after
+    assert tomllib.loads(PLACEMENT.read_text())["board"]["height_mm"] == 68.0
+    assert ce.tab_geometry(pcbnew.LoadBoard(str(CARRIER_BOARD)))["height"] == pytest.approx(68.0)
 
 
 def test_project_file_matches_the_builder():

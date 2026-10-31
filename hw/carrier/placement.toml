@@ -30,6 +30,8 @@
 # Four layers (owner, 2026-10-31): the carrier is a 4-layer board (F.Cu, GND plane In1.Cu,
 # +3V3 plane In2.Cu, B.Cu), so the 64 mm attempt comes first again (Tasks 3+4's height) and
 # P11's 68 mm is the fallback if 64 does not close; only J1 moves between them.
+# Task 5b: two full routes at 64 mm left 15 and 13 nets open (the U1/U2/U5 to J2 bundle and
+# a few finger nets), so this is the 68 mm attempt.
 #
 # P14: R14 (the DIR pull) moved out of the U1-U4 channel to the 2 mm column between U1 and
 # U2 (beside U1 pin 1), so the channel carries only copper; nothing else of x 14-20, y 49-55
@@ -40,7 +42,7 @@
 
 [board]
 length_mm = 80.0
-height_mm = 64.0
+height_mm = 68.0
 
 [parts.C1]
 x = 70.463
