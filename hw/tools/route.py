@@ -10,10 +10,11 @@ BOARD is saved in place. Existing tracks and vias are dropped first, so a route 
 route; the zones and all else stay. Freerouting's output is not reproducible, which is why
 the routed board is committed: hw-drc (check_drc.py) is what ties it to the netlist.
 
-GND is routed like every other net, in the Power class, and the pours add to it. (Left to
-the pours alone, a GND pad that signal tracks have walled in is not connected, and so are
-the pieces of pour around it. Routed first or last, GND takes room from the signals or finds
-none; routed with them, the router trades the two.)
+The board has four copper layers (2026-10-31): In1.Cu is a solid GND plane and In2.Cu a +3V3
+plane. The 2-layer machinery for GND (outer pours, stitching vias, bridging vias, a narrow
+GND class) is gone. KiCad 10's DSN export writes In1.Cu and In2.Cu as `(type power)` layers
+with a `(plane GND ...)` and `(plane +3V3 ...)` entry each; prepare_dsn still drops those
+entries (a 2-layer step) and Task 5b decides what the router does with them.
 
 What is fixed in the DSN between pcbnew and freerouting (prepare_dsn):
 
@@ -233,27 +234,6 @@ def halo_wires(board, names: list[str]) -> str:
                 lines.append(f"(wire (path {layer} {w}  {um(p0.x)} {-um(p0.y)}  "
                              f"{um(p1.x)} {-um(p1.y)})(net {name})(type fix))")
     return "".join(f"    {l}\n" for l in lines)
-
-
-GND_ROUTE_UM = 250
-
-
-def narrow_gnd(dsn: str) -> str:
-    """GND stays a routed net (plan 1's lesson, P15) but in a class of its own, 0.25 mm wide
-    instead of the Power class's 0.5 mm: the pours carry the current (hw-drc exempts GND
-    from the power-width rule), and 0.5 mm GND tracks took so much room that the router
-    left twenty signal nets unrouted."""
-    m = re.search(r"\(class (Power[^\s]*)([^()]*)", dsn)
-    if not m or not re.search(r"(?<![\w+\-.])GND(?![\w+\-.])", m.group(2)):
-        return dsn
-    head = re.sub(r"(?<![\w+\-.])GND(?![\w+\-.])", "", m.group(2))
-    dsn = dsn[:m.start(2)] + head + dsn[m.end(2):]
-    block = (f"    (class Ground GND\n      (circuit\n        (use_via \"Via[0-1]_600:300_um\")\n"
-             f"      )\n      (rule\n        (width {GND_ROUTE_UM})\n        (clearance {ROUTER_CLEARANCE_UM})\n"
-             f"      )\n    )\n")
-    w = dsn.index("  (wiring")
-    close = dsn.rindex("  )", 0, w)
-    return dsn[:close] + block + dsn[close:]
 
 
 def restore_ses(ses: str, back: dict[str, str]) -> str:
@@ -968,174 +948,6 @@ def repair_clock_clearance(board, rounds: int = REPAIR_ROUNDS) -> list[str]:
     return sorted(set(clock_violations(board)) | set(thin_power(board)))
 
 
-def _gnd_via(board, pt) -> None:
-    """A tented GND via at `pt`."""
-    v = pcbnew.PCB_VIA(board)
-    v.SetPosition(pt)
-    v.SetViaType(pcbnew.VIATYPE_THROUGH)
-    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
-    v.SetWidth(pcbnew.FromMM(VIA_MM))
-    v.SetDrill(pcbnew.FromMM(VIA_DRILL_MM))
-    v.SetFrontTentingMode(pcbnew.TENTING_MODE_TENTED)
-    v.SetBackTentingMode(pcbnew.TENTING_MODE_TENTED)
-    v.SetNet(board.FindNet("GND"))
-    board.Add(v)
-
-
-def _edge_segments(board) -> list:
-    """The board outline as (x0, y0, x1, y1) segments in nm."""
-    outline = pcbnew.SHAPE_POLY_SET()
-    board.GetBoardPolygonOutlines(outline, False)
-    segs = []
-    for k in range(outline.OutlineCount()):
-        o = outline.Outline(k)
-        n = o.PointCount()
-        for i in range(n):
-            a, b = o.CPoint(i), o.CPoint((i + 1) % n)
-            segs.append((a.x, a.y, b.x, b.y))
-    return segs
-
-
-def _clear_of_edge(segs: list, pt) -> bool:
-    """Is a via at `pt` the board-edge clearance (and a little over) from every outline
-    segment `segs` (from _edge_segments)?"""
-    need = pcbnew.FromMM(EDGE_CLEARANCE_MM + VIA_MM / 2 + 0.05)
-    for x0, y0, x1, y1 in segs:
-        dx, dy = x1 - x0, y1 - y0
-        t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((pt.x - x0) * dx + (pt.y - y0) * dy)
-                                                    / (dx * dx + dy * dy)))
-        if math.hypot(pt.x - (x0 + t * dx), pt.y - (y0 + t * dy)) < need:
-            return False
-    return True
-
-
-BRIDGE_PAD_CLEARANCE_MM = 0.2      # a bridging via keeps this from every pad
-
-
-def bridge_gnd(board, rounds: int = 12) -> int:
-    """Each GND piece that is cut off from the rest (a pour fragment with its pads) gets a
-    via inside one of its fragments where the pour of the other layer is also present and
-    nothing else is near; the pours are refilled and it goes round again. Returns the
-    number of vias placed."""
-    gnd = board.FindNet("GND").GetNetCode()
-    placed = 0
-    for _ in range(rounds):
-        refill(board)
-        comps = _components(board, gnd)
-        if len(comps) < 2:
-            break
-        comps.sort(key=_size, reverse=True)
-        fills = _fills(board, gnd)
-        edge = _edge_segments(board)
-        grid = _Grid(board, 0, MIN_TRACK_MM, clearance_mm=BRIDGE_PAD_CLEARANCE_MM)
-        blocked = grid.via                  # courtyards are allowed: the via is tented
-        added = 0
-        for comp in comps[1:]:
-            spot = None
-            for layer, k, poly in comp["zone"]:
-                other = fills.get(pcbnew.B_Cu if layer == pcbnew.F_Cu else pcbnew.F_Cu)
-                if other is None:
-                    continue
-                bb = poly.Outline(k).BBox()
-                step = round(0.3 / RES_MM)
-                i0, j0 = (int(c) for c in grid.px(bb.GetLeft(), bb.GetTop()))
-                i1, j1 = (int(c) for c in grid.px(bb.GetRight(), bb.GetBottom()))
-                for j in range(max(j0, 0), min(j1, grid.h - 1) + 1, step):
-                    for i in range(max(i0, 0), min(i1, grid.w - 1) + 1, step):
-                        if blocked[j, i]:
-                            continue
-                        pt = grid.centre(i, j)
-                        if poly.Contains(pt, k) and other.Contains(pt) and _clear_of_edge(edge, pt):
-                            spot = pt
-                            break
-                    if spot:
-                        break
-                if spot:
-                    break
-            if spot:
-                _gnd_via(board, spot)
-                added += 1
-        placed += added
-        if not added:
-            break
-    refill(board)
-    return placed
-
-
-# --- GND stitching --------------------------------------------------------------------
-
-STITCH_PITCH_MM = 3.0              # <= 5 mm, the plan's limit
-STITCH_SEARCH_MM = 1.2             # how far from a grid point a via may be put to find room
-
-
-def _courtyards(grid: "_Grid", board) -> np.ndarray:
-    """Cells under any footprint's courtyard (front or back)."""
-    img, d = grid._new()
-    for fp in board.GetFootprints():
-        for layer in (pcbnew.F_CrtYd, pcbnew.B_CrtYd):
-            poly = fp.GetCourtyard(layer)
-            for k in range(poly.OutlineCount()):
-                o = poly.Outline(k)
-                d.polygon([grid.px(o.CPoint(i).x, o.CPoint(i).y) for i in range(o.PointCount())],
-                          fill=255)
-    return np.asarray(img, dtype=bool)
-
-
-def stitch_gnd(board, pitch_mm: float = STITCH_PITCH_MM) -> int:
-    """GND vias on a grid of `pitch_mm`, each moved a little to where there is room: not
-    in a keep-out, not near any pad, track or via of any net (GND's own included), not
-    under a courtyard, and inside the filled GND pour on both layers, so each joins the two.
-    Only in the bus region: from the middle of the module socket J2 (the band above it is
-    for the module and the silkscreen art) down to the fingers. The pours are refilled
-    first and after. Returns how many it placed."""
-    gnd = board.FindNet("GND").GetNetCode()
-    refill(board)
-    edge = _edge_segments(board)
-    grid = _Grid(board, 0, MIN_TRACK_MM)               # net 0: every pad and track is in the way
-    blocked = grid.via | _courtyards(grid, board)
-    pour = {}
-    for z in board.Zones():
-        if not z.GetIsRuleArea() and z.GetNetCode() == gnd:
-            for l in _LAYERS:
-                if z.IsOnLayer(l):
-                    pour[l] = z.GetFilledPolysList(l)
-    if set(pour) != set(_LAYERS):
-        raise SystemExit("stitch_gnd: GND has no pour on both layers")
-    box = board.GetBoardEdgesBoundingBox()
-    j2 = board.FindFootprintByReference("J2")
-    y_min = j2.GetPosition().y if j2 else box.GetTop()
-    step = round(0.4 / RES_MM)
-    reach = int(STITCH_SEARCH_MM / 0.4)
-    placed = []
-    nx, ny = int(_mm(box.GetWidth()) / pitch_mm) + 1, int(_mm(box.GetHeight()) / pitch_mm) + 1
-    offsets = sorted(((dx, dy) for dx in range(-reach, reach + 1) for dy in range(-reach, reach + 1)),
-                     key=lambda o: o[0] ** 2 + o[1] ** 2)
-    for gy in range(ny):
-        for gx in range(nx):
-            ci = int((gx * pitch_mm + pitch_mm / 2) / RES_MM)
-            cj = int((gy * pitch_mm + pitch_mm / 2) / RES_MM)
-            for dx, dy in offsets:
-                i, j = ci + dx * step, cj + dy * step
-                if grid.centre(i, j).y < y_min:
-                    continue
-                if not (0 <= i < grid.w and 0 <= j < grid.h) or blocked[j, i]:
-                    continue
-                pt = grid.centre(i, j)
-                if not all(pour[l].Contains(pt) for l in _LAYERS) or not _clear_of_edge(edge, pt):
-                    continue
-                if any((pt - q).EuclideanNorm() < _mm_to_nm(pitch_mm * 0.6) for q in placed):
-                    continue
-                _gnd_via(board, pt)
-                placed.append(pt)
-                break
-    refill(board)
-    return len(placed)
-
-
-def _mm_to_nm(v: float) -> float:
-    return v * 1e6
-
-
 # --- the run ----------------------------------------------------------------------------
 
 def run_freerouting(dsn: Path, ses: Path, passes: int, timeout_s: int, log: Path,
@@ -1154,7 +966,7 @@ def run_freerouting(dsn: Path, ses: Path, passes: int, timeout_s: int, log: Path
 
 def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | None = None,
           extra: list[str] = (), first: list[str] | None = None,
-          router=run_freerouting, stitch: bool = False, keep_locked: bool = False, keep_all: bool = False,
+          router=run_freerouting, keep_locked: bool = False, keep_all: bool = False,
           repair: bool = False) -> None:
     """Route `board` in place. `first` (net names; [] for the default set) are laid by the
     finisher before the router sees the board and locked, so the router keeps them as
@@ -1180,7 +992,7 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
             halos = halo_wires(b, names)
             i = dsn_text.index("(wiring") + len("(wiring\n")
             dsn_text = dsn_text[:i] + halos + dsn_text[i:]
-        text, back = prepare_dsn(narrow_gnd(dsn_text))
+        text, back = prepare_dsn(dsn_text)
         dsn.write_text(text)
         router(dsn, ses, passes, timeout_s, log, extra)
         if not ses.exists():
@@ -1193,13 +1005,9 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
         if repair:
             still = repair_clock_clearance(b)
             print(f"repair: clock clearance, still too near: {still or 'none'}")
-            print(f"repair: {bridge_gnd(b)} GND bridging vias")
         left = finish_unrouted(b)
         if repair:
             left += [f"{n}: too near a clock" for n in repair_clock_clearance(b)]
-            bridge_gnd(b)
-        if stitch:                      # last, into the room that is left: it walls nothing in
-            print(f"stitched {stitch_gnd(b)} GND vias")
         refill(b)
         pcbnew.SaveBoard(str(board), b)
     if left:
@@ -1219,18 +1027,14 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--keep-locked", action="store_true",
                     help="keep the locked tracks of the board (a first pass done before)")
     ap.add_argument("--keep-all", action="store_true",
-                    help="keep every track and via: the router continues a route (the GND "
-                    "stitching vias of a finished route are not kept: strip them first)")
+                    help="keep every track and via: the router continues a route")
     ap.add_argument("--repair", action="store_true",
-                    help="after the router: re-lay what runs too near a clock, bridge cut-off "
-                    "GND pieces, then finish")
-    ap.add_argument("--stitch", action="store_true",
-                    help="after routing, add GND stitching vias (a 4 mm grid) where there is room")
+                    help="after the router: re-lay what runs too near a clock, then finish")
     ap.add_argument("--router-args", default="", help="more arguments for freerouting")
     a = ap.parse_args(argv)
     first = None if a.first is None else [n for n in a.first.split(",") if n]
     route(a.board, a.passes, a.timeout, a.keep, extra=a.router_args.split(), first=first,
-          stitch=a.stitch, keep_locked=a.keep_locked,
+          keep_locked=a.keep_locked,
           keep_all=a.keep_all, repair=a.repair)
 
 

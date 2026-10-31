@@ -47,13 +47,13 @@ board: carrier
 
 # Route the carrier in two passes (minutes; the result is not reproducible, so the routed board
 # is committed): the clocks and the data bus first, by the A* finisher, locked; then Freerouting
-# for the rest; then GND stitching vias. Then the DRC and parity gate and the load gate on it
+# for the rest, then the repair passes. Then the DRC and parity gate and the load gate on it
 # (selftest first).
 # Starts from `board`'s placement; run `board` first after changing placement.toml, and `artwork` after.
 route PASSES="20":
     cd {{justfile_directory()}}/.. \
       && python3 hw/tools/route.py hw/carrier/carrier.kicad_pcb --passes {{PASSES}} \
-           --first --repair --stitch \
+           --first --repair \
       && python3 hw/tools/check_drc.py --selftest --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb \
       && python3 hw/tools/check_drc.py --netlist build/hw/carrier/carrier.net \

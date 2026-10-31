@@ -57,12 +57,95 @@ def test_outline_and_zones(tiny):
     board = pcbnew.LoadBoard(str(tiny))
     assert ce.problems_outline(board) == []
     zones = {z.GetZoneName(): z for z in board.Zones()}
-    assert {"GND_F", "GND_B", "BEVEL_KEEPOUT"} <= set(zones)
-    assert zones["GND_F"].GetNetname() == "GND" and zones["GND_F"].IsOnLayer(pcbnew.F_Cu)
-    assert zones["GND_B"].GetNetname() == "GND" and zones["GND_B"].IsOnLayer(pcbnew.B_Cu)
+    assert {"GND_IN1", "BEVEL_KEEPOUT"} <= set(zones)
+    # 4 layers: the ground plane is In1; there are no outer GND pours (changed from the
+    # 2-layer GND_F / GND_B pours)
+    assert "GND_F" not in zones and "GND_B" not in zones
+    assert zones["GND_IN1"].GetNetname() == "GND" and zones["GND_IN1"].IsOnLayer(pcbnew.In1_Cu)
     ra = zones["BEVEL_KEEPOUT"]
     assert ra.GetIsRuleArea() and ra.GetDoNotAllowTracks() and ra.GetDoNotAllowVias()
     assert "CERN-OHL-S-2.0" in tiny.read_text()
+
+
+# --- the 4-layer stackup (plan 1b amendment, 2026-10-31) -------------------------------
+
+def _zones_on(board, layer):
+    return [z for z in board.Zones() if z.IsOnLayer(layer) and not z.GetIsRuleArea()]
+
+
+def test_the_board_has_four_copper_layers(tiny):
+    board = pcbnew.LoadBoard(str(tiny))
+    assert board.GetCopperLayerCount() == 4
+    assert board.GetLayerName(pcbnew.In1_Cu) == "In1.Cu"
+    assert board.GetLayerName(pcbnew.In2_Cu) == "In2.Cu"
+
+
+def test_in1_is_a_power_layer_with_one_gnd_zone(tiny):
+    board = pcbnew.LoadBoard(str(tiny))
+    assert board.GetLayerType(pcbnew.In1_Cu) == pcbnew.LT_POWER
+    assert board.GetLayerType(pcbnew.In2_Cu) == pcbnew.LT_POWER
+    z = _zones_on(board, pcbnew.In1_Cu)
+    assert len(z) == 1 and z[0].GetNetname() == "GND"
+    assert not z[0].IsOnLayer(pcbnew.F_Cu) and not z[0].IsOnLayer(pcbnew.B_Cu)
+
+
+def test_no_outer_layer_gnd_pour(tiny):
+    board = pcbnew.LoadBoard(str(tiny))
+    for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
+        assert _zones_on(board, layer) == []
+
+
+def test_the_stackup_is_jlc04161h_7628(tiny):
+    text = tiny.read_text()
+    assert "(stackup" in text
+    for want in ('"In1.Cu"', '"In2.Cu"', "7628", "(epsilon_r 4.4)", '(copper_finish "ENIG")'):
+        assert want in text, want
+    # the prepreg is 0.2104 mm and the core 1.065 mm; the board is 1.6 mm
+    assert text.count("(thickness 0.2104)") == 2 and "(thickness 1.065)" in text
+    assert "(thickness 1.6)" in text
+    # the file loads and saves with the stackup kept
+    board = pcbnew.LoadBoard(str(tiny))
+    pcbnew.SaveBoard(str(tiny), board)
+    assert "7628" in tiny.read_text()
+
+
+def test_the_stackup_survives_an_update(tiny):
+    bb.build(FIX / "tiny.net", FIX / "tiny_placement.toml", tiny, update=True)
+    assert tiny.read_text().count("7628") >= 2
+    assert pcbnew.LoadBoard(str(tiny)).GetCopperLayerCount() == 4
+
+
+def test_inner_zones_stay_out_of_the_finger_tab(tiny):
+    board = pcbnew.LoadBoard(str(tiny))
+    t = ce.tab_geometry(board)
+    for layer in (pcbnew.In1_Cu, pcbnew.In2_Cu):
+        for z in _zones_on(board, layer):
+            assert mm(z.GetBoundingBox().GetBottom()) <= t["body_bottom"] + 1e-6
+    assert ce.problems_inner(board) == []
+
+
+def test_carrier_board_is_four_layer_and_clean():
+    board = pcbnew.LoadBoard(str(CARRIER_BOARD))
+    assert board.GetCopperLayerCount() == 4
+    assert board.GetLayerType(pcbnew.In1_Cu) == pcbnew.LT_POWER
+    gnd = _zones_on(board, pcbnew.In1_Cu)
+    assert [(z.GetNetname(), z.GetZoneName()) for z in gnd] == [("GND", "GND_IN1")]
+    v33 = _zones_on(board, pcbnew.In2_Cu)
+    assert [(z.GetNetname(), z.GetZoneName()) for z in v33] == [("+3V3", "V3V3_IN2")]
+    assert _zones_on(board, pcbnew.F_Cu) == [] and _zones_on(board, pcbnew.B_Cu) == []
+    assert ce.problems_inner(board) == []
+    assert "7628" in CARRIER_BOARD.read_text()
+
+
+def test_carrier_height_is_64_mm():
+    # the 4-layer attempt starts at 64 mm; 68 mm (P11) is the fallback
+    assert tomllib.loads(PLACEMENT.read_text())["board"]["height_mm"] == 64.0
+    assert ce.tab_geometry(pcbnew.LoadBoard(str(CARRIER_BOARD)))["height"] == pytest.approx(64.0)
+
+
+def test_project_file_matches_the_builder():
+    import json
+    assert json.loads((ROOT / "hw/carrier/carrier.kicad_pro").read_text()) == bb.project_json()
 
 
 def test_unplaced_part_is_error(tmp_path):
@@ -138,7 +221,8 @@ def test_carrier_board_is_clean(carrier_board):
 
 
 @pytest.mark.parametrize("name", ["move_pad_13", "flip_J1_to_back", "stretch_to_180mm",
-                                  "track_in_bevel"])
+                                  "track_in_bevel", "inner_copper_in_tab",
+                                  "inner_zone_to_edge", "inner_via_in_tab"])
 def test_edge_mutation_fails(name, carrier_board):
     assert name in ce.MUTATIONS
     ce.MUTATIONS[name](carrier_board)

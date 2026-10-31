@@ -40,7 +40,7 @@ from hw.tools.netlist import Netlist, load
 NECK_MAX_MM = 1.5       # a neck is short: a pad escape or a jog, never a run
 NECK_MIN_MM = 0.3       # and even a neck stays this wide, for the 3V3/5V rail current
 WIDTH_TOL_MM = 0.001    # 1 um: KiCad stores nm, so 0.3004 passes and 0.2989 fails
-# GND is exempt: its pours carry the current; the routed GND tracks are only stitching.
+# GND is exempt: the In1.Cu plane carries the current; any outer GND track is a pad escape.
 WIDTH_EXEMPT = {"GND"}
 
 

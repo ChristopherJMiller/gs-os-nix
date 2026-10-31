@@ -5,8 +5,8 @@
     python3 hw/tools/check_load.py --selftest                       # HW LOAD SELFTEST OK
 
 A card may load each slot pin with at most 15 pF (and two LS loads). The estimate for one
-J1 net is its routed copper, in mm, times PF_PER_MM, plus the capacitance of every IC pin
-on it, from hw/carrier/pin_capacitance.toml (datasheet Ci for an input, Cio for an I/O or
+J1 net is its routed copper, in mm, times PF_PER_MM, plus VIA_PF for every via on it, plus
+the capacitance of every IC pin on it, from hw/carrier/pin_capacitance.toml (datasheet Ci for an input, Cio for an I/O or
 output pin; a pin the table does not list, a part value it lacks, a J1 net with no copper
 on the board, or a part that is not a U, R, C or J is a failure, never a silent zero). The
 SAFE and UART headers count 1 pF a pin, other passives 0. Apple's other limit, two LS loads,
@@ -18,12 +18,25 @@ tracks, by the net name KiCad gives them. A 0 ohm resistor (value "0", "0R" or "
 joins its two nets: the clock fingers reach their 2G17s through one, and the copper and pins
 beyond it are the same load. Any other resistor ends the walk. The power nets are exempt.
 
+Copper and vias, 4-layer stackup (JLCPCB JLC04161H-7628, hw/carrier/pin_capacitance.toml):
+
+* Outer-layer microstrip, IPC-2141: C0 = 0.67 (er + 1.41) / ln(5.98 h / (0.8 w + t)) pF/in,
+  with er 4.4, h 0.2104 mm (7628 prepreg to the In1.Cu plane), w 0.15 mm, t 0.035 mm. That is
+  MICROSTRIP_PF_PER_MM = 0.0732 pF/mm (0.0816 for the 0.2 mm clock width). It is under the
+  0.10 pF/mm the 2-layer estimate used, so PF_PER_MM stays 0.10, the larger figure.
+* A via through the planes: Howard Johnson, High-Speed Digital Design, C = 1.41 er T D1 /
+  (D2 - D1) pF with T, D1, D2 in inches: T the board thickness (1.6 mm), D1 the via pad
+  (0.6 mm), D2 the antipad in the planes (0.6 + 2 x 0.2 mm clearance = 1.0 mm), er 4.4. That is
+  VIA_PF = 0.586 pF a via. The formula is applied once per via, not once per plane it crosses;
+  counting each of the two planes would double it (1.17 pF a via).
+
 The selftest runs on a small synthetic board that passes (the routed carrier does not, until
-its re-route), and plants three faults on fresh copies of it; each must fail with its own
+its re-route), and plants faults on fresh copies of it; each must fail with its own
 message.
 """
 import argparse
 import copy
+import math
 import sys
 from pathlib import Path
 
@@ -36,16 +49,42 @@ if __package__ in (None, ""):
 from hw.tools.netlist import Netlist, PartInfo, load, through
 
 LIMIT_PF = 15.0
-PF_PER_MM = 0.10
 HEADER_PF = 1.0
 J1 = "J1"
 POWER_NETS = ("+5V_SLOT", "GND", "-12V_SLOT", "-5V_SLOT", "+12V_SLOT")
 ZERO_OHM = ("0", "0R", "0Ω", "0 ohm", "0 Ω")
 DEFAULT_TABLE = Path(__file__).resolve().parents[1] / "carrier" / "pin_capacitance.toml"
+MM_PER_IN = 25.4
+
+
+def microstrip_pf_per_mm(er: float, h_mm: float, w_mm: float, t_mm: float) -> float:
+    """IPC-2141 surface microstrip capacitance, pF per mm: 0.67 (er + 1.41) / ln(5.98 h /
+    (0.8 w + t)) pF per inch. Valid for 0.1 < w/h < 2.0."""
+    return 0.67 * (er + 1.41) / math.log(5.98 * h_mm / (0.8 * w_mm + t_mm)) / MM_PER_IN
+
+
+def via_pf(er: float, t_mm: float, d1_mm: float, d2_mm: float) -> float:
+    """Johnson's via capacitance through a plane's antipad, pF: 1.41 er T D1 / (D2 - D1), all
+    lengths in inches (T the board thickness, D1 the via pad, D2 the antipad)."""
+    t, d1, d2 = t_mm / MM_PER_IN, d1_mm / MM_PER_IN, d2_mm / MM_PER_IN
+    return 1.41 * er * t * d1 / (d2 - d1)
+
+
+def _model(path: Path = DEFAULT_TABLE) -> dict:
+    return tomllib.loads(Path(path).read_text())
+
+
+_M = _model()
+MICROSTRIP_PF_PER_MM = microstrip_pf_per_mm(_M["stackup"]["er"], _M["stackup"]["prepreg_mm"],
+                                            _M["stackup"]["trace_mm"], _M["stackup"]["copper_mm"])
+VIA_PF = via_pf(_M["stackup"]["er"], _M["stackup"]["board_mm"], _M["via"]["pad_mm"],
+                _M["via"]["antipad_mm"])
+# The 2-layer estimate was 0.10 pF/mm; keep it while the stackup's figure is no larger.
+PF_PER_MM = max(0.10, MICROSTRIP_PF_PER_MM)
 
 
 def load_caps(path: Path = DEFAULT_TABLE) -> dict:
-    return tomllib.loads(Path(path).read_text())["parts"]
+    return _model(path)["parts"]
 
 
 def _is_ic(ref: str) -> bool:
@@ -116,13 +155,24 @@ def _pin_pf(caps: dict, value: str, pin: str) -> float | None:
     return None
 
 
-def table(board, nl: Netlist, caps: dict, pf_per_mm: float = PF_PER_MM) -> list[dict]:
-    """One row per J1 signal net: length (mm), copper and pins (pF), total, the number of IC
+def _via_count(board) -> dict[str, int]:
+    n: dict[str, int] = {}
+    for t in board.GetTracks():
+        if t.Type() == pcbnew.PCB_VIA_T:
+            name = _norm(t.GetNetname())
+            n[name] = n.get(name, 0) + 1
+    return n
+
+
+def table(board, nl: Netlist, caps: dict, pf_per_mm: float = PF_PER_MM,
+          via_pf_each: float = VIA_PF) -> list[dict]:
+    """One row per J1 signal net: length (mm), copper, vias and pins (pF), total, the number of IC
     and header pins, whether 0 ohm parts joined other nets to it, and the faults found:
     `nocopper` (the net itself has no track on the board), `missing` ((ref, value) with no
     table entry), `unlisted` ((ref, pin, value) not in the part's pin lists) and `unknown`
     (refs of an unrecognised kind of part)."""
     mm = _copper_mm(board)
+    nvias = _via_count(board)
     rows = []
     for net in j1_nets(nl):
         group = _group(nl, net)
@@ -151,8 +201,11 @@ def table(board, nl: Netlist, caps: dict, pf_per_mm: float = PF_PER_MM) -> list[
                 elif kind == "unknown":
                     unknown.add(ref)
         copper = length * pf_per_mm
+        vias = sum(nvias.get(_norm(m), 0) for m in group)
+        vpf = vias * via_pf_each
         rows.append({"net": net, "length": length, "copper": copper, "pins": pins,
-                     "total": copper + pins, "ic_pins": n_ic, "header_pins": n_hdr,
+                     "vias": vias, "via_pf": vpf,
+                     "total": copper + vpf + pins, "ic_pins": n_ic, "header_pins": n_hdr,
                      "joined": len(group) > 1,
                      "nocopper": mm.get(_norm(net), 0.0) <= 0.0,
                      "missing": sorted(missing), "unlisted": unlisted,
@@ -161,9 +214,9 @@ def table(board, nl: Netlist, caps: dict, pf_per_mm: float = PF_PER_MM) -> list[
 
 
 def problems(board, nl: Netlist, caps: dict, limit_pf: float = LIMIT_PF,
-             pf_per_mm: float = PF_PER_MM) -> list[str]:
+             pf_per_mm: float = PF_PER_MM, via_pf_each: float = VIA_PF) -> list[str]:
     out, reported = [], set()
-    for r in table(board, nl, caps, pf_per_mm):
+    for r in table(board, nl, caps, pf_per_mm, via_pf_each):
         net = r["net"]
         if r["nocopper"]:
             out.append(f"{net}: no copper on the board (no net of that name, or no tracks "
@@ -185,16 +238,17 @@ def problems(board, nl: Netlist, caps: dict, limit_pf: float = LIMIT_PF,
         if r["total"] > limit_pf + 1e-9:
             out.append(f"{net}: {r['total']:.1f} pF over the {limit_pf:.1f} pF limit "
                        f"(copper {r['copper']:.1f} pF over {r['length']:.1f} mm + "
+                       f"{r['vias']} vias {r['via_pf']:.1f} pF + "
                        f"{r['ic_pins']} IC pins {r['pins']:.1f} pF)")
     return out
 
 
 def print_table(rows: list[dict], limit_pf: float = LIMIT_PF) -> None:
-    print(f"{'net':<16}{'mm':>8}{'copper':>9}{'pins':>8}{'total':>8}{'limit':>8}")
+    print(f"{'net':<16}{'mm':>8}{'copper':>9}{'vias':>6}{'via pF':>8}{'pins':>8}{'total':>8}{'limit':>8}")
     for r in sorted(rows, key=lambda r: (-r["total"], r["net"])):
         flag = "  FAIL" if r["total"] > limit_pf + 1e-9 else ""
-        print(f"{r['net']:<16}{r['length']:8.1f}{r['copper']:9.1f}{r['pins']:8.1f}"
-              f"{r['total']:8.1f}{limit_pf:8.1f}{flag}")
+        print(f"{r['net']:<16}{r['length']:8.1f}{r['copper']:9.1f}{r['vias']:6d}"
+              f"{r['via_pf']:8.1f}{r['pins']:8.1f}{r['total']:8.1f}{limit_pf:8.1f}{flag}")
 
 
 # --- the synthetic board and the selftest's planted faults --------------------------
@@ -215,6 +269,19 @@ def _track(board, net: str, mm: float, y: float) -> None:
     t.SetLayer(pcbnew.F_Cu)
     t.SetNet(ni)
     board.Add(t)
+
+
+def _via(board, net: str, x: float, y: float) -> None:
+    ni = board.FindNet(net)
+    if ni is None:
+        ni = pcbnew.NETINFO_ITEM(board, net)
+        board.Add(ni)
+    v = pcbnew.PCB_VIA(board)
+    v.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(x), pcbnew.FromMM(y)))
+    v.SetWidth(pcbnew.FromMM(0.6))
+    v.SetDrill(pcbnew.FromMM(0.3))
+    v.SetNet(ni)
+    board.Add(v)
 
 
 def synthetic(caps: dict):
@@ -294,6 +361,11 @@ def _unknown_part(board, nl, caps):
     nl.nets["SLOT_D1"].add(("Q1", "1"))
 
 
+def _five_vias(board, nl, caps):
+    for k in range(5):                      # 14.5 pF without them, 17.4 with
+        _via(board, "SLOT_D1", 10.0 + k, 2.0)
+
+
 def _no_ic(board, nl, caps):
     nl.nets["SLOT_D1"] = {("J1", "2")}
 
@@ -307,6 +379,7 @@ PLANT = {
     "2G17 output pin on SLOT_D1": _output_pin,
     "unknown part Q1 on SLOT_D1": _unknown_part,
     "no IC pin on SLOT_D1": _no_ic,
+    "5 vias on SLOT_D1": _five_vias,
 }
 # name -> text its failure must contain; each names the cause and no other fault's message has it
 EXPECT = {
@@ -318,6 +391,7 @@ EXPECT = {
     "2G17 output pin on SLOT_D1": "U6.4 (74LVC2G17) on SLOT_D1 is not in the pin table",
     "unknown part Q1 on SLOT_D1": "Q1: unknown part",
     "no IC pin on SLOT_D1": "SLOT_D1: no IC or header pin",
+    "5 vias on SLOT_D1": "+ 5 vias 2.9 pF",
 }
 
 

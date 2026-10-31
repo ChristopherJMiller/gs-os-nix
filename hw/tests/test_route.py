@@ -227,14 +227,14 @@ def test_first_nets_are_routed_first_and_locked(tmp_path):
 
 
 def test_gnd_stays_in_the_dsn_as_a_routed_net():
-    """P15 (plan 1's lesson): GND is routed like every other net and the pours add to it;
-    left to the pours alone, a GND pad that tracks have walled in is not connected."""
+    """P15 (plan 1's lesson): GND's pins stay in the DSN's network. With the In1.Cu plane the
+    router fans them out to it by vias instead of laying tracks, but it has to be told which."""
     out, _ = route.prepare_dsn(DSN)
     assert "(net GND" in out and "U2-2" in out
     assert not hasattr(route, "drop_net")
 
 
-# --- the repair passes: clock clearance, and GND fragments --------------------------------
+# --- the repair passes: clock clearance --------------------------------
 
 def _track(b, net, layer, a, c, w=0.15):
     from hw.tests.test_finish import v
@@ -290,39 +290,6 @@ def test_repair_leaves_locked_tracks_alone(tmp_path):
     assert route.clock_violations(b) == {"N"}
 
 
-def _gnd_board(tmp_path):
-    """GND pours on both layers; a wall of N on the front splits the front pour in two, and
-    the right half holds a GND pad. The back pour is whole."""
-    from hw.tests.test_finish import make_board, W, H
-    b = make_board(tmp_path, {"N": [(12, -2), (12, H + 2)], "GND": [(3, 6), (21, 6)]})
-    _track(b, "N", pcbnew.F_Cu, (12, -2), (12, H + 2), 0.3)
-    for layer, name in ((pcbnew.F_Cu, "GND_F"), (pcbnew.B_Cu, "GND_B")):
-        z = pcbnew.ZONE(b)
-        ls = pcbnew.LSET()
-        ls.AddLayer(layer)
-        z.SetLayerSet(ls)
-        z.SetZoneName(name)
-        z.Outline().NewOutline()
-        for x, y in ((0, 0), (W, 0), (W, H), (0, H)):
-            z.Outline().Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
-        z.SetNet(b.FindNet("GND"))
-        z.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)
-        b.Add(z)
-    route.refill(b)
-    return b
-
-
-def test_bridge_gnd_puts_a_via_in_the_cut_off_fragment(tmp_path):
-    b = _gnd_board(tmp_path)
-    gnd = b.FindNet("GND").GetNetCode()
-    assert len(route._components(b, gnd)) == 3     # front left, front right, the back pour
-    placed = route.bridge_gnd(b)
-    assert 2 <= placed <= 3                         # one per cut-off piece, a round or two
-    assert len(route._components(b, gnd)) == 1
-    vias = [t for t in b.GetTracks() if t.GetClass() == "PCB_VIA"]
-    assert len(vias) == placed and all(x.GetNetname() == "GND" for x in vias)
-
-
 def test_prune_dangling_takes_a_spur_and_keeps_a_joined_track(tmp_path):
     from hw.tests.test_finish import make_board
     b = make_board(tmp_path, {"N": [(3, 6), (21, 6)], "GND": [(22, 11)]})
@@ -362,12 +329,12 @@ def test_a_rule_area_that_restricts_nothing_does_not_block_the_finisher(tmp_path
     assert route._join_pieces(b, b.FindNet("N").GetNetCode(), 0.15, [])
 
 
-def test_narrow_gnd_puts_gnd_in_its_own_narrower_class():
-    dsn = DSN.replace("(class kicad_default SLOT_D3 slot_d3 GND",
-                      "(class Power,Default +5V GND")
-    dsn = dsn.replace("      (rule (width 150))\n    )\n  )\n)", "      (rule (width 500))\n    )\n  )\n  (wiring\n  )\n)")
-    out = route.narrow_gnd(dsn)
-    assert "(class Ground GND" in out and "(width 250)" in out
-    power = out[out.index("(class Power"):out.index("(rule", out.index("(class Power"))]
-    assert "GND" not in power and "+5V" in power
-    assert out.count("(") == out.count(")")
+def test_the_two_layer_ground_machinery_is_retired():
+    """4 layers (2026-10-31): the planes carry GND, so the outer pours' stitching, bridging
+    and the narrow GND class are gone, and so is route.py's --stitch flag and the justfile's."""
+    for name in ("stitch_gnd", "bridge_gnd", "narrow_gnd", "_gnd_via", "STITCH_PITCH_MM"):
+        assert not hasattr(route, name), name
+    root = Path(__file__).resolve().parents[2]
+    assert "--stitch" not in (root / "hw/justfile").read_text()
+    with pytest.raises(SystemExit):
+        route.main(["x.kicad_pcb", "--stitch"])

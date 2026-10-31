@@ -113,7 +113,7 @@ def test_each_planted_fault_trips_with_its_own_message(name, caps):
 
 
 def test_the_messages_differ():
-    assert len(set(cl.EXPECT.values())) == len(cl.EXPECT) >= 8
+    assert len(set(cl.EXPECT.values())) == len(cl.EXPECT) >= 9
 
 
 def test_an_unrouted_board_fails_every_net(caps):
@@ -134,3 +134,56 @@ def test_slash_prefixed_names_match_on_both_sides(caps):
 def test_cli_selftest(capsys):
     assert cl.main(["--selftest"]) == 0
     assert "HW LOAD SELFTEST OK" in capsys.readouterr().out
+
+
+# --- the via term (4 layers, plan 1b amendment) -----------------------------------------
+
+def test_stackup_numbers_come_from_the_table_and_are_cited():
+    import tomllib
+    t = tomllib.loads(TABLE.read_text())
+    for sec in ("stackup", "via"):
+        assert t[sec]["source"], sec
+    # the table's via and plane numbers are the board builder's
+    from hw.tools import build_board as bb
+    assert t["via"]["pad_mm"] == bb.VIA_MM
+    assert t["via"]["antipad_mm"] == pytest.approx(bb.VIA_MM + 2 * bb.INNER_CLEARANCE_MM)
+    assert t["stackup"]["er"] == 4.4 and t["stackup"]["prepreg_mm"] == 0.2104
+
+
+def test_microstrip_pf_per_mm_follows_ipc_2141():
+    # C0 = 0.67 (er + 1.41) / ln(5.98 h / (0.8 w + t)) pF/in, h = 0.2104, w = 0.15, t = 0.035
+    got = cl.microstrip_pf_per_mm(er=4.4, h_mm=0.2104, w_mm=0.15, t_mm=0.035)
+    assert got == pytest.approx(0.0732, abs=0.0005)
+    assert cl.MICROSTRIP_PF_PER_MM == pytest.approx(got, abs=1e-9)
+    # 0.10 stays while the computed figure is below it, and the figure is recorded
+    assert cl.PF_PER_MM == 0.10 and cl.MICROSTRIP_PF_PER_MM <= 0.10
+    assert "IPC-2141" in cl.__doc__ and "pF/mm" in cl.__doc__
+
+
+def test_via_capacitance_follows_the_standard_formula():
+    # C = 1.41 er T D1 / (D2 - D1) pF, inches: T = 1.6 mm, D1 = 0.6 mm, D2 = 1.0 mm
+    got = cl.via_pf(er=4.4, t_mm=1.6, d1_mm=0.6, d2_mm=1.0)
+    t, d1, d2 = 1.6 / 25.4, 0.6 / 25.4, 1.0 / 25.4
+    assert got == pytest.approx(1.41 * 4.4 * t * d1 / (d2 - d1))
+    assert got == pytest.approx(0.586, abs=0.002)
+    assert cl.VIA_PF == pytest.approx(got, abs=1e-9)
+    assert "Johnson" in cl.__doc__
+
+
+def test_vias_on_a_net_and_its_zero_ohm_twin_are_counted(caps):
+    board, nl = cl.synthetic(caps)
+    for net, n in (("SLOT_D0", 2), ("ph0_in", 1)):
+        for k in range(n):
+            cl._via(board, net, 5.0 + k, 20.0)
+    rows = {r["net"]: r for r in cl.table(board, nl, caps)}
+    assert rows["SLOT_D0"]["vias"] == 2 and rows["SLOT_D0"]["via_pf"] == pytest.approx(2 * cl.VIA_PF)
+    assert rows["SLOT_D0"]["total"] == pytest.approx(3.0 + 9.5 + 2 * cl.VIA_PF)
+    assert rows["SLOT_PH0"]["vias"] == 1          # ph0_in is joined to SLOT_PH0 by a 0 ohm part
+
+
+def test_the_via_plant_fails_only_through_its_vias(caps):
+    board, nl = cl.synthetic(caps)
+    assert cl.problems(board, nl, caps) == []     # without the vias, D1 is within the limit
+    found = _planted("5 vias on SLOT_D1", caps)
+    assert len(found) == 1 and cl.EXPECT["5 vias on SLOT_D1"] in found[0], found
+    assert "IC pins" in found[0]

@@ -9,7 +9,10 @@ DRC can see it: the schematic is right, and the board's own checks only compare 
 board to itself. So everything here is measured on the placed board (pcbnew), not on
 the footprint file or the schematic: the outline against slotgeom, J1's pads (side,
 pitch, opposite pairs, pin 1 toward the front, which pins carry power) and the bevel
-keepout. The selftest plants four faults on a copy of the board; each must be found.
+keepout. The board has four copper layers: no copper of In1.Cu or In2.Cu (zones, vias, through
+pads) may lie below the tab's top edge, and none within EDGE_MIN_MM of the board edge, so
+the bevel never exposes an inner layer. The selftest plants seven faults on a copy of the
+board; each must be found.
 """
 import argparse
 import sys
@@ -24,6 +27,8 @@ from hw.tools import slotgeom as g
 
 TOL_MM = 0.05               # outline and finger geometry
 EDGE_TOL_MM = 0.001         # "is this copper inside the keepout" (1 um)
+EDGE_MIN_MM = 0.5           # inner copper keeps this from every board edge (build_board's)
+INNER = (pcbnew.In1_Cu, pcbnew.In2_Cu)
 J1 = "J1"
 # What the netlist says the Apple II slot's power pins are (TN28): pin -> net.
 POWER_PINS = {25: "+5V_SLOT", 26: "GND", 33: "-12V_SLOT", 34: "-5V_SLOT", 50: "+12V_SLOT"}
@@ -192,8 +197,65 @@ def problems_bevel(board) -> list[str]:
     return out
 
 
+# --- inner copper -------------------------------------------------------------------
+
+def _inner_edge_gap(t: dict, x: float, y: float) -> float:
+    """How far (x, y), a point inside the body, is from the body's own edges. The tab's
+    top edge is not a board edge where the tab joins the body, so inside the tab's x range
+    the lower limit is the tab's top, which problems_inner checks apart."""
+    gaps = [x - t["xmin"], t["xmax"] - x, y - t["top"]]
+    if not (t["tab_l"] <= x <= t["tab_r"]):
+        gaps.append(t["body_bottom"] - y)
+    return min(gaps)
+
+
+def problems_inner(board) -> list[str]:
+    """No copper on In1.Cu / In2.Cu below the tab's top edge, none nearer a board edge than
+    EDGE_MIN_MM: zones (every outline vertex), vias (their pad circle), through-hole pads."""
+    t = tab_geometry(board)
+    if t is None:
+        return []
+    out = []
+    line = t["body_bottom"] + EDGE_TOL_MM
+    for z in board.Zones():
+        if z.GetIsRuleArea() or not any(z.IsOnLayer(L) for L in INNER):
+            continue
+        name = z.GetZoneName() or z.GetNetname()
+        poly = z.Outline()
+        for i in range(poly.OutlineCount()):
+            for j in range(poly.COutline(i).PointCount()):
+                v = poly.COutline(i).CPoint(j)
+                x, y = _mm(v.x), _mm(v.y)
+                if y > line:
+                    out.append(f"inner copper: zone '{name}' reaches y {y:.2f} mm, below the "
+                               f"tab's top edge (y {t['body_bottom']:.2f} mm)")
+                    break
+                if _inner_edge_gap(t, x, y) < EDGE_MIN_MM - EDGE_TOL_MM:
+                    out.append(f"inner copper: zone '{name}' comes within "
+                               f"{_inner_edge_gap(t, x, y):.2f} mm of the board edge at "
+                               f"({x:.2f}, {y:.2f}); the edge clearance is {EDGE_MIN_MM} mm")
+                    break
+    for item in board.GetTracks():
+        if item.Type() != pcbnew.PCB_VIA_T:
+            continue
+        x, y, r = _mm(item.GetX()), _mm(item.GetY()), _mm(item.GetWidth(pcbnew.F_Cu)) / 2
+        if y + r > line:
+            out.append(f"inner copper: via at ({x:.2f}, {y:.2f}) has its inner pad below the "
+                       f"tab's top edge")
+        elif _inner_edge_gap(t, x, y) - r < EDGE_MIN_MM - EDGE_TOL_MM:
+            out.append(f"inner copper: via at ({x:.2f}, {y:.2f}) is within {EDGE_MIN_MM} mm of "
+                       "the board edge on the inner layers")
+    for fp in board.GetFootprints():
+        for p in fp.Pads():
+            if p.HasHole() and _mm(p.GetBoundingBox().GetBottom()) > line:
+                out.append(f"inner copper: through-hole pad {fp.GetReference()}.{p.GetNumber()} "
+                           "has its inner pad below the tab's top edge")
+    return out
+
+
 def problems(board) -> list[str]:
-    return problems_outline(board) + problems_fingers(board) + problems_bevel(board)
+    return (problems_outline(board) + problems_fingers(board) + problems_bevel(board)
+            + problems_inner(board))
 
 
 # --- the selftest's planted faults --------------------------------------------------
@@ -235,11 +297,55 @@ def track_in_bevel(board) -> None:
     board.Add(tr)
 
 
+def _inner_zone(board, layer, rect, name):
+    z = pcbnew.ZONE(board)
+    ls = pcbnew.LSET()
+    ls.AddLayer(layer)
+    z.SetLayerSet(ls)
+    z.SetZoneName(name)
+    (x0, y0), (x1, y1) = rect
+    z.Outline().NewOutline()
+    for x, y in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]:
+        z.Outline().Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+    board.Add(z)
+
+
+def inner_copper_in_tab(board) -> None:
+    """A copper pour on In2.Cu over the tab, down toward the tab's bottom edge."""
+    t = tab_geometry(board)
+    _inner_zone(board, pcbnew.In2_Cu, ((t["tab_l"] + 1, t["body_bottom"] - 2),
+                                      (t["tab_r"] - 1, t["body_bottom"] + t["depth"] - 3)),
+                "PLANT_TAB")
+
+
+def inner_zone_to_edge(board) -> None:
+    """An In1.Cu pour out to 0.1 mm from the front edge."""
+    t = tab_geometry(board)
+    _inner_zone(board, pcbnew.In1_Cu, ((t["xmin"] + 0.1, t["top"] + 5),
+                                      (t["xmin"] + 10, t["top"] + 15)), "PLANT_EDGE")
+
+
+def inner_via_in_tab(board) -> None:
+    """A via in the tab: its inner pads are in the tab."""
+    t = tab_geometry(board)
+    v = pcbnew.PCB_VIA(board)
+    v.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM((t["tab_l"] + t["tab_r"]) / 2),
+                                  pcbnew.FromMM(t["body_bottom"] + 1.5)))
+    v.SetWidth(pcbnew.FromMM(0.6))
+    v.SetDrill(pcbnew.FromMM(0.3))
+    board.Add(v)
+
+
 MUTATIONS = {"move_pad_13": move_pad_13, "flip_J1_to_back": flip_J1_to_back,
-             "stretch_to_180mm": stretch_to_180mm, "track_in_bevel": track_in_bevel}
+             "stretch_to_180mm": stretch_to_180mm, "track_in_bevel": track_in_bevel,
+             "inner_copper_in_tab": inner_copper_in_tab,
+             "inner_zone_to_edge": inner_zone_to_edge, "inner_via_in_tab": inner_via_in_tab}
 # The message each planted fault must produce (a substring of one of the problems).
 EXPECT = {"move_pad_13": "pitch", "flip_J1_to_back": "J1 is on B.Cu",
-          "stretch_to_180mm": "outline length", "track_in_bevel": "bevel keepout"}
+          "stretch_to_180mm": "outline length", "track_in_bevel": "bevel keepout",
+          "inner_copper_in_tab": "zone 'PLANT_TAB' reaches y",
+          "inner_zone_to_edge": "zone 'PLANT_EDGE' comes within",
+          "inner_via_in_tab": "inner pad below the tab's top edge"}
 
 
 def selftest(path: Path) -> int:
