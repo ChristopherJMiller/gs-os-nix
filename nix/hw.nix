@@ -157,6 +157,14 @@ in
         hw/carrier/carrier.kicad_pcb
     '' [ "^HW DRC SELFTEST OK" "^HW DRC OK" ];
 
+    # Apple's slot-pin load rule (HWR 5-13): every J1 net's routed copper (0.1 pF/mm) plus
+    # the input capacitance of every IC pin on it stays within 15 pF.
+    hw-load = hwCheck "load" ''
+      python3 hw/tools/check_load.py --selftest
+      python3 hw/tools/check_load.py --netlist ${carrierBuild}/carrier.net \
+        hw/carrier/carrier.kicad_pcb
+    '' [ "^HW LOAD SELFTEST OK" "^HW LOAD OK" ];
+
     # Every part that is ordered has an LCSC number (J1, the edge fingers, is the one
     # exemption), on the board and in the netlist.
     hw-bom = hwCheck "bom" ''

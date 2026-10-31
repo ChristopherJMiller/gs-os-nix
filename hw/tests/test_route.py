@@ -148,3 +148,87 @@ def test_parity_finds_a_pad_on_the_wrong_net(tmp_path):
                  if n.GetNetCode() not in (0, pad.GetNetCode()))
     pad.SetNet(other)
     assert any("parity:" in p and "netlist says" in p for p in cd.problems_parity(board, nl))
+
+
+# --- the first pass: clocks and the data bus, laid by the finisher, locked, kept by the router
+
+def _first_board(tmp_path):
+    """A 24 x 12 mm board: a clock CLK across the middle, a data net D1 above it, and X
+    for the router to do (below). CLK is in a Clock class of 0.2 mm / 0.4 mm clearance."""
+    from hw.tests.test_finish import make_board
+    b = make_board(tmp_path, {"CLK": [(3, 6), (21, 6)], "D1": [(3, 3), (21, 3)],
+                              "X": [(3, 9), (21, 9)], "GND": [(22, 11)]})
+    ns = b.GetDesignSettings().m_NetSettings
+    clock = pcbnew.NETCLASS("Clock")
+    clock.SetTrackWidth(pcbnew.FromMM(0.2))
+    clock.SetClearance(pcbnew.FromMM(0.4))
+    ns.SetNetclass("Clock", clock)
+    ns.SetNetclassPatternAssignment("CLK", "Clock")
+    ns.RecomputeEffectiveNetclasses()
+    return b
+
+
+def _ses(net, y_um):
+    return f"""(session x.ses
+  (base_design x.dsn)
+  (placement (resolution um 1))
+  (was_is)
+  (routes
+    (resolution um 1)
+    (parser (host_cad "KiCad's Pcbnew") (host_version "x"))
+    (library_out)
+    (network_out
+      (net {net} (wire (path F.Cu 150  3000 {y_um}  21000 {y_um})))
+    )
+  )
+)
+"""
+
+
+def test_first_nets_are_routed_first_and_locked(tmp_path):
+    board = _first_board(tmp_path)
+    path = tmp_path / "first.kicad_pcb"
+    pcbnew.SaveBoard(str(path), board)
+    seen = {}
+
+    def stub(dsn, ses, passes, timeout_s, log, extra=()):
+        """Freerouting, stood in for: record what it was given; route X, and nothing else."""
+        text = Path(dsn).read_text()
+        seen["wires"] = [l.strip() for l in text.splitlines() if l.strip().startswith("(wire")]
+        seen["clock_class"] = "(width 200)" in text          # the Clock class reached the DSN
+        # ...and its 0.4 mm is given back as fat fixed wires (0.2 + 2 * (0.4 - 0.17) mm)
+        seen["halo"] = any("(path F.Cu 660 " in w and "(net CLK)" in w for w in seen["wires"])
+        Path(ses).write_text(_ses("X", -9000))
+        return 0
+
+    route.route(path, first=["CLK", "D1"], router=stub)
+    b = pcbnew.LoadBoard(str(path))
+    by = {}
+    for t in b.GetTracks():
+        by.setdefault(t.GetNetname(), []).append(t)
+    # laid before the router ran, locked, and handed to it as fixed wires
+    assert set(by) == {"CLK", "D1", "X"}
+    for name, width in (("CLK", 0.2), ("D1", 0.15)):
+        assert all(t.IsLocked() for t in by[name]), name
+        assert all(t.GetWidth() == pcbnew.FromMM(width) for t in by[name]), name
+        assert any(f"(net {name})(type fix)" in w for w in seen["wires"]), seen["wires"]
+    assert not any("(net X)" in w for w in seen["wires"])        # X was the router's to do
+    assert seen["clock_class"] and seen["halo"]
+    assert not any("(path F.Cu 660 " in w and "(net D1)" in w for w in seen["wires"])
+    # the router's pass did not move them: still the straight shortest run between the pads
+    for name, y in (("CLK", 6.0), ("D1", 3.0)):
+        ts = by[name]
+        assert len(ts) == 1 and ts[0].GetClass() == "PCB_TRACK"
+        ys = {pcbnew.ToMM(ts[0].GetStart().y), pcbnew.ToMM(ts[0].GetEnd().y)}
+        assert len(ys) == 1 and abs(ys.pop() - y) <= 0.4          # straight, and on the pads
+    assert not any(t.IsLocked() for t in by["X"])                 # the rest stays the router's
+    # and the router's work is joined: nothing left over
+    assert route.finish_unrouted(b) == []
+
+
+def test_drop_net_removes_the_net_and_its_class_entry_but_not_its_pins():
+    out = route.drop_net(DSN, "GND")
+    assert "(net GND" not in out and "GND" not in out.split("(class")[1]
+    assert "U2-2" not in out.split("(network")[1].split("(class")[0]    # the net block is gone
+    assert "(net SLOT_D3" in out and "(net slot_d3" in out              # the others stay
+    assert out.count("(") == out.count(")")

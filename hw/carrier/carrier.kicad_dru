@@ -1,0 +1,8 @@
+(version 1)
+# The Clock net class asks 0.4 mm of every track, via and pour. It does not ask it of pads:
+# the module socket's pads are 0.35 mm wide at 0.5 mm pitch (0.15 mm apart), so a clock
+# pin there could not be wired at all at 0.4 mm. A clock pad and a track beside it keep the
+# board's 0.15 mm.
+(rule "clock_pad_clearance"
+  (condition "(A.NetClass == 'Clock' && B.Type == 'Pad') || (A.Type == 'Pad' && B.NetClass == 'Clock')")
+  (constraint clearance (min 0.15mm)))

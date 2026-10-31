@@ -56,6 +56,13 @@ GND = "GND"
 POWER_TRACK_MM = 0.5
 POWER_NETS = ["+5V_SLOT", "+5V", "+5V_MOD", "+3V3", "GND", "+12V_SLOT", "-5V_SLOT",
               "-12V_SLOT"]
+# The "Clock" net class (plan 1b): the slot clocks and their FPGA-side twins keep 0.4 mm from
+# everything and are 0.2 mm wide. Patterns are case-sensitive in the project file, and the
+# netlist has both SLOT_PH0 and slot_ph0.
+CLOCK_TRACK_MM = 0.2
+CLOCK_CLEARANCE_MM = 0.4
+CLOCK_NETS = ["SLOT_PH0", "SLOT_PH1", "SLOT_Q3", "SLOT_7M",
+              "slot_ph0", "slot_ph1", "slot_q3", "slot_7m"]
 FIXED = "J1"                               # the fingers: placed from slotgeom
 _SKIP_FIELDS = {"Reference", "Value", "Datasheet", "Description", "Footprint"}
 
@@ -279,8 +286,11 @@ def project_json() -> dict:
                 {"name": "Default", "clearance": CLEARANCE_MM, "track_width": TRACK_MM,
                  "via_diameter": VIA_MM, "via_drill": VIA_DRILL_MM},
                 {"name": "Power", "clearance": CLEARANCE_MM, "track_width": POWER_TRACK_MM,
+                 "via_diameter": VIA_MM, "via_drill": VIA_DRILL_MM},
+                {"name": "Clock", "clearance": CLOCK_CLEARANCE_MM, "track_width": CLOCK_TRACK_MM,
                  "via_diameter": VIA_MM, "via_drill": VIA_DRILL_MM}],
-            "netclass_patterns": [{"netclass": "Power", "pattern": n} for n in POWER_NETS],
+            "netclass_patterns": [{"netclass": "Power", "pattern": n} for n in POWER_NETS]
+            + [{"netclass": "Clock", "pattern": n} for n in CLOCK_NETS],
             "meta": {"version": 3}},
         "text_variables": {"LICENSE": "CERN-OHL-S-2.0"},
     }

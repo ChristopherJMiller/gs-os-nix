@@ -45,15 +45,20 @@ board: carrier
       && python3 hw/tools/check_edge.py --selftest hw/carrier/carrier.kicad_pcb \
       && python3 hw/tools/check_edge.py hw/carrier/carrier.kicad_pcb
 
-# Route the carrier with Freerouting (minutes; the result is not reproducible, so the
-# routed board is committed), then the DRC and parity gate on it (selftest first).
+# Route the carrier in two passes (minutes; the result is not reproducible, so the routed board
+# is committed): the clocks and the data bus first, by the A* finisher, locked; then Freerouting
+# for the rest; then GND stitching vias. Then the DRC and parity gate and the load gate on it
+# (selftest first).
 # Starts from `board`'s placement; run `board` first after changing placement.toml, and `artwork` after.
 route PASSES="20":
     cd {{justfile_directory()}}/.. \
       && python3 hw/tools/route.py hw/carrier/carrier.kicad_pcb --passes {{PASSES}} \
+           --first --stitch \
       && python3 hw/tools/check_drc.py --selftest --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb \
       && python3 hw/tools/check_drc.py --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_load.py --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb
 
 # The BOM gate, then the JLCPCB package and review artefacts (gerbers, BOM, CPL, ibom,
@@ -88,8 +93,8 @@ readme-images:
     cd {{justfile_directory()}}/.. \
       && python3 -m hw.tools.render --board hw/carrier/carrier.kicad_pcb --out hw/img
 
-# The edge and DRC gates (selftest first) on the committed board. DRC needs the netlist, so
-# this runs after `carrier`. It does not route.
+# The edge, DRC and load gates (selftest first) on the committed board. DRC and load need the
+# netlist, so this runs after `carrier`. It does not route.
 gate-board: carrier
     cd {{justfile_directory()}}/.. \
       && python3 hw/tools/check_edge.py --selftest hw/carrier/carrier.kicad_pcb \
@@ -97,15 +102,18 @@ gate-board: carrier
       && python3 hw/tools/check_drc.py --selftest --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb \
       && python3 hw/tools/check_drc.py --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_load.py --selftest \
+      && python3 hw/tools/check_load.py --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb
 
 # Every gate, locally, in this order: tests; then (via `carrier`) erc, intent, pinmap; then
-# the bus section's intent (`netlist`); then edge, drc (with power-track width); then (via
+# the bus section's intent (`netlist`); then edge, drc (with power-track width), load; then (via
 # `fab`) bom and the package's fab gate. Never routes or rewrites the board.
 check: test carrier netlist gate-board fab
 
-# The slot-pin load gate (selftest first): every J1 net <= 15 pF (Apple HWR 5-13). Standalone,
-# and not part of `gate-board` or `check` until the re-routed board passes (plan 1b task 5).
+# The slot-pin load gate (selftest first): every J1 net <= 15 pF (Apple HWR 5-13). Part of
+# `gate-board` and `check`.
 load: carrier
     cd {{justfile_directory()}}/.. \
       && python3 hw/tools/check_load.py --selftest \

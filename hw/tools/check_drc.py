@@ -61,9 +61,10 @@ def run_drc(board: Path, all_severities: bool = False) -> dict:
 
 def _copy_project(board_path: Path, dst: Path) -> Path:
     shutil.copy(board_path, dst / board_path.name)
-    pro = board_path.with_suffix(".kicad_pro")
-    if pro.exists():
-        shutil.copy(pro, dst / pro.name)
+    for suffix in (".kicad_pro", ".kicad_dru"):      # the project, and its custom DRC rules
+        extra = board_path.with_suffix(suffix)
+        if extra.exists():
+            shutil.copy(extra, dst / extra.name)
     return dst / board_path.name
 
 

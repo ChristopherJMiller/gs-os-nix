@@ -29,6 +29,13 @@
         "track_width": 0.5,
         "via_diameter": 0.6,
         "via_drill": 0.3
+      },
+      {
+        "name": "Clock",
+        "clearance": 0.4,
+        "track_width": 0.2,
+        "via_diameter": 0.6,
+        "via_drill": 0.3
       }
     ],
     "netclass_patterns": [
@@ -63,6 +70,38 @@
       {
         "netclass": "Power",
         "pattern": "-12V_SLOT"
+      },
+      {
+        "netclass": "Clock",
+        "pattern": "SLOT_PH0"
+      },
+      {
+        "netclass": "Clock",
+        "pattern": "SLOT_PH1"
+      },
+      {
+        "netclass": "Clock",
+        "pattern": "SLOT_Q3"
+      },
+      {
+        "netclass": "Clock",
+        "pattern": "SLOT_7M"
+      },
+      {
+        "netclass": "Clock",
+        "pattern": "slot_ph0"
+      },
+      {
+        "netclass": "Clock",
+        "pattern": "slot_ph1"
+      },
+      {
+        "netclass": "Clock",
+        "pattern": "slot_q3"
+      },
+      {
+        "netclass": "Clock",
+        "pattern": "slot_7m"
       }
     ],
     "meta": {
