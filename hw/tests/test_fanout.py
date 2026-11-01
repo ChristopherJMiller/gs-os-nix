@@ -52,6 +52,15 @@ def test_every_plane_pad_gets_exactly_one_via_within_1mm(tmp_path):
     assert not _vias(b, "N1")
 
 
+def test_a_pad_that_has_its_via_is_not_fanned_out_again(tmp_path):
+    """--keep-locked / --keep-all routes run the fanout over a board that has it already."""
+    b = _stub(tmp_path)
+    route.fan_out_planes(b)
+    n = len(list(b.GetTracks()))
+    placed, failed = route.fan_out_planes(b)
+    assert placed == [] and failed == [] and len(list(b.GetTracks())) == n
+
+
 def test_vias_are_locked_tented_standard_size_and_necked_to_the_pad(tmp_path):
     b = _stub(tmp_path)
     route.fan_out_planes(b)

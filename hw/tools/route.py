@@ -992,10 +992,16 @@ def fan_out_planes(board, nets=PLANE_NETS, reach_mm: float = PLANE_VIA_REACH_MM
     rank = lambda fp: (0 if fp.GetReference()[0] in "JU" else 1, fp.GetReference())
     pads.sort(key=lambda fp_p: (rank(fp_p[0]), fp_p[1].GetNumber()))
     grids: dict = {}
+    had = [(t.GetNetCode(), t.GetPosition()) for t in board.GetTracks()
+           if t.GetClass() == "PCB_VIA"]            # vias there before this call
     placed, failed, placed_pts = [], [], []
     ics = {n: _ic_power_pads(board, n) for n in nets}
     for fp, pad in pads:
         name = pad.GetNetname()
+        box = pad.GetBoundingBox()
+        box.Inflate(pcbnew.FromMM(reach_mm))
+        if any(n == pad.GetNetCode() and box.Contains(pos) for n, pos in had):
+            continue                         # it has its via already (a continued route)
         ic_pts = ics[name] if fp.GetReference().startswith("C") else []
         ref = fp.GetReference()
         out_dir = _outward(fp, pad) if (ref.startswith("U") or ref.startswith("J")) \
