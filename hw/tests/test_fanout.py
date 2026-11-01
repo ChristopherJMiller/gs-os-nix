@@ -213,6 +213,9 @@ def test_the_first_pass_lays_reset_and_iosel_short_and_locked(tmp_path):
                               "SLOT_D0": [(3, 9), (20, 9)]})
     names = route.default_first(b)
     assert "SLOT_RESET_N" in names and "SLOT_IOSEL_N" in names and "SLOT_D0" in names
+    # and the FPGA-side nets of the band, after them
+    assert route.BAND_NETS[0] == "slot_d0" and "slot_a3" in route.BAND_NETS
+    assert names.index("SLOT_D0") < names.index("SLOT_IOSEL_N")
     assert route.lay_first(b, names) == []
     assert all(t.IsLocked() for t in b.GetTracks())
 

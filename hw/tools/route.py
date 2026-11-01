@@ -1049,13 +1049,16 @@ CLOCK_NETS = ["SLOT_PH0", "SLOT_PH1", "SLOT_Q3", "SLOT_7M",
 DATA_NETS = [f"SLOT_D{i}" for i in range(8)]
 # P23: the two J1 nets nearest the 15 pF limit are laid short too, after the data bus.
 LOAD_NETS = ["SLOT_RESET_N", "SLOT_IOSEL_N"]
+# 5c: the FPGA-side nets that three full routes left open every time (U1/U2/U5 to J2, through
+# the band above row 2), laid first so they get their path before the router fills the band.
+BAND_NETS = [f"slot_d{i}" for i in range(8)] + ["slot_d_oe_n", "slot_a3", "slot_a11", "slot_m2sel_n"]
 FIRST_WEIGHT = 1.0                 # A* with no greed: as short as the grid allows
 
 
 def default_first(board) -> list[str]:
     """CLOCK_NETS then DATA_NETS (the slot-side data bus), those the board has."""
     have = {n.GetNetname() for n in board.GetNetsByName().values() if n.GetNetCode()}
-    return [n for n in CLOCK_NETS + DATA_NETS + LOAD_NETS if n in have]
+    return [n for n in CLOCK_NETS + DATA_NETS + LOAD_NETS + BAND_NETS if n in have]
 
 
 FIRST_LIMIT = 400_000              # expansions before a first-pass net is given up on
