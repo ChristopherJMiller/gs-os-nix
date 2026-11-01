@@ -168,6 +168,13 @@ in
         hw/carrier/carrier.kicad_pcb
     '' [ "^HW LOAD SELFTEST OK" "^HW LOAD OK" ];
 
+    # The routability gate on the placed board: a coarse negotiated-congestion router, after
+    # the plane fan-out, must find every signal net a route within the capacity of the cells.
+    hw-congestion = hwCheck "congestion" ''
+      python3 hw/tools/check_congestion.py --selftest
+      python3 hw/tools/check_congestion.py hw/carrier/carrier.kicad_pcb
+    '' [ "^HW CONGESTION SELFTEST OK" "^HW CONGESTION OK" ];
+
     # Every part that is ordered has an LCSC number (J1, the edge fingers, is the one
     # exemption), on the board and in the netlist.
     hw-bom = hwCheck "bom" ''
