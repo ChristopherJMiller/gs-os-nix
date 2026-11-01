@@ -198,6 +198,32 @@ def test_route_py_runs_as_a_script_and_finds_the_hw_package():
     assert "sys.path.insert" in src
 
 
+def test_the_first_pass_lays_reset_and_iosel_short_and_locked(tmp_path):
+    """P23: the two J1 nets nearest the 15 pF limit are in the default first pass."""
+    b = make_board(tmp_path, {"SLOT_RESET_N": [(3, 3), (20, 3)], "SLOT_IOSEL_N": [(3, 6), (20, 6)],
+                              "SLOT_D0": [(3, 9), (20, 9)]})
+    names = route.default_first(b)
+    assert "SLOT_RESET_N" in names and "SLOT_IOSEL_N" in names and "SLOT_D0" in names
+    assert route.lay_first(b, names) == []
+    assert all(t.IsLocked() for t in b.GetTracks())
+
+
+def test_a_route_leaves_the_project_file_byte_identical(tmp_path):
+    """P24: pcbnew.SaveBoard rewrites a .kicad_pro next to the board; route() must not."""
+    from hw.tests.test_route import _ses
+    path = _plane_board(tmp_path)
+    pro = path.with_suffix(".kicad_pro")
+    pro.write_bytes((ROOT / "hw/carrier/carrier.kicad_pro").read_bytes())
+    before = pro.read_bytes()
+
+    def stub(dsn, ses, passes, timeout_s, log, extra=()):
+        Path(ses).write_text(_ses("X", -9000))
+        return 0
+
+    route.route(path, router=stub)
+    assert pro.read_bytes() == before
+
+
 def _plane_board(tmp_path):
     b = _stub(tmp_path, {"X": [(3, 9), (21, 9)]})
     for layer, net in ((pcbnew.In1_Cu, "GND"), (pcbnew.In2_Cu, "+3V3")):

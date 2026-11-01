@@ -137,10 +137,28 @@ def test_carrier_board_is_four_layer_and_clean():
     assert "7628" in CARRIER_BOARD.read_text()
 
 
-def test_carrier_height_is_68_mm():
-    # the 4-layer attempts: 64 mm first (5b attempts 1 and 2 did not close), 68 mm (P11) after
-    assert tomllib.loads(PLACEMENT.read_text())["board"]["height_mm"] == 68.0
-    assert ce.tab_geometry(pcbnew.LoadBoard(str(CARRIER_BOARD)))["height"] == pytest.approx(68.0)
+def test_carrier_height_is_69_5_mm():
+    # P22 (5c): 69.5 mm, the limit being 69.85; every part but J2 and the top-edge headers moved
+    # down with J1 so the IC rows keep their relation to the fingers
+    assert tomllib.loads(PLACEMENT.read_text())["board"]["height_mm"] == 69.5
+    assert ce.tab_geometry(pcbnew.LoadBoard(str(CARRIER_BOARD)))["height"] == pytest.approx(69.5)
+
+
+def test_the_band_between_row_2_and_j2_is_6_mm_or_more():
+    """P22: the 18 FPGA-side nets of U1/U4 run through the band from U4's top to J2's pad
+    row; it was 3.2 mm, the aim is about 6.7."""
+    b = pcbnew.LoadBoard(str(CARRIER_BOARD))
+    u4 = b.FindFootprintByReference("U4").GetBoundingBox()
+    j2 = min(pcbnew.ToMM(p.GetBoundingBox().GetBottom())
+             for p in b.FindFootprintByReference("J2").Pads() if p.GetNumber() == "1")
+    assert pcbnew.ToMM(u4.GetTop()) - j2 >= 6.0
+
+
+def test_the_top_headers_keep_the_edge_clearance():
+    b = pcbnew.LoadBoard(str(CARRIER_BOARD))
+    for ref in ("J4", "JP1", "JP2", "R11", "R18", "R19", "R20", "R21"):
+        top = pcbnew.ToMM(b.FindFootprintByReference(ref).GetBoundingBox().GetTop())
+        assert top >= 0.5, (ref, top)
 
 
 def test_project_file_matches_the_builder():

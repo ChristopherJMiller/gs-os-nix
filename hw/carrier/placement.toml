@@ -33,6 +33,14 @@
 # Task 5b: two full routes at 64 mm left 15 and 13 nets open (the U1/U2/U5 to J2 bundle and
 # a few finger nets), so this is the 68 mm attempt.
 #
+# P22 (task 5c) supersedes P11 for this step. The module's FPGA I/O is only on SODIMM pins
+# 41-156 (J2 pads x 22.9-57.5), so all 18 FPGA-side nets of U1 and U4 (over their fingers at
+# x 11-21) run through the band between U4's top and J2's pad row: 3.2 mm, a geometric limit
+# (the planes add no signal room). So: the height is 69.5 mm (limit 69.85); J2 and the
+# top-edge headers (J4, JP1, JP2, with their pull resistors R11, R18-R21) moved up 2 mm; every
+# other part moved down 1.5 mm with J1, so the IC rows keep their relation to the fingers. The
+# band is now about 7 mm. The silkscreen art stays inside the module outline; `artwork` is Task 6's.
+#
 # P14: R14 (the DIR pull) moved out of the U1-U4 channel to the 2 mm column between U1 and
 # U2 (beside U1 pin 1), so the channel carries only copper; nothing else of x 14-20, y 49-55
 # but U1 and U4 is left in it.
@@ -42,413 +50,413 @@
 
 [board]
 length_mm = 80.0
-height_mm = 68.0
+height_mm = 69.5
 
 [parts.C1]
 x = 70.463
-y = 57.8
+y = 59.3
 rot = 180
 side = "F"
 
 [parts.C2]
 x = 77.0
-y = 56.4
+y = 57.9
 rot = 0
 side = "F"
 
 [parts.C3]
 x = 7.138
-y = 44.95
+y = 46.45
 rot = 0
 side = "F"
 
 [parts.C4]
 x = 7.095
-y = 59.8
+y = 61.3
 rot = 90
 side = "F"
 
 [parts.C5]
 x = 46.7
-y = 59.0
+y = 60.5
 rot = 90
 side = "F"
 
 [parts.C6]
 x = 48.3
-y = 59.0
+y = 60.5
 rot = 90
 side = "F"
 
 [parts.C7]
 x = 19.457
-y = 61.7
+y = 63.2
 rot = 0
 side = "F"
 
 [parts.C8]
 x = 26.15
-y = 47.538
+y = 49.038
 rot = 90
 side = "F"
 
 [parts.C9]
 x = 31.65
-y = 47.538
+y = 49.038
 rot = 90
 side = "F"
 
 [parts.C10]
 x = 26.15
-y = 60.163
+y = 61.663
 rot = 270
 side = "F"
 
 [parts.C11]
 x = 31.65
-y = 60.163
+y = 61.663
 rot = 270
 side = "F"
 
 [parts.C12]
 x = 52.1
-y = 54.862
+y = 56.362
 rot = 90
 side = "F"
 
 [parts.C13]
 x = 51.1
-y = 61.638
+y = 63.138
 rot = 180
 side = "F"
 
 [parts.C14]
 x = 13.575
-y = 41.837
+y = 43.337
 rot = 180
 side = "F"
 
 [parts.C15]
 x = 40.075
-y = 44.638
+y = 46.138
 rot = 180
 side = "F"
 
 [parts.C16]
 x = 38.2
-y = 55.95
+y = 57.45
 rot = 90
 side = "F"
 
 [parts.C17]
 x = 43.2
-y = 55.95
+y = 57.45
 rot = 90
 side = "F"
 
 [parts.C18]
 x = 62.55
-y = 61.638
+y = 63.138
 rot = 180
 side = "F"
 
 [parts.C19]
 x = 68.95
-y = 60.638
+y = 62.138
 rot = 270
 side = "F"
 
 [parts.C20]
 x = 54.95
-y = 61.638
+y = 63.138
 rot = 180
 side = "F"
 
 [parts.C21]
 x = 60.95
-y = 54.438
+y = 55.938
 rot = 180
 side = "F"
 
 [parts.C22]
 x = 57.25
-y = 54.438
+y = 55.938
 rot = 180
 side = "F"
 
 [parts.C23]
 x = 58.75
-y = 61.638
+y = 63.138
 rot = 180
 side = "F"
 
 [parts.C24]
 x = 1.862
-y = 47.55
+y = 49.05
 rot = 270
 side = "F"
 
 [parts.C25]
 x = 2.862
-y = 43.4
+y = 44.9
 rot = 0
 side = "F"
 
 [parts.C26]
 x = 2.862
-y = 44.95
+y = 46.45
 rot = 180
 side = "F"
 
 [parts.C27]
 x = 8.637
-y = 46.55
+y = 48.05
 rot = 0
 side = "F"
 
 [parts.D1]
 x = 74.0
-y = 53.8
+y = 55.3
 rot = 0
 side = "F"
 
 [parts.F1]
 x = 73.6
-y = 61.0
+y = 62.5
 rot = 0
 side = "F"
 
 [parts.J2]
 x = 39.0
-y = 34.0
+y = 32
 rot = 0
 side = "F"
 
 [parts.J4]
 x = 8.0
-y = 4.8
+y = 2.8
 rot = 90
 side = "F"
 
 [parts.JP1]
 x = 22.0
-y = 4.8
+y = 2.8
 rot = 90
 side = "F"
 
 [parts.JP2]
 x = 32.0
-y = 4.8
+y = 2.8
 rot = 90
 side = "F"
 
 [parts.R1]
 x = 36.55
-y = 55.95
+y = 57.45
 rot = 90
 side = "F"
 
 [parts.R2]
 x = 39.85
-y = 55.95
+y = 57.45
 rot = 90
 side = "F"
 
 [parts.R3]
 x = 41.55
-y = 55.95
+y = 57.45
 rot = 90
 side = "F"
 
 [parts.R4]
 x = 44.85
-y = 55.95
+y = 57.45
 rot = 90
 side = "F"
 
 [parts.R5]
 x = 64.0
-y = 55.362
+y = 56.862
 rot = 0
 side = "F"
 
 [parts.R6]
 x = 69.0
-y = 55.462
+y = 56.962
 rot = 90
 side = "F"
 
 [parts.R7]
 x = 54.7
-y = 54.862
+y = 56.362
 rot = 90
 side = "F"
 
 [parts.R8]
 x = 63.6
-y = 48.962
+y = 50.462
 rot = 90
 side = "F"
 
 [parts.R9]
 x = 54.7
-y = 49.163
+y = 50.663
 rot = 90
 side = "F"
 
 [parts.R10]
 x = 54.0
-y = 52.362
+y = 53.862
 rot = 180
 side = "F"
 
 [parts.R11]
 x = 37.5
-y = 4.75
+y = 2.75
 rot = 90
 side = "F"
 
 [parts.R12]
 x = 21.1
-y = 58.7
+y = 60.2
 rot = 90
 side = "F"
 
 [parts.R13]
 x = 21.9
-y = 46.4
+y = 47.9
 rot = 90
 side = "F"
 
 [parts.R14]
 x = 21.35
-y = 55.2
+y = 56.7
 rot = 90
 side = "F"
 
 [parts.R15]
 x = 35.1
-y = 60.763
+y = 62.263
 rot = 0
 side = "F"
 
 [parts.R16]
 x = 64.3
-y = 52.1
+y = 53.6
 rot = 90
 side = "F"
 
 [parts.R17]
 x = 66.7
-y = 52.0
+y = 53.5
 rot = 90
 side = "F"
 
 [parts.R18]
 x = 19.0
-y = 4.75
+y = 2.75
 rot = 90
 side = "F"
 
 [parts.R19]
 x = 5.0
-y = 4.75
+y = 2.75
 rot = 90
 side = "F"
 
 [parts.R20]
 x = 16.0
-y = 4.75
+y = 2.75
 rot = 90
 side = "F"
 
 [parts.R21]
 x = 27.5
-y = 4.8
+y = 2.8
 rot = 90
 side = "F"
 
 [parts.U1]
 x = 15.6
-y = 57.1
+y = 58.6
 rot = 270
 side = "F"
 
 [parts.U2]
 x = 28.9
-y = 53.85
+y = 55.35
 rot = 90
 side = "F"
 
 [parts.U3]
 x = 51.15
-y = 58.5
+y = 60
 rot = 270
 side = "F"
 
 [parts.U4]
 x = 17.5
-y = 46.7
+y = 48.2
 rot = 90
 side = "F"
 
 [parts.U5]
 x = 44.0
-y = 49.5
+y = 51
 rot = 90
 side = "F"
 
 [parts.U6]
 x = 38.2
-y = 59.1
+y = 60.6
 rot = 90
 side = "F"
 
 [parts.U7]
 x = 43.2
-y = 59.1
+y = 60.6
 rot = 90
 side = "F"
 
 [parts.U8]
 x = 62.6
-y = 58.5
+y = 60
 rot = 270
 side = "F"
 
 [parts.U9]
 x = 66.4
-y = 58.5
+y = 60
 rot = 270
 side = "F"
 
 [parts.U10]
 x = 55.0
-y = 58.5
+y = 60
 rot = 270
 side = "F"
 
 [parts.U11]
 x = 61.0
-y = 51.3
+y = 52.8
 rot = 270
 side = "F"
 
 [parts.U12]
 x = 57.3
-y = 51.3
+y = 52.8
 rot = 270
 side = "F"
 
 [parts.U13]
 x = 58.8
-y = 58.5
+y = 60
 rot = 270
 side = "F"
 
 [parts.VR1]
 x = 5.0
-y = 47.5
+y = 49
 rot = 0
 side = "F"
 

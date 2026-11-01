@@ -16,7 +16,7 @@ thickness_mm = 0.3
 [logo]
 footprint = "Symbol:OSHW-Symbol_8.9x8mm_SilkScreen"
 x_mm = 73.4
-y_mm = 7.5
+y_mm = 5.5
 
 # The ASCII art's glyph box and grid. One PCB_TEXT per non-space character, centred on
 # (block x + column * col_pitch, block y + row * row_pitch).
@@ -33,7 +33,7 @@ row_pitch_mm = 1.6
 [[ascii]]
 name = "apple2"
 x_mm = 16.05
-y_mm = 9.8
+y_mm = 7.8
 art = '''
   .-----------------------.
   | .-------------------. |
@@ -52,7 +52,7 @@ art = '''
 [[ascii]]
 name = "snowflake"
 x_mm = 43.25
-y_mm = 10.6
+y_mm = 8.6
 art = '''
       \     \   /
        \     \ /
