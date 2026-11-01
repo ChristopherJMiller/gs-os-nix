@@ -18,6 +18,9 @@ let
   # KiCad's Python bindings (`kicad`) are built for nixpkgs' default python3.
   py = pkgs.python3.withPackages (p: [ p.kicad skidl schematizer p.pytest ]);
 
+  # 2.5.0, pinned (nixpkgs has 2.4.1): its output is the same on every run.
+  freerouting25 = pkgs.callPackage ./pkgs/freerouting.nix { };
+
   libs = pkgs.kicad-small.passthru.libraries;
 
   hwEnv = {
@@ -30,7 +33,7 @@ let
   tools = with pkgs; [
     kicad-small
     py
-    freerouting
+    freerouting25
     kikit
     interactive-html-bom
     verilator

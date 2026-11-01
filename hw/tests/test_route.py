@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """route.py's DSN preparation: case-twin nets, the smd_smd rule, the edge keepout strips;
 and check_drc's parity half."""
+import os
 from pathlib import Path
 
 import numpy as np
@@ -341,3 +342,79 @@ def test_the_two_layer_ground_machinery_is_retired():
     assert "--stitch" not in (root / "hw/justfile").read_text()
     with pytest.raises(SystemExit):
         route.main(["x.kicad_pcb", "--stitch"])
+
+
+# --- Freerouting 2.5.0: the command line, the isolated config, the determinism ---------------
+
+FAKE_ROUTER = """#!/bin/sh
+printf '%s\\n' "$@" > "$FAKE_OUT/argv"
+env > "$FAKE_OUT/env"
+exit 0
+"""
+
+
+def _fake_router(tmp_path, monkeypatch):
+    """A `freerouting` on PATH that records its arguments and environment."""
+    bindir, out = tmp_path / "bin", tmp_path / "out"
+    bindir.mkdir()
+    out.mkdir()
+    exe = bindir / "freerouting"
+    exe.write_text(FAKE_ROUTER)
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:" + os.environ["PATH"])
+    monkeypatch.setenv("FAKE_OUT", str(out))
+    return out
+
+
+def test_freerouting_gets_the_2_5_flags(tmp_path, monkeypatch):
+    out = _fake_router(tmp_path, monkeypatch)
+    route.run_freerouting(tmp_path / "a.dsn", tmp_path / "a.ses", 7, 60, tmp_path / "log",
+                          threads=3)
+    argv = (out / "argv").read_text().split()
+    assert argv[:4] == ["-de", str(tmp_path / "a.dsn"), "-do", str(tmp_path / "a.ses")]
+    assert "--router.autorouter.max_passes=7" in argv
+    assert "--router.optimizer.max_threads=3" in argv
+    assert "--gui.enabled=false" in argv
+    for old in ("-mp", "-mt", "-hr"):      # 2.4.1's (-mt alone does not cap the threads)
+        assert old not in argv
+
+
+def test_freerouting_gets_an_isolated_config(tmp_path, monkeypatch):
+    """Java's user.home is the passwd entry, not $HOME, so HOME alone leaves the real
+    ~/.config/freerouting open to writes: the XDG directories are pointed away too."""
+    out = _fake_router(tmp_path, monkeypatch)
+    route.run_freerouting(tmp_path / "a.dsn", tmp_path / "a.ses", 1, 60, tmp_path / "log")
+    env = dict(l.split("=", 1) for l in (out / "env").read_text().splitlines() if "=" in l)
+    real = os.path.realpath(os.path.expanduser("~"))
+    for var in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+        assert env[var], var
+        assert not os.path.realpath(env[var]).startswith(real + os.sep), var
+    assert not Path(env["HOME"]).exists()      # a temporary directory, removed after
+
+
+def _config_state():
+    d = Path.home() / ".config" / "freerouting"
+    return {str(p): (p.stat().st_mtime_ns, p.read_bytes()) for p in sorted(d.rglob("*"))
+            if p.is_file()}
+
+
+def _route_tiny(tmp_path, name):
+    ses, log = tmp_path / f"{name}.ses", tmp_path / f"{name}.log"
+    rc = route.run_freerouting(FIX / "tiny.dsn", ses, 3, 120, log)
+    assert rc == 0, log.read_text()
+    return ses, log
+
+
+def test_freerouting_is_2_5_0_and_leaves_the_real_config_alone(tmp_path):
+    before = _config_state()
+    ses, log = _route_tiny(tmp_path, "one")
+    assert "2.5.0" in log.read_text()
+    assert ses.read_text().startswith("(session")
+    assert _config_state() == before
+
+
+def test_freerouting_output_is_identical_on_every_run(tmp_path):
+    a, _ = _route_tiny(tmp_path, "one")
+    b, _ = _route_tiny(tmp_path, "two")
+    assert b"(wire" in a.read_bytes()       # a real route, not two empty sessions
+    assert a.read_bytes() == b.read_bytes()

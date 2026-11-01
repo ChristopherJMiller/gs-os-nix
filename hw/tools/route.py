@@ -7,8 +7,10 @@ pcbnew exports the Specctra DSN (it carries the net classes of BOARD's .kicad_pr
 the Power class reaches the router), freerouting routes it, pcbnew imports the SES, and
 what the router left is finished here (finish_unrouted); then the pours are refilled and
 BOARD is saved in place. Existing tracks and vias are dropped first, so a route is a fresh
-route; the zones and all else stay. Freerouting's output is not reproducible, which is why
-the routed board is committed: hw-drc (check_drc.py) is what ties it to the netlist.
+route; the zones and all else stay. Freerouting 2.5.0 (pinned in the flake) gives the same
+output on every run; the routed board is still committed, and hw-drc (check_drc.py) is what
+ties it to the netlist. Freerouting runs with a temporary HOME and XDG directories, so it
+never touches ~/.config/freerouting.
 
 The board has four copper layers (2026-10-31): In1.Cu is a solid GND plane and In2.Cu a +3V3
 plane. The 2-layer machinery for GND (outer pours, stitching vias, bridging vias, a narrow
@@ -1253,13 +1255,30 @@ def repair_clock_clearance(board, rounds: int = REPAIR_ROUNDS) -> list[str]:
 
 # --- the run ----------------------------------------------------------------------------
 
+ROUTER_THREADS = 6                 # the optimizer's thread cap (-mt alone does not set it)
+
+
+def isolated_env(home: Path) -> dict:
+    """The environment freerouting 2.5.0 runs in, so that it never reads or writes the real
+    ~/.config/freerouting. It finds its directories from the XDG variables and, failing
+    those, Java's user.home (the passwd entry, which $HOME does not change): all point
+    into `home`."""
+    return dict(os.environ, HOME=str(home),
+                XDG_CONFIG_HOME=str(home / "config"), XDG_DATA_HOME=str(home / "data"),
+                XDG_STATE_HOME=str(home / "state"), XDG_CACHE_HOME=str(home / "cache"),
+                JAVA_TOOL_OPTIONS=f"-Duser.home={home}")
+
+
 def run_freerouting(dsn: Path, ses: Path, passes: int, timeout_s: int, log: Path,
-                    extra: list[str] = ()) -> int:
-    """Run freerouting, its output going to `log` as it goes; kill it at the timeout."""
-    cmd = ["freerouting", "-de", str(dsn), "-do", str(ses), "-mp", str(passes),
-           "--gui.enabled=false", *extra]
-    with open(log, "w") as f:
-        p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, start_new_session=True)
+                    extra: list[str] = (), threads: int = ROUTER_THREADS) -> int:
+    """Run freerouting 2.5.0 (identical output on every run), its output going to `log` as
+    it goes, in a temporary config directory; kill it at the timeout."""
+    cmd = ["freerouting", "-de", str(dsn), "-do", str(ses),
+           f"--router.autorouter.max_passes={passes}",
+           f"--router.optimizer.max_threads={threads}", "--gui.enabled=false", *extra]
+    with tempfile.TemporaryDirectory(prefix="freerouting-home-") as home, open(log, "w") as f:
+        p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, start_new_session=True,
+                             env=isolated_env(Path(home)))
         try:
             return p.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:

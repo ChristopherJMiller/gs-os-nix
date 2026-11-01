@@ -1,0 +1,51 @@
+(pcb tiny.dsn
+  (parser
+    (string_quote ")
+    (space_in_quoted_tokens on)
+    (host_cad "KiCad's Pcbnew")
+    (host_version "10.0.6")
+  )
+  (resolution um 10)
+  (unit um)
+  (structure
+    (layer F.Cu (type signal) (property (index 0)))
+    (layer B.Cu (type signal) (property (index 1)))
+    (boundary (rectangle pcb 0 0 20000 10000))
+    (via "Via[0-1]_600:300_um")
+    (rule (width 150) (clearance 150))
+  )
+  (placement
+    (component R_Pad
+      (place R1 3000 3000 front 0)
+      (place R2 17000 7000 front 0)
+      (place R3 3000 7000 front 0)
+      (place R4 17000 3000 front 0)
+    )
+  )
+  (library
+    (image R_Pad
+      (pin Round[A]Pad_1000_um 1 -1000 0)
+      (pin Round[A]Pad_1000_um 2 1000 0)
+    )
+    (padstack Round[A]Pad_1000_um
+      (shape (circle F.Cu 1000))
+      (shape (circle B.Cu 1000))
+      (attach off)
+    )
+    (padstack "Via[0-1]_600:300_um"
+      (shape (circle F.Cu 600))
+      (shape (circle B.Cu 600))
+      (attach off)
+    )
+  )
+  (network
+    (net N1 (pins R1-1 R2-2))
+    (net N2 (pins R3-1 R4-2))
+    (net N3 (pins R1-2 R4-1))
+    (net N4 (pins R3-2 R2-1))
+    (class kicad_default N1 N2 N3 N4
+      (circuit (use_via "Via[0-1]_600:300_um"))
+      (rule (width 150) (clearance 150))
+    )
+  )
+)
