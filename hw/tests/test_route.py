@@ -385,10 +385,12 @@ def test_freerouting_gets_an_isolated_config(tmp_path, monkeypatch):
     out = _fake_router(tmp_path, monkeypatch)
     route.run_freerouting(tmp_path / "a.dsn", tmp_path / "a.ses", 1, 60, tmp_path / "log")
     env = dict(l.split("=", 1) for l in (out / "env").read_text().splitlines() if "=" in l)
-    real = os.path.realpath(os.path.expanduser("~"))
-    for var in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
-        assert env[var], var
-        assert not os.path.realpath(env[var]).startswith(real + os.sep), var
+    real = os.path.realpath(os.path.expanduser("~"))     # (the build sandbox's is a temp dir)
+    home = os.path.realpath(env["HOME"])
+    assert home != real and not home.startswith(os.path.join(real, ".config"))
+    for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+        assert os.path.realpath(env[var]).startswith(home + os.sep), var
+    assert "-Duser.home=" + env["HOME"] in env["JAVA_TOOL_OPTIONS"]
     assert not Path(env["HOME"]).exists()      # a temporary directory, removed after
 
 
