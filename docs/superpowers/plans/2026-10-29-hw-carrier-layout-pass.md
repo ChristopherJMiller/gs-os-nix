@@ -207,3 +207,95 @@ Price: under 100 × 100 mm, area does not change JLCPCB's price (inferred), so h
 ### Task 6 (amended)
 
 Step 3 also enters HW-17 in HARDWARE.md: 4 layers, the owner's decision, the stackup and the why. It updates the order notes (4-layer, JLC04161H-7628, ENIG, gold fingers) and hw/README.md ("4 layers", the size). The before/after table records the 2-layer attempt's residual as the reason for the change.
+
+---
+
+## Amendment 2 (2026-11-01): deterministic routing
+
+**Owner decisions (2026-11-01):**
+- **Build deterministic routing** for the bus section, instead of widening the board, giving In2 to signals, or finishing by hand.
+- **Switch to Freerouting 2.5.0**, pinned in the flake. Its output is identical on every run, so routes become reproducible.
+
+**Why.** Seven auto-routing rounds left 8–15 nets open each time, wherever the router happened to jam. They covered 2 and 4 layers, 64–69.5 mm, and Freerouting 2.4.1 and 2.5.0. The module covers the top ~45 % of the board, so every part sits in a ~32 × 80 mm strip. A net-by-net router can't plan that strip globally.
+
+Research (2026-10-31; reports in the SDD directory as `research-*.md`) points to doing what practitioners do by hand:
+- plan the buses as ordered, uncrossed rivers;
+- break out the fine-pitch connector deterministically;
+- use the empty area under the module as the lateral "highway";
+- leave only the sparse remainder to the autorouter;
+- check routability in seconds before spending hours on a route.
+
+On the best partial board, the area under the module carries 4 traces.
+
+**Facts the tasks rely on:**
+- J2 has two pad rows, 4.1 mm apart, with pads 0.35 × 2.0 mm, leaving a ~2.1 mm gap between pad ends. Rear-row pads can be reached from above (under the module) on F.Cu.
+- The module's FPGA I/O is only on SODIMM pins 41–156.
+- J1's fingers are on both sides, pin n on F and pin 51−n on B.
+- A 245's or 541's channels are interchangeable bit by bit (Task 1 and Tasks 3+4 already permuted them), so channel order is free on each translator.
+- Copper may run anywhere under the module: only courtyards, not tracks, are excluded there.
+
+### Task 5d: Freerouting 2.5.0 in the flake
+
+**Files:** `nix/pkgs/freerouting.nix` (new), `nix/hw.nix`, `hw/tools/route.py` and `hw/tests/test_route.py`.
+
+- Package the release jar with `fetchurl`, sha256 `f6f51bb02245e8e717f9359bd260cc9c5c0b1bc0acc8b7cb2cd5b8ffeb5de3c7`, wrapped to run on `jdk25_headless`. The draft is at scratchpad `fr25/freerouting.nix`.
+- route.py's flags become `--router.autorouter.max_passes=N` and `--router.optimizer.max_threads=N`, since `-mt` alone does not cap threads. Freerouting runs with an isolated HOME or config directory, so it never writes `~/.config/freerouting`.
+- Add a test that two routes of a tiny board give byte-identical SES. Run it in hw-tests only if it takes under ~30 s; otherwise put it behind a marker the justfile runs.
+
+### Task 5e: `hw-congestion`, a routability gate before routing
+
+**Files:** `hw/tools/check_congestion.py` (new), its tests, `hw/justfile`, `nix/hw.nix`.
+
+- A coarse global router on a ~0.5 mm grid, in the PathFinder style with negotiated congestion. Each cell's capacity per signal layer comes from track pitch, minus pads, vias (including the plane fanout), courtyard-blocked F.Cu and keep-outs. B.Cu under top-side parts is open.
+- It routes every signal net's minimum spanning tree and reports the total overflow, the worst cells and the nets through them. It also writes a heat-map PNG for review.
+- Pass/fail: overflow 0 after N negotiation rounds.
+- Calibration:
+  - plan 1's routed board (7430efe) must pass, since it routed;
+  - planted faults (a narrowed band, a blocked channel) must fail, each for its own reason;
+  - the three jammed 4-layer boards (64, 68 and 69.5 mm, with the fanout) are recorded, not asserted, because a better router might close them.
+- `--selftest` per D14. Wire it into `gate-board`, `check` and `checks`, before routing in `route`.
+
+### Task 5f: ordered (monotone) bus assignment
+
+**Files:** `hw/tools/assign_pins.py` (or a new `plan_buses.py` that it calls), `hw/carrier/pins.toml`, `hw/src/slot_bus.py` if channel order changes, and the tests.
+
+For each translator, choose the channel permutation and the J2 pads so that each bus is a river:
+- J1 finger order matches the A-side pin order (per finger side);
+- the A side maps to the B side through its channel;
+- the B-side pin order matches the J2 pad order (per J2 row);
+- no two nets of a bus cross.
+
+The method is dynamic programming over ordered matchings (the research report's monotone DP), minimising lateral travel. Which J2 row each net uses is part of the choice: nets that must travel far laterally take rear-row pads, reached through the highway.
+
+Keep every existing check: the module map, hw-pinmap, the LPF and carrier_top.v, hw-intent's channel pairing, and `crossings()` as a reported metric. Show RED first: a test where a bus crosses itself under today's assignment and is planar after.
+
+### Task 5g: the bus router
+
+**Files:** `hw/tools/bus_route.py` (new), its tests, and `route.py` (it calls bus_route before Freerouting).
+
+Lay the bus section's nets deterministically and lock them, with no randomness:
+- **Slot side:** J1 fingers → translator A-side pins, as short rivers. These lengths feed hw-load.
+- **FPGA side:** translator B-side pins → J2.
+  - Each net gets a short stub and a via.
+  - It runs vertically to J2 on one layer.
+  - Lateral shifts happen in the highway under the module, on the layer chosen there, with tracks assigned by the left-edge algorithm.
+  - Rear-row pads are entered from above on F.Cu, and front-row pads from below.
+  - Fixed via positions break out J2 in the inter-row gap or under the module.
+- Obstacles it cannot pass are reported, never forced. Nets it can't lay are left to Freerouting and listed.
+- Respect the Clock class (P12), J2_ESCAPE (P16) and the plane fanout (P19), which bus_route may re-place if a fanout via sits in a river's path. Never put a via in the tab.
+- Tests on stub boards: a river of N nets stays planar, is DRC-clean, is locked, and is byte-identical across runs.
+
+### Task 5h: route the carrier
+
+`just -f hw/justfile route` runs, in order: congestion gate → fanout → bus_route → first pass (clocks, if bus_route doesn't own them) → Freerouting 2.5.0 → repair and finisher. The placement is the committed 69.5 mm layout (P22), unless hw-congestion names a better one and a ruling adopts it.
+
+Acceptance is Task 5b's Step 2:
+- hw-drc 0/0;
+- hw-load ≤ 15 pF on every J1 net;
+- every gate passes;
+- `just check` and `nix flake check` pass.
+Then the metrics. Because routes are now deterministic, `route` reproduces the committed board, and that is checked.
+
+### Task 6 (amended again)
+
+HARDWARE.md also records the routing strategy (HW-18): deterministic buses plus an autorouter for the remainder, and why. It cites the research where it was verified.
