@@ -390,8 +390,12 @@ def _dead_copper_board(tmp_path):
        track (18, 9.5)-(21, 9.5) joined to its middle, to a free end at y 10.5.
     Y: pads (3, 10.5), (10, 10.5); F.Cu to a via joined on F.Cu only, and on from 0.25 mm beside
        it (SLOT_M2SEL_N): the via goes, and a track joins the two ends at its centre.
-    Z: pads (3, 2), (12, 2): F, a via, B, a via, F: both vias are joined on two layers. And a
-       locked Z via joined on F only, which stays (only the router's copper is cleaned)."""
+    Z: pads (3, 2), (12, 2): F, a via, B, a via, F: both vias are joined on two layers; an
+       unlocked dead stub at x 4 (so Z has dead copper, and every check below is reached). And
+       locked copper, which stays whatever it looks like (only the router's copper is cleaned):
+       a locked run (12, 2)-(12, 3.5) to a locked via joined on F.Cu only, with a locked piece
+       lying on it; an unlocked track up to a second locked one-layer via at (10.5, 3.5); an
+       unlocked B.Cu track up to a locked B.Cu stub at x 7.5 that ends on nothing."""
     from hw.tests.test_finish import make_board
     F, B = pcbnew.F_Cu, pcbnew.B_Cu
     b = make_board(tmp_path, {"X": [(3, 6), (21, 6), (21, 9.5)], "Z": [(3, 2), (12, 2)],
@@ -414,8 +418,14 @@ def _dead_copper_board(tmp_path):
     _track(b, "Z", B, (6, 2), (9, 2))
     _via_at(b, "Z", 9, 2)
     _track(b, "Z", F, (9, 2), (12, 2))
+    _track(b, "Z", F, (4, 2), (4, 3.2))                  # dead
     _track(b, "Z", F, (12, 2), (12, 3.5)).SetLocked(True)
-    _via_at(b, "Z", 12, 3.5, locked=True)
+    _track(b, "Z", F, (12, 2.5), (12, 3.0)).SetLocked(True)  # locked, on the locked run
+    _via_at(b, "Z", 12, 3.5, locked=True)                # locked, joined on F.Cu only
+    _track(b, "Z", F, (10.5, 2), (10.5, 3.5))            # up to a locked via that ends there
+    _via_at(b, "Z", 10.5, 3.5, locked=True)
+    _track(b, "Z", B, (7.5, 2), (7.5, 3.5))              # up to a locked stub that goes nowhere
+    _track(b, "Z", B, (7.5, 3.5), (7.5, 4.5)).SetLocked(True)
     return b
 
 
@@ -441,14 +451,82 @@ def test_the_dead_copper_of_the_session_goes_and_every_net_stays_whole(tmp_path)
     assert _ends(b, "Y") == [("PCB_TRACK", 3.0, 10.5, 6.0, 10.5),
                              ("PCB_TRACK", 6.25, 10.5, 6.0, 10.5),
                              ("PCB_TRACK", 6.25, 10.5, 10.0, 10.5)]
-    z = _ends(b, "Z")
-    assert len([t for t in z if t[0] == "PCB_VIA"]) == 3 and len(z) == 7
     for net in ("X", "Y", "Z"):
         assert len(route._components(b, b.FindNet(net).GetNetCode())) == 1, net
     path = tmp_path / "dead.kicad_pcb"
     pcbnew.SaveBoard(str(path), b)
     dangling = [p for p in cd.problems_drc(path) if "dangling" in p]
     assert [p for p in dangling if "Z" not in p] == []                 # the locked Z via is ours
+
+
+def test_locked_copper_stays_in_a_net_with_dead_copper(tmp_path):
+    """Net Z has dead copper (the stub at x 4 goes), so every check of the clean-up runs on it;
+    its locked copper stays as it is: a locked via joined on one layer (it would go as a one-layer
+    via), a locked piece on a locked run (it would go as lying on a locked track), a locked stub
+    that ends on nothing (it would be cut as dead, and the unlocked track up to it with it), and
+    a locked via that ends an unlocked track (the track would be cut as dead)."""
+    b = _dead_copper_board(tmp_path)
+    route.drop_dead_copper(b)
+    assert _ends(b, "Z") == sorted([
+        ("PCB_TRACK", 3.0, 2.0, 6.0, 2.0), ("PCB_VIA", 6.0, 2.0, 6.0, 2.0),
+        ("PCB_TRACK", 6.0, 2.0, 9.0, 2.0), ("PCB_VIA", 9.0, 2.0, 9.0, 2.0),
+        ("PCB_TRACK", 9.0, 2.0, 12.0, 2.0),
+        ("PCB_TRACK", 12.0, 2.0, 12.0, 3.5), ("PCB_TRACK", 12.0, 2.5, 12.0, 3.0),
+        ("PCB_VIA", 12.0, 3.5, 12.0, 3.5),
+        ("PCB_TRACK", 10.5, 2.0, 10.5, 3.5), ("PCB_VIA", 10.5, 3.5, 10.5, 3.5),
+        ("PCB_TRACK", 7.5, 2.0, 7.5, 3.5), ("PCB_TRACK", 7.5, 3.5, 7.5, 4.5)])
+
+
+def test_the_clean_up_never_touches_a_locked_track_whatever_the_graph_says(tmp_path,
+                                                                            monkeypatch):
+    """_dead_net keeps a locked track even if the graph calls it dead (here a prune that calls
+    every locked piece dead): the router's copper is cleaned, ours is not."""
+    from hw.tests.test_finish import make_board
+    b = make_board(tmp_path, {"Z": [(3, 2), (12, 2)], "GND": [(22, 11)]})
+    F = pcbnew.F_Cu
+    _track(b, "Z", F, (3, 2), (12, 2))
+    _track(b, "Z", F, (9, 2), (9, 3.5)).SetLocked(True)
+    monkeypatch.setattr(route._Junctions, "prune", lambda self: [
+        e for e in self.edges if not self.tracks[e[0]].IsLocked()])
+    net = b.FindNet("Z").GetNetCode()
+    tracks = [t for t in b.GetTracks() if t.GetNetCode() == net]
+    pads = [p for fp in b.GetFootprints() for p in fp.Pads() if p.GetNetCode() == net]
+    route._dead_net(b, net, tracks, [], pads)
+    assert _ends(b, "Z") == [("PCB_TRACK", 3.0, 2.0, 12.0, 2.0),
+                             ("PCB_TRACK", 9.0, 2.0, 9.0, 3.5)]
+
+
+def test_a_cut_that_would_part_the_pads_is_undone(tmp_path):
+    """A track runs over pad 2 (no end in it) and on 1 mm past it, into nothing. The graph does
+    not see a pad on a track's body, so it calls the whole run dead; cutting it would part the
+    pads, so the change is undone, and KiCad sees the net joined."""
+    from hw.tests.test_finish import make_board
+    b = make_board(tmp_path, {"A": [(3, 6), (12, 6)], "GND": [(22, 11)]})
+    b.GetDesignSettings().m_TrackMinWidth = pcbnew.FromMM(0.15)
+    _track(b, "A", pcbnew.F_Cu, (3, 6), (13, 6))
+    route.drop_dead_copper(b)
+    assert _ends(b, "A") == [("PCB_TRACK", 3.0, 6.0, 13.0, 6.0)]
+    assert route._pieces_with_pads(b, b.FindNet("A").GetNetCode()) == 1
+    path = tmp_path / "through.kicad_pcb"
+    pcbnew.SaveBoard(str(path), b)
+    assert cd.run_drc(path)["unconnected_items"] == []
+
+
+def test_a_stub_left_by_a_via_s_removal_goes_on_the_next_pass(tmp_path):
+    """A stub inside a one-layer via's pad is a loop on the via's node, kept while the via joins
+    two tracks. The via goes (its ends joined at its centre); only then is the stub's far end on
+    nothing, and the next pass cuts it."""
+    from hw.tests.test_finish import make_board
+    F = pcbnew.F_Cu
+    b = make_board(tmp_path, {"Y": [(3, 6), (10, 6)], "GND": [(22, 11)]})
+    _track(b, "Y", F, (3, 6), (6, 6))
+    _via_at(b, "Y", 6, 6)
+    _track(b, "Y", F, (6.25, 6), (10, 6))
+    _track(b, "Y", F, (6, 6), (6, 6.2))                  # inside the via's pad
+    route.drop_dead_copper(b)
+    assert _ends(b, "Y") == [("PCB_TRACK", 3.0, 6.0, 6.0, 6.0),
+                             ("PCB_TRACK", 6.25, 6.0, 6.0, 6.0),
+                             ("PCB_TRACK", 6.25, 6.0, 10.0, 6.0)]
 
 
 def test_route_cleans_the_session_s_dead_copper_before_the_finisher(tmp_path, monkeypatch):

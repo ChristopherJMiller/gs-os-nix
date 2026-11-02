@@ -12,8 +12,8 @@ its .kicad_pro and .kicad_dru) is routed as the justfile's `route` routes it (ro
 ROUTE_ARGS and the same passes), and the copy's copper signature is compared with BOARD's: every
 track (net, layer, ends, width; an arc's middle too) and via (net, place, size, drill), each with
 whether it is locked, sorted (bus_route.signature), line for line with duplicates counted. A
-route that leaves nets unrouted is compared all the same. It takes as long as a route, so it is the justfile's `repro` recipe, not part of `check`
-or `nix flake check`.
+route that leaves nets unrouted is compared all the same. It takes as long as a route, so
+it is the justfile's `repro` recipe, not part of `check` or `nix flake check`.
 
 The selftest plants differences on BOARD as loaded (one track end moved by 1 um, one via taken
 away, one track made wider, one stray via added, one track's lock flipped) and compares each
