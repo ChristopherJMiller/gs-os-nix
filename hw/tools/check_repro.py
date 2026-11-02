@@ -10,17 +10,18 @@ on every run. So routing the committed board again must give its copper. route s
 every track and via away, so the routed board is itself the start: a temporary copy of it (with
 its .kicad_pro and .kicad_dru) is routed as the justfile's `route` routes it (route.py with
 ROUTE_ARGS and the same passes), and the copy's copper signature is compared with BOARD's: every
-track (net, layer, ends, width) and via (net, place, size, drill), each with whether it is
-locked, sorted (bus_route.signature). A route that leaves nets unrouted is compared all the
-same. It takes as long as a route, so it is the justfile's `repro` recipe, not part of `check`
+track (net, layer, ends, width; an arc's middle too) and via (net, place, size, drill), each with
+whether it is locked, sorted (bus_route.signature), line for line with duplicates counted. A
+route that leaves nets unrouted is compared all the same. It takes as long as a route, so it is the justfile's `repro` recipe, not part of `check`
 or `nix flake check`.
 
 The selftest plants differences on BOARD as loaded (one track end moved by 1 um, one via taken
-away, one track made wider, one stray via added) and compares each with BOARD; each must be
-reported, naming its net. BOARD must have copper (a routed board).
+away, one track made wider, one stray via added, one track's lock flipped) and compares each
+with BOARD; each must be reported, naming its net. BOARD must have copper (a routed board).
 """
 import argparse
 import shutil
+from collections import Counter
 import sys
 import tempfile
 from pathlib import Path
@@ -43,10 +44,11 @@ def signature(board) -> list[str]:
 
 
 def compare(ours: list[str], again: list[str]) -> list[str]:
-    """The lines only in BOARD's signature and only in the re-route's, as problems."""
-    a, b = set(ours), set(again)
-    out = [f"only in BOARD: {line}" for line in sorted(a - b)]
-    out += [f"only in the re-route: {line}" for line in sorted(b - a)]
+    """The lines only in BOARD's signature and only in the re-route's, as problems; counted, so
+    a track laid twice is a difference."""
+    a, b = Counter(ours), Counter(again)
+    out = [f"only in BOARD: {line}" for line in sorted((a - b).elements())]
+    out += [f"only in the re-route: {line}" for line in sorted((b - a).elements())]
     return out
 
 
@@ -115,8 +117,15 @@ def _stray(b):
     return t.GetNetname()
 
 
+def _lock_flipped(b):
+    t = _first(b, via=False)
+    t.SetLocked(not t.IsLocked())
+    return t.GetNetname()
+
+
 PLANT = {"a track end moved 1 um": _nudge, "a via taken away": _no_via,
-         "a track made wider": _wider, "a stray via": _stray}
+         "a track made wider": _wider, "a stray via": _stray,
+         "a track's lock flipped": _lock_flipped}
 
 
 def selftest(board: Path) -> list[str]:

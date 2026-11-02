@@ -766,11 +766,16 @@ def lay_item(board, net: str, item, tent: bool = True) -> None:
 
 
 def signature_line(t) -> str:
-    """One track or via as text: net, layer, ends and width, or net, place, size and drill;
-    and whether it is locked."""
+    """One track, arc or via as text: net, layer, ends (an arc's middle too) and width, or net,
+    place, size and drill; and whether it is locked."""
     if t.GetClass() == "PCB_VIA":
         return (f"via {t.GetNetname()} {t.GetPosition().x} {t.GetPosition().y} "
                 f"{t.GetWidth(F)} {t.GetDrill()} {int(t.IsLocked())}")
+    if t.GetClass() == "PCB_ARC":
+        m = t.GetMid()
+        return (f"arc {t.GetNetname()} {t.GetLayerName()} {t.GetStart().x} {t.GetStart().y} "
+                f"{m.x} {m.y} {t.GetEnd().x} {t.GetEnd().y} {t.GetWidth()} "
+                f"{int(t.IsLocked())}")
     return (f"track {t.GetNetname()} {t.GetLayerName()} {t.GetStart().x} "
             f"{t.GetStart().y} {t.GetEnd().x} {t.GetEnd().y} {t.GetWidth()} "
             f"{int(t.IsLocked())}")

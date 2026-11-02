@@ -79,6 +79,42 @@ def test_the_selftest_catches_each_plant(tmp_path):
     assert check_repro.selftest(_routed(tmp_path)) == []
 
 
+def test_the_selftest_plants_a_lock_flag_flipped(tmp_path):
+    """bus_route's and the first pass's copper is locked, the router's is not: a re-route that
+    locked a track differently is not the committed board."""
+    assert any("lock" in name for name in check_repro.PLANT)
+    b = pcbnew.LoadBoard(str(_routed(tmp_path)))
+    ours = check_repro.signature(b)
+    net = check_repro.PLANT[next(n for n in check_repro.PLANT if "lock" in n)](b)
+    assert any(f" {net} " in p for p in check_repro.compare(ours, check_repro.signature(b)))
+
+
+def test_compare_counts_a_track_laid_twice():
+    """Two identical tracks are two lines: a re-route that lays one twice differs."""
+    assert check_repro.compare(["track A"], ["track A", "track A"]) == \
+        ["only in the re-route: track A"]
+    assert check_repro.compare(["track A", "track A"], ["track A"]) == \
+        ["only in BOARD: track A"]
+
+
+def test_the_signature_tells_two_arcs_apart_by_their_middle(tmp_path):
+    from hw.tests.test_finish import v
+
+    def arc_board(mid_y):
+        b = make_board(tmp_path, {"N1": [(4, 6), (20, 6)]})
+        a = pcbnew.PCB_ARC(b)
+        a.SetStart(v(4, 6))
+        a.SetMid(v(12, mid_y))
+        a.SetEnd(v(20, 6))
+        a.SetLayer(F)
+        a.SetWidth(pcbnew.FromMM(0.15))
+        a.SetNet(b.FindNet("N1"))
+        b.Add(a)
+        return check_repro.signature(b)
+
+    assert arc_board(4.0) != arc_board(3.0)
+
+
 def test_the_reroute_uses_the_justfile_route_arguments():
     """`repro` must route as `route` does: the same route.py flags as the justfile's recipe."""
     text = (ROOT / "hw" / "justfile").read_text()

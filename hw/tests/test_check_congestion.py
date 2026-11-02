@@ -15,23 +15,31 @@ from hw.tools import check_congestion as cc
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def git_show(rev: str, path: str, out: Path) -> bool:
-    """`rev:path` into `out`; False if there is no such commit, no checkout, or no git."""
+def git_show(rev: str, path: str, out: Path) -> str | None:
+    """`rev:path` into `out`; None if that worked, else why not (no git, or no such commit
+    or checkout)."""
     try:
         r = subprocess.run(["git", "show", f"{rev}:{path}"], cwd=ROOT, capture_output=True)
-    except FileNotFoundError:            # no git on the PATH (the nix build sandbox)
-        return False
+    except FileNotFoundError:            # the nix build sandbox
+        return "no git on the PATH"
     if r.returncode != 0:
-        return False
+        return f"commit {rev} is not in this checkout"
     out.write_bytes(r.stdout)
-    return True
+    return None
 
 
-def test_git_show_is_false_where_there_is_no_git(tmp_path, monkeypatch):
+def test_git_show_says_there_is_no_git(tmp_path, monkeypatch):
     """`nix flake check` runs the tests with no git on the PATH: the plan-1 test must skip
-    there, not fail (it failed hw-tests with FileNotFoundError: 'git')."""
+    there, not fail (it failed hw-tests with FileNotFoundError: 'git'), and say why."""
     monkeypatch.setenv("PATH", str(tmp_path))
-    assert git_show("HEAD", "hw/justfile", tmp_path / "out") is False
+    assert "no git" in git_show("HEAD", "hw/justfile", tmp_path / "out")
+
+
+def test_git_show_says_a_commit_is_missing(tmp_path):
+    if git_show("HEAD", "hw/justfile", tmp_path / "head") is not None:
+        pytest.skip("not a git checkout")
+    why = git_show("0000000", "hw/justfile", tmp_path / "out")
+    assert "0000000" in why and "not in this checkout" in why
 
 
 def test_run_capacity_is_the_open_edge_rate_for_a_free_edge():
@@ -133,8 +141,9 @@ def test_a_run_on_the_committed_board_raises_no_kicad_assert(capfd):
 def test_plan1_routed_board_passes(tmp_path):
     """Plan 1's board (7430efe) routed on two layers, so the gate must not fail it."""
     pcb = tmp_path / "plan1.kicad_pcb"
-    if not (git_show("7430efe", "hw/carrier/carrier.kicad_pcb", pcb)
-            and git_show("7430efe", "hw/carrier/carrier.kicad_pro", pcb.with_suffix(".kicad_pro"))):
-        pytest.skip("commit 7430efe is not in this checkout")
+    why = (git_show("7430efe", "hw/carrier/carrier.kicad_pcb", pcb)
+           or git_show("7430efe", "hw/carrier/carrier.kicad_pro", pcb.with_suffix(".kicad_pro")))
+    if why:
+        pytest.skip(why)
     res = cc.analyze(pcbnew.LoadBoard(str(pcb)))
     assert cc.problems(res) == [], cc.problems(res)
