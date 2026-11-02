@@ -19,10 +19,13 @@ The pipeline (route(); `just -f hw/justfile route` runs it with --first --repair
    drop_pad_stubs (tracks wholly on a pad of their net), drop_dead_copper (vias joined on one
    layer, tracks on a locked track, dead ends cut back), widen_stubs.
 6. With --repair, repair_clock_clearance; then finish_unrouted joins what the router left
-   (the A*); the repair again; the pours are refilled and BOARD is saved in place.
+   (the A*); the repair again; the zones are refilled and BOARD is saved in place.
 
-Every step is deterministic (Freerouting 2.5.0 is pinned in the flake and gives the same
-session on every run): `just repro` routes a copy again and compares the copper. The routed
+Every step is deterministic given the flake's pinned inputs: KiCad 10.0.6 (its DSN export, SES
+import and zone refill), the pinned Freerouting 2.5.0 jar on JDK 25, ROUTER_THREADS = 6 and the
+`route` recipe's pass count (--passes defaults to the justfile's 20; a test keeps them equal).
+That was checked on one machine. Bumping nixpkgs or the jar means running `route` and `repro`
+again. `just repro` routes a copy again and compares the copper. The routed
 board is committed, and hw-drc (check_drc.py) is what ties it to the netlist. Freerouting runs
 with a temporary HOME and XDG directories, so it never touches ~/.config/freerouting.
 
@@ -36,8 +39,8 @@ whatever the router does. Anything the router lays for a plane net anyway is dro
 
 What is fixed in the DSN between pcbnew and freerouting (prepare_dsn):
 
-* Edge clearance (ruling R4). Freerouting 2.4.1 rejects
-  `--router.copperToEdgeClearanceUm 500` ("Unknown command line argument"), so the
+* Edge clearance (ruling R4). Freerouting 2.4.1 rejected
+  `--router.copperToEdgeClearanceUm 500` ("Unknown command line argument"; not re-tried on 2.5.0), so the
   0.5 mm copper-to-edge rule is built into the DSN: a keepout strip along every board
   edge (except the tab's bottom edge, where the bevel keepout already is), as wide as
   the 0.5 mm less the clearance the router adds around a keepout.
@@ -87,7 +90,7 @@ EDGE_CLEARANCE_MM = 0.5
 VIA_MM = 0.6
 VIA_DRILL_MM = 0.3
 DUP_SUFFIX = "_dup"
-GND_JOIN_MM = 0.15                 # width of the GND tracks finish_unrouted lays (hw-drc exempts GND)
+GND_JOIN_MM = 0.15                 # legacy (2-layer): a GND track is laid this thin; the planes carry GND now
 RES_MM = 0.05                      # finish_unrouted's grid
 MARGIN_MM = 0.03                   # what it keeps over the minimum
 HOLE_CLEARANCE_MM = 0.25           # copper to hole wall, KiCad's default
@@ -788,7 +791,7 @@ def _clone(t):
 def net_width_mm(board, name: str) -> float:
     """The track width of a net's class (the Power class makes the rails 0.5 mm), never
     less than the minimum."""
-    if name == "GND":                   # the pours carry it; a track only joins what they miss
+    if name == "GND":                   # legacy: a plane carries GND; a track only joins what its fanout misses
         return GND_JOIN_MM
     nc = board.GetDesignSettings().m_NetSettings.GetEffectiveNetClass(name)
     return max(_mm(nc.GetTrackWidth()), MIN_TRACK_MM)
@@ -796,10 +799,10 @@ def net_width_mm(board, name: str) -> float:
 
 def _rip_up_and_join(board, net: int, width_mm: float | None = None) -> str | None:
     """`net` is walled in by the tracks of other nets. Take away the tracks of a small net
-    (or, failing that, just the GND tracks that are in the way), join `net`, and put what
-    was taken away back (the small net routed again; GND by its pours and, where they
-    are cut, by new tracks). Returns what it moved, or None (and the board as it was)."""
-    gnd = board.FindNet("GND").GetNetCode()
+    that has none locked, join `net`, and put the small net back by routing it again. GND is
+    never a candidate (it is a plane on 4 layers and its fanout necks are locked), and no net
+    with a locked track is: the path is never laid across a locked track. Returns what it
+    moved, or None (and the board as it was)."""
     width_of = (lambda code: width_mm if width_mm else
                 net_width_mm(board, board.FindNet(code).GetNetname()))
     pieces = sorted(_components(board, net), key=_size)
@@ -815,11 +818,12 @@ def _rip_up_and_join(board, net: int, width_mm: float | None = None) -> str | No
     for fp in board.GetFootprints():
         for p in fp.Pads():
             pad_count[p.GetNetCode()] = pad_count.get(p.GetNetCode(), 0) + 1
+    gnd = board.FindNet("GND").GetNetCode()
     locked = {t.GetNetCode() for t in board.GetTracks() if t.IsLocked()}
     order = sorted((m for m in near if m != gnd and m not in locked
                     and pad_count.get(m, 0) <= 4),
                    key=lambda m: pad_count.get(m, 0))
-    for m in order + ([gnd] if gnd in near else []):
+    for m in order:
         w, wm = width_of(net), width_of(m)
         grid = _Grid(board, net, w, ignore_tracks={m})
         src = grid.own(pieces[0])
@@ -827,35 +831,23 @@ def _rip_up_and_join(board, net: int, width_mm: float | None = None) -> str | No
                      if (p := _astar(grid, src, grid.own(o)))), None)
         if not path:
             continue
-        if m == gnd:                       # only the GND tracks the new path runs into
-            planned = _lay_path(board, grid, net, path, w)
-            old = [t for t in board.GetTracks()
-                   if t.GetNetCode() == m and not t.IsLocked() and _clashes(t, planned)]
-            for t in planned:
-                board.RemoveNative(t)
-        else:
-            old = [t for t in board.GetTracks() if t.GetNetCode() == m]
+        old = [t for t in board.GetTracks() if t.GetNetCode() == m]
         saved = [_clone(t) for t in old]
         for t in old:
             board.RemoveNative(t)
         made = _lay_path(board, grid, net, path, w)
-        if m == gnd:
-            refill(board)
         if _join_pieces(board, net, w, made) and _join_pieces(board, m, wm, made):
             return board.FindNet(m).GetNetname()
         for t in made:                                # it did not work: put it all back
             board.RemoveNative(t)
         for t in saved:
             board.Add(t)
-        if m == gnd:
-            refill(board)
     return None
 
 
 def finish_unrouted(board, width_mm: float | None = None) -> list[str]:
-    """Join the pieces of each net that the router left apart (GND last, with its pours
-    taken into account), moving a small net or some GND track aside where one is in the
-    way. Every net is laid at the width of its net class (`width_mm` overrides, for
+    """Join the pieces of each net that the router left apart, moving a small net (never
+    GND, never a net with a locked track) aside where one is in the way. Every net is laid at the width of its net class (`width_mm` overrides, for
     tests): a rail that cannot be joined at 0.5 mm is reported, not joined thin. Returns
     what could not be joined, as messages."""
     failed = []
@@ -1785,7 +1777,7 @@ def run_freerouting(dsn: Path, ses: Path, passes: int, timeout_s: int, log: Path
             raise SystemExit(f"freerouting still running after {timeout_s} s; see {log}")
 
 
-def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | None = None,
+def route(board: Path, passes: int = 20, timeout_s: int = 3000, keep: Path | None = None,
           extra: list[str] = (), first: list[str] | None = None,
           router=run_freerouting, keep_locked: bool = False, keep_all: bool = False,
           repair: bool = False, bus=None) -> None:
@@ -1853,7 +1845,7 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("board", type=Path)
-    ap.add_argument("--passes", type=int, default=30)
+    ap.add_argument("--passes", type=int, default=20)
     ap.add_argument("--timeout", type=int, default=3000, help="seconds")
     ap.add_argument("--keep", type=Path, help="keep the DSN, SES and log in this directory")
     ap.add_argument("--first", nargs="?", const="", default=None, metavar="NETS",

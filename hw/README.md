@@ -43,8 +43,10 @@ room for are named on the fab layer and in the interactive BOM.
 contacts in the order of its translator's pins, so its nets never cross. Our own router,
 `bus_route.py`, then lays those buses, the clocks and most of the 5 V rails, deterministically, and
 locks them. Freerouting 2.5.0 routes the remaining nets, an A* finisher joins whatever it
-leaves, and every step gives the same copper on every run: `just -f hw/justfile repro` routes
-the board again and checks that it does.
+leaves, and every step gives the same copper on every run of the flake's pinned inputs (KiCad 10.0.6,
+the Freerouting 2.5.0 jar on JDK 25, 6 router threads, the `route` recipe's 20 passes; checked on
+one machine): `just -f hw/justfile repro` routes the board again and checks that it does. Bumping
+nixpkgs or the jar means running `route` and `repro` again.
 
 **Status:** designed, routed and gated. It is not yet fabricated, and not yet tested in
 a IIgs. Rev A, the integrated ECP5 card, is ordered only after this carrier has run in

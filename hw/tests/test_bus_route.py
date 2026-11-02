@@ -744,3 +744,23 @@ def test_the_power_paths_are_in_the_report(carrier):
     _, report, _ = carrier
     laid = report.laid.get("power", [])
     assert any(s.startswith("+5V_MOD") for s in laid) and any(s.startswith("+5V ") for s in laid)
+
+
+def test_bus_route_still_lays_the_committed_boards_locked_copper(carrier):
+    """The drift test: the copper bus_route lays on a fresh copy (after the fanout) is, line
+    for line, in the committed board's locked copper. What the board has beyond it belongs to
+    nets bus_route did not lay (the clocks, the first pass). So plan_buses,
+    bus_route and the fanout still produce what is committed; a changed lane spacing, say,
+    fails here in a minute instead of at `repro`."""
+    path, report, _ = carrier
+
+    def locked(p):
+        return {br.signature_line(t) for t in pcbnew.LoadBoard(str(p)).GetTracks()
+                if t.IsLocked()}
+
+    mine, committed = locked(path), locked(CARRIER)
+    assert mine
+    assert mine <= committed, sorted(mine - committed)[:5]
+    beyond = {line.split()[1] for line in committed - mine}
+    laid = {n for nets in report.laid.values() for n in nets}
+    assert not beyond & laid, sorted(beyond & laid)

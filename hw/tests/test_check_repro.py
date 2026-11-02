@@ -130,3 +130,21 @@ def test_the_reroute_uses_the_justfile_route_arguments():
                          "{{PASSES}}"]
     assert words[4:] == check_repro.ROUTE_ARGS
     assert "check_repro.py" in recipe("repro") and "{{PASSES}}" in recipe("repro")
+
+
+def test_the_pass_counts_agree_everywhere():
+    """A direct `route.py` run, `route.route()`, check_repro and the justfile's `route` and
+    `repro` recipes all use one pass count, so a direct run matches the committed copper."""
+    import inspect
+    import re
+
+    text = (ROOT / "hw" / "justfile").read_text()
+    just = set(re.findall(r'^(?:route|repro) PASSES="(\d+)":', text, re.M))
+    assert len(just) == 1
+    want = int(just.pop())
+    for src in ("route.py", "check_repro.py"):
+        code = (ROOT / "hw" / "tools" / src).read_text()
+        got = re.findall(r'add_argument\("--passes", type=int, default=(\d+)', code)
+        assert got == [str(want)], src
+    from hw.tools import route as route_mod
+    assert inspect.signature(route_mod.route).parameters["passes"].default == want

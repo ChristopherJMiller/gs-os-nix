@@ -4,9 +4,11 @@
     python3 hw/tools/check_repro.py BOARD.kicad_pcb [--passes N]      # HW REPRO OK
     python3 hw/tools/check_repro.py --selftest BOARD.kicad_pcb         # HW REPRO SELFTEST OK
 
-Every step of route.py is deterministic: the plane fanout, bus_route's rivers and power paths,
-the A* first pass and finisher, and Freerouting 2.5.0, whose session is the same byte for byte
-on every run. So routing the committed board again must give its copper. route starts by taking
+Every step of route.py is deterministic given the flake's pinned inputs (KiCad 10.0.6's DSN
+export, SES import and zone refill; the pinned Freerouting 2.5.0 jar on JDK 25; ROUTER_THREADS = 6;
+the `route` recipe's pass count), as checked on one machine: the plane fanout, bus_route's rivers
+and power paths, the A* first pass and finisher, and Freerouting's session, byte for byte. Bumping
+nixpkgs or the jar means running `route` and `repro` again. So routing the committed board again must give its copper. route starts by taking
 every track and via away, so the routed board is itself the start: a temporary copy of it (with
 its .kicad_pro and .kicad_dru) is routed as the justfile's `route` routes it (route.py with
 ROUTE_ARGS and the same passes), and the copy's copper signature is compared with BOARD's: every

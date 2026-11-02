@@ -67,8 +67,9 @@ route PASSES="20":
 
 # The reproducibility check (selftest first): route a temporary copy of the committed board as
 # `route` does (the same route.py flags and passes) and compare its copper, track for track,
-# with the committed board's. Every step of the route is deterministic, so they must be the
-# same. It takes as long as a route (minutes), so it is not part of `check`; run it after `route`.
+# with the committed board's. Every step of the route is deterministic for the flake's pinned
+# inputs (one machine checked), so they must be the same; after bumping nixpkgs or the jar, run
+# `route` then this. It takes as long as a route (minutes), so it is not part of `check`; run it after `route`.
 repro PASSES="20":
     cd {{justfile_directory()}}/.. \
       && python3 hw/tools/check_repro.py --selftest hw/carrier/carrier.kicad_pcb \

@@ -383,7 +383,10 @@ Freerouting 2.5.0, whose output is the same on every run.
   two or more pads, the bus router completes 72, the first pass 3 more, and Freerouting and the
   finisher the last 40. Freerouting runs with a temporary HOME and XDG directories, so it never
   writes `~/.config/freerouting`.
-- **Reproducible.** Every step is deterministic, so `just -f hw/justfile repro` routes a copy of
+- **Reproducible.** Every step is deterministic for the flake's pinned inputs (KiCad 10.0.6's
+  DSN export, SES import and zone refill; the pinned Freerouting 2.5.0 jar on JDK 25;
+  `ROUTER_THREADS` = 6; the `route` recipe's 20 passes), as checked on one machine. Bumping
+  nixpkgs or the jar means running `route` and `repro` again. So `just -f hw/justfile repro` routes a copy of
   the committed board again and compares its copper, track for track (1576 tracks and vias,
   with their lock flags), and fails on any difference. It takes as long as a route (about 15
   minutes), so it is not part of `check`. The routed board is still committed source, and
@@ -652,7 +655,7 @@ Three recorders, behind a passive tap:
    person.
 8. **Fab outputs:** `kikit fab jlcpcb --assembly`, plus the Interactive HTML BOM.
 
-The routed `.kicad_pcb` is committed source. Routing is deterministic (HW-18), and
+The routed `.kicad_pcb` is committed source. Routing is deterministic for the pinned inputs (HW-18; bumping nixpkgs or the jar means `route` and `repro` again), and
 `hw-repro` checks that `route` lays the committed copper again; the parity check is what ties
 the board to the SKiDL netlist. Nets must come from pads and the netlist,
 never from net labels the agent writes onto tracks: in testing, KiCad silently moved a
