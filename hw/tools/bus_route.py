@@ -25,7 +25,8 @@ This does that, for the plan in hw/tools/plan_buses.py (which J2 contact each bi
   are joined by route.lay_first (the A* first pass, which keeps the Clock clearance) and locked;
 * so are the two 5 V rails (ruling P29, POWER): +5V_MOD round the board's edges and through the
   highway, +5V into U2 by vias under its body, in pieces at the Power width with necks (R23,
-  R26); what the pieces leave apart is listed as left, for the router after the single nets.
+  R26); what the pieces leave apart is listed as left, for Freerouting, which routes it with
+  every other net it is handed (in no order of ours).
 
 The rivers (carrier_plan(): plan_buses' rivers, each with its layout here; built from the pads):
 
@@ -1224,10 +1225,11 @@ def river_slot_data(r: "Router", river: pb.River) -> None:
 # left to itself it runs +5V_MOD across the middle of the board, through the band every other
 # net must cross. So they are planned: +5V_MOD round the edges and through the highway, +5V
 # into U2 by vias under its body. Every piece is offered on its own, so one that does not fit
-# is reported and the rest kept. What the pieces leave apart (+5V's groups) is the router's, to
-# join after the single nets: the A* joining them before the singles took the corridor from
-# U2's corner to U3 that slot_a_dir needs; after them it found its own way (both checked on
-# the carrier).
+# is reported and the rest kept. What the pieces leave apart (+5V's groups) is Freerouting's to
+# join, with all the other nets it is handed at once: it has no order of ours. They are not
+# joined here: the A* joining them before the single nets took the corridor from U2's corner to
+# U3 that slot_a_dir needs (checked on the carrier). What Freerouting leaves, route.py's finisher
+# joins, in net-name order (which puts +5V ahead of the signals).
 
 NECK_MM = 0.3                      # a Power-class neck: hw-drc allows 0.3 mm for at most 1.5 mm
 NECK_MAX_MM = 1.45
@@ -1375,7 +1377,7 @@ def power_5v(r: "Router", river: pb.River) -> None:
     """+5V: each group of its pads joined in place (D1-C2-F1, U3 and its capacitor, each of
     U2's VCCB pins and its capacitor); U2's pins (0.5 mm pitch, too fine for 0.5 mm copper) by
     a neck to a via under U2's body each, the vias joined on B.Cu across the body's middle. The
-    groups are the router's to join, after the single nets."""
+    groups are Freerouting's to join (see above)."""
     net = river.nets[0]
     w = r.space.width(net)
     pads = [p for fp in r.board.GetFootprints() for p in fp.Pads() if p.GetNetname() == net]
@@ -1419,10 +1421,12 @@ LAYOUTS = {"data": river_data, "listen": river_listen, "address": river_address,
            "slot_address": river_slot_address}
 CLOCKS = "clocks"                  # rivers laid by the clock step (the Clock class, A*)
 NOT_ATTEMPTED = {
-    "data_oe": "one pin on U1's slot-side row beside C7, with its pull-up R12: the first pass's",
-    "host": "the header lines start at the top edge, a short run down to the rear row: the "
-            "router's",
-    "rest": "single nets planned for the router (pads beyond the rivers)",
+    "data_oe": "the first pass lays it: one pin on U1's slot-side row, beside C7, with its "
+               "pull-up R12.",
+    "host": "Freerouting lays them: the header lines start at the top edge, a short run down to "
+            "the rear row.",
+    "rest": "Freerouting lays them: single nets, each to the nearest J2 pad the rivers left, in "
+            "either row.",
 }
 
 
@@ -1436,7 +1440,8 @@ def carrier_plan() -> list[tuple]:
         elif river.name.startswith("clocks"):
             out.append((river, CLOCKS))
         else:
-            out.append((river, NOT_ATTEMPTED.get(river.name, "no layout for this river")))
+            out.append((river, NOT_ATTEMPTED.get(
+                river.name, "Freerouting lays them: bus_route has no layout for this river.")))
     return out + [(river, POWER_LAYOUTS[river.name]) for river in POWER]
 
 
@@ -1445,7 +1450,8 @@ def run(board, plan=None, clocks: bool = True) -> Report:
     move the plane vias in their way, lock everything, then the clocks (A*, Clock class). A power
     net the pieces leave apart is listed as left. Every planned net ends up
     laid or in the report's `left` with its reason; a river the board cannot take (CannotLay)
-    is skipped and its nets listed."""
+    is skipped there, and its nets not laid by then are listed (a net laid in pieces as
+    'NET rest')."""
     plan = carrier_plan() if plan is None else plan
     r = Router(board)
     clock_rivers = []
@@ -1454,8 +1460,15 @@ def run(board, plan=None, clocks: bool = True) -> Report:
             try:
                 layout(r, river)
             except CannotLay as e:
+                laid = {k for keys in r.report.laid.values() for k in keys}
                 for n in river.nets:
-                    r.report.left.setdefault(n, f"{river.name}: river skipped: {e}")
+                    if n in laid:                    # laid whole before the layout stopped
+                        continue
+                    if any(k.startswith(f"{n} ") for k in laid):
+                        r.report.left.setdefault(f"{n} rest", f"{river.name}: the rest of the "
+                                                 f"layout skipped: {e}")
+                    else:
+                        r.report.left.setdefault(n, f"{river.name}: river skipped: {e}")
         elif layout == CLOCKS:
             clock_rivers.append(river)
         else:
@@ -1481,8 +1494,9 @@ def run(board, plan=None, clocks: bool = True) -> Report:
                 k = len(rt._components(board, board.FindNet(n).GetNetCode()))
                 if k > 1:
                     r.report.left[f"{n} joins"] = (
-                        f"power: {k} pieces for the router to join at the Power width, after the "
-                        "single nets (the A* joining them first walls in slot_a_dir)")
+                        f"power: {k} pieces for Freerouting to join at the Power width, with "
+                        "the other nets it routes (not here: the A* joining them before the "
+                        "single nets walls in slot_a_dir)")
     return r.report
 
 

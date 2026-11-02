@@ -1435,7 +1435,10 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
     """Route `board` in place. `bus` (a bus_route plan, e.g. bus_route.carrier_plan()) is laid and
     locked right after the plane fanout, the clocks with them; then `first` (net names; [] for
     the default set) are laid by the finisher and locked, so the router keeps both as fixed
-    wires. `router` is run_freerouting's signature (a test passes a stub)."""
+    wires. Everything else (the single nets, and the joins between the pieces bus_route lays of
+    +5V) goes to Freerouting in one DSN, which routes it all together in no order of ours; what
+    it leaves, finish_unrouted joins in net-name order (+5V ahead of the signals). `router` is
+    run_freerouting's signature (a test passes a stub)."""
     board = Path(board)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(keep) if keep else Path(tmp)

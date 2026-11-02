@@ -539,6 +539,57 @@ def test_a_skipped_river_lists_its_nets():
     assert all("river skipped" in why and "U9" in why for why in report.left.values())
 
 
+def test_a_layout_that_stops_after_laying_some_nets_lists_only_the_rest():
+    """A layout that lays part of its river and then raises CannotLay keeps what it laid, and
+    the report lists only the nets it did not lay (5f+5g review, minor 2)."""
+    b = river_board(obstacle=False)
+
+    def half(r, river):
+        u1, j2 = r.part("U1"), r.part("J2")
+        members = sorted((p.GetNetname(), p, next(q for q in j2.Pads()
+                                                  if q.GetNetname() == p.GetNetname()))
+                         for p in u1.Pads() if p.GetNetname() in river.nets[:4])
+        br.vriver(r, river.name, members, y0=17.0)
+        raise br.CannotLay("no room for the other four")
+
+    report = br.run(b, [(TEST_RIVER, half)], clocks=False)
+    laid = set(report.laid["test"])
+    assert laid == {"N0", "N1", "N2", "N3"}
+    assert set(report.left) == set(TEST_RIVER.nets) - laid, report.left
+    assert {t.GetNetname() for t in b.GetTracks()} == laid
+
+
+def test_a_net_laid_in_pieces_before_the_layout_stops_is_not_listed_as_left():
+    """+5V's groups are joined first, then U2 is looked for: with no U2 on the board the pieces
+    stay laid, and the report names what was not laid ("+5V rest"), not the net as unlaid."""
+    b = make()
+    part(b, "D1", [(1, "+5V", 10, 10, 0.8, 0.8)])
+    part(b, "C2", [(1, "+5V", 11.6, 10, 0.8, 0.8)])
+    report = br.run(b, [(br.POWER[1], br.POWER_LAYOUTS["+5V"])], clocks=False)
+    assert report.laid["power"] == ["+5V C2.1-D1.1"] or report.laid["power"] == ["+5V D1.1-C2.1"]
+    assert "+5V" not in report.left, report.left
+    assert "U2" in report.left["+5V rest"]
+
+
+def test_the_not_attempted_reasons_say_who_lays_the_nets_in_whole_sentences():
+    """5f+5g review, minor 3: a reason that stopped at "...: the first pass's" read as cut off.
+    Each says who lays the river's nets (the first pass or Freerouting) and why, as a sentence."""
+    for name, why in br.NOT_ATTEMPTED.items():
+        assert why.endswith(".") and not why.rstrip(".").endswith("'s"), (name, why)
+        assert "first pass" in why or "Freerouting" in why, (name, why)
+
+
+def test_the_power_joins_left_to_freerouting_claim_no_order():
+    """5f+5g review, minor 1: Freerouting routes every net it is handed together, so the report
+    may not say the +5V joins come "after the single nets"."""
+    b = make()
+    part(b, "U2", [(7, "+5V", 8, 10, 0.3, 1.5), (18, "+5V", 8, 20, 0.3, 1.5)])
+    part(b, "C2", [(1, "+5V", 20, 15, 0.8, 0.8)])
+    report = br.run(b, [(br.POWER[1], br.POWER_LAYOUTS["+5V"])], clocks=False)
+    why = report.left["+5V joins"]
+    assert "Freerouting" in why and "after the single" not in why, why
+
+
 def test_a_coding_bug_in_a_layout_is_not_swallowed():
     def broken(r, river):
         return river.no_such_field
@@ -635,7 +686,7 @@ def test_5v_mod_is_laid_whole_along_the_edges_and_the_highway(carrier):
 def test_5v_reaches_u2_by_vias_under_its_body_and_is_laid_or_reported(carrier):
     """+5V: U2's VCCB pins 7 and 18 by vias under U2's body joined on B.Cu, their capacitors
     by necks, U3's pin by its capacitor, D1 and C2 together; the joins between those groups are
-    the router's, after the single nets, and listed as left. Every piece is laid or listed."""
+    Freerouting's, and listed as left. Every piece is laid or listed."""
     path, report, _ = carrier
     b = pcbnew.LoadBoard(str(path))
     u2 = b.FindFootprintByReference("U2")
