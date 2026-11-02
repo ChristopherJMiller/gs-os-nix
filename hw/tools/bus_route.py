@@ -765,18 +765,20 @@ def lay_item(board, net: str, item, tent: bool = True) -> None:
     board.Add(t)
 
 
+def signature_line(t) -> str:
+    """One track or via as text: net, layer, ends and width, or net, place, size and drill;
+    and whether it is locked."""
+    if t.GetClass() == "PCB_VIA":
+        return (f"via {t.GetNetname()} {t.GetPosition().x} {t.GetPosition().y} "
+                f"{t.GetWidth(F)} {t.GetDrill()} {int(t.IsLocked())}")
+    return (f"track {t.GetNetname()} {t.GetLayerName()} {t.GetStart().x} "
+            f"{t.GetStart().y} {t.GetEnd().x} {t.GetEnd().y} {t.GetWidth()} "
+            f"{int(t.IsLocked())}")
+
+
 def signature(board) -> str:
     """Every track and via, as text, sorted: two runs that lay the same copper print the same."""
-    rows_ = []
-    for t in board.GetTracks():
-        if t.GetClass() == "PCB_VIA":
-            rows_.append(f"via {t.GetNetname()} {t.GetPosition().x} {t.GetPosition().y} "
-                         f"{t.GetWidth(F)} {t.GetDrill()} {int(t.IsLocked())}")
-        else:
-            rows_.append(f"track {t.GetNetname()} {t.GetLayerName()} {t.GetStart().x} "
-                         f"{t.GetStart().y} {t.GetEnd().x} {t.GetEnd().y} {t.GetWidth()} "
-                         f"{int(t.IsLocked())}")
-    return "\n".join(sorted(rows_)) + "\n"
+    return "\n".join(sorted(signature_line(t) for t in board.GetTracks())) + "\n"
 
 
 # --- movable plane vias near a river ---------------------------------------------------------

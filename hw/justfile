@@ -65,6 +65,15 @@ route PASSES="20":
       && python3 hw/tools/check_load.py --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb
 
+# The reproducibility check (selftest first): route a temporary copy of the committed board as
+# `route` does (the same route.py flags and passes) and compare its copper, track for track,
+# with the committed board's. Every step of the route is deterministic, so they must be the
+# same. It takes as long as a route (minutes), so it is not part of `check`; run it after `route`.
+repro PASSES="20":
+    cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/check_repro.py --selftest hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_repro.py hw/carrier/carrier.kicad_pcb --passes {{PASSES}}
+
 # The BOM gate, then the JLCPCB package and review artefacts (gerbers, BOM, CPL, ibom,
 # renders, layer SVGs, schematic PDF) in build/hw/fab, then the fab gate on them.
 fab: carrier
