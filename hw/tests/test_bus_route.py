@@ -431,7 +431,7 @@ def carrier(tmp_path_factory):
 
 def test_bus_route_lays_every_planned_net_of_the_carrier(carrier):
     _, report, _ = carrier
-    assert {k: len(v) for k, v in report.laid.items()} == RIVER_SIZES
+    assert {k: len(v) for k, v in report.laid.items() if k != "power"} == RIVER_SIZES
 
 
 def test_every_planned_net_is_laid_or_listed_left(carrier):
@@ -439,9 +439,10 @@ def test_every_planned_net_is_laid_or_listed_left(carrier):
     reported with the reason, never dropped in silence."""
     _, report, _ = carrier
     planned = {n for r in pb.RIVERS + pb.SLOT_RIVERS for n in r.nets}
-    laid = {n for nets in report.laid.values() for n in nets}
-    assert planned == laid | set(report.left)
-    assert set(report.left) == NOT_ATTEMPTED | CLOCKS            # the clocks were off here
+    laid = {n for k, nets in report.laid.items() if k != "power" for n in nets}
+    left = set(report.left) & planned
+    assert planned == laid | left
+    assert left == NOT_ATTEMPTED | CLOCKS                        # the clocks were off here
     assert all("not attempted" in report.left[n] for n in NOT_ATTEMPTED), report.left
     assert all("clock" in report.left[n] for n in CLOCKS)
 
@@ -506,9 +507,9 @@ def test_route_hands_the_router_the_halo_of_the_clocks_bus_route_laid(tmp_path):
 
 def test_the_carrier_plan_is_plan_buses_rivers():
     plan = br.carrier_plan()
-    assert [river for river, _ in plan] == list(pb.RIVERS + pb.SLOT_RIVERS)
+    assert [river for river, _ in plan] == list(pb.RIVERS + pb.SLOT_RIVERS + br.POWER)
     laid_by = {river.name for river, layout in plan if callable(layout)}
-    assert laid_by == set(RIVER_SIZES)
+    assert laid_by == set(RIVER_SIZES) | {r.name for r in br.POWER}
 
 
 def test_a_layout_lays_the_nets_its_river_names():
@@ -607,3 +608,54 @@ def test_bus_route_puts_no_via_in_the_finger_tab():
     pen = br.Pen((15, 24), F, 0.15).vert(21.5).via(B).vert(8.0)
     assert r.offer("N0", "test", pen.items) is False
     assert "tab" in r.report.left["N0"]
+
+
+# --- P29: the power paths -------------------------------------------------------------------
+
+def _pieces(b, net):
+    return len(route._components(b, b.FindNet(net).GetNetCode()))
+
+
+def test_5v_mod_is_laid_whole_along_the_edges_and_the_highway(carrier):
+    """+5V_MOD from D1 up the right edge, across the highway under the module, to J2's 5V pins
+    and down the left edge to VR1 and its capacitors: whole, locked, at the Power width with
+    necks, and never in the band between J2 and the translators."""
+    path, report, _ = carrier
+    b = pcbnew.LoadBoard(str(path))
+    assert _pieces(b, "+5V_MOD") == 1, report.left
+    mine = [t for t in b.GetTracks() if t.GetNetname() == "+5V_MOD"]
+    assert mine and all(t.IsLocked() for t in mine)
+    for t in mine:
+        for x, y in (br._pt(t.GetStart()), br._pt(t.GetEnd())):
+            assert not (8.0 < x < 73.5 and 27.5 < y < 50.0), (x, y)     # the band stays free
+    assert [p for p in check_drc.problems_width(b, path.with_suffix(".kicad_pro"))
+            if "+5V_MOD" in p] == []
+
+
+def test_5v_reaches_u2_by_vias_under_its_body_and_is_laid_or_reported(carrier):
+    """+5V: U2's VCCB pins 7 and 18 by vias under U2's body joined on B.Cu, their capacitors
+    by necks, U3's pin by its capacitor, D1 and C2 together; the joins between those groups are
+    the router's, after the single nets, and listed as left. Every piece is laid or listed."""
+    path, report, _ = carrier
+    b = pcbnew.LoadBoard(str(path))
+    u2 = b.FindFootprintByReference("U2")
+    body = [p for p in u2.Pads() if p.GetNetname() == "+5V"]
+    assert len(body) == 2
+    vias = [t for t in b.GetTracks() if t.GetClass() == "PCB_VIA" and t.GetNetname() == "+5V"]
+    lo = min(pcbnew.ToMM(p.GetY()) for p in u2.Pads())
+    hi = max(pcbnew.ToMM(p.GetY()) for p in u2.Pads())
+    for p in body:                            # a via straight in from the pin, under the body
+        assert any(abs(pcbnew.ToMM(v_.GetX() - p.GetX())) < 0.01
+                   and lo < pcbnew.ToMM(v_.GetY()) < hi for v_ in vias), p.GetNumber()
+    assert any(t.GetLayer() == B and t.GetNetname() == "+5V" for t in b.GetTracks()
+               if t.GetClass() != "PCB_VIA")
+    assert _pieces(b, "+5V") == 1 or any(k.startswith("+5V") and "+5V_MOD" not in k
+                                         for k in report.left), report.left
+    assert [p for p in check_drc.problems_width(b, path.with_suffix(".kicad_pro"))
+            if "+5V " in p] == []
+
+
+def test_the_power_paths_are_in_the_report(carrier):
+    _, report, _ = carrier
+    laid = report.laid.get("power", [])
+    assert any(s.startswith("+5V_MOD") for s in laid) and any(s.startswith("+5V ") for s in laid)

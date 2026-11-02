@@ -376,8 +376,8 @@ class _Grid:
         self.track = {l: self._copper(board, l, trk) for l in _LAYERS}
         via_maps = [self._copper(board, l, via) for l in _LAYERS]
         self.via = via_maps[0] | via_maps[1]
-        if net:                     # P28: no via over a pad, its own net's either
-            self.via |= self._own_smd_pads(board, VIA_MM / 2 + MARGIN_MM)
+        if net:                     # P28: no via over a pad, its own net's either; and every
+            self.via |= self._own_smd_pads(board, PLANE_VIA_MIN_MM)   # via 0.4 mm off it (P19)
         for l in self.track:
             self.track[l] |= self._outside(board, EDGE_CLEARANCE_MM + width_mm / 2 + MARGIN_MM)
         self.via |= self._outside(board, EDGE_CLEARANCE_MM + VIA_MM / 2 + MARGIN_MM)

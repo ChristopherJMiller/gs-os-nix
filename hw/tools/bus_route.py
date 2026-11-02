@@ -22,7 +22,10 @@ This does that, for the plan in hw/tools/plan_buses.py (which J2 contact each bi
   needed the room are reported instead;
 * everything laid is locked, so Freerouting keeps it as fixed wiring (`(type fix)`);
 * the clocks are its too (the brief's second option): after the rivers, the Clock class nets
-  are joined by route.lay_first (the A* first pass, which keeps the Clock clearance) and locked.
+  are joined by route.lay_first (the A* first pass, which keeps the Clock clearance) and locked;
+* so are the two 5 V rails (ruling P29, POWER): +5V_MOD round the board's edges and through the
+  highway, +5V into U2 by vias under its body, in pieces at the Power width with necks (R23,
+  R26); what the pieces leave apart is listed as left, for the router after the single nets.
 
 The rivers (carrier_plan(): plan_buses' rivers, each with its layout here; built from the pads):
 
@@ -656,10 +659,12 @@ class Router:
         return _box([q for poly in pad_poly(pad, layer) for q in poly])
 
     # -- keeping or refusing a route --
-    def offer(self, net: str, river: str, items: list) -> bool:
-        """Check a whole net; keep it (and make it an obstacle) or report why not."""
+    def offer(self, net: str, river: str, items: list, piece: str | None = None) -> bool:
+        """Check a whole net (or one `piece` of it, laid or refused on its own); keep it (and make
+        it an obstacle) or report why not."""
+        key = f"{net} {piece}" if piece else net
         if net in self.existing:
-            self.report.kept.append(net)
+            self.report.kept.append(key)
             return False
         items = merge(items)
         problems, soft = [], set()
@@ -670,20 +675,20 @@ class Router:
             if problems:
                 break
         if problems:
-            self.report.left[net] = f"{river}: {problems[0]}"
+            self.report.left[key] = f"{river}: {problems[0]}"
             return False
-        self.routes[net] = Route(net, river, items)
-        self.ids[net] = [i for it in items for i in self.space.add_item(net, it, label=net)]
-        self.soft_hits[net] = soft
-        self.report.laid.setdefault(river, []).append(net)
+        self.routes[key] = Route(net, river, items)
+        self.ids[key] = [i for it in items for i in self.space.add_item(net, it, label=net)]
+        self.soft_hits[key] = soft
+        self.report.laid.setdefault(river, []).append(key)
         return True
 
-    def drop(self, net: str, why: str) -> None:
-        r = self.routes.pop(net)
-        self.space.remove(self.ids.pop(net))
-        self.soft_hits.pop(net, None)
-        self.report.laid[r.river].remove(net)
-        self.report.left[net] = why
+    def drop(self, key: str, why: str) -> None:
+        r = self.routes.pop(key)
+        self.space.remove(self.ids.pop(key))
+        self.soft_hits.pop(key, None)
+        self.report.laid[r.river].remove(key)
+        self.report.left[key] = why
 
     # -- the P19 vias in the way --
     def relocate(self) -> None:
@@ -726,9 +731,9 @@ class Router:
     # -- laying --
     def lay(self) -> int:
         n = 0
-        for net in sorted(self.routes):
-            for it in self.routes[net].items:
-                lay_item(self.board, net, it)
+        for key in sorted(self.routes):
+            for it in self.routes[key].items:
+                lay_item(self.board, self.routes[key].net, it)
                 n += 1
         return n
 
@@ -1212,6 +1217,201 @@ def river_slot_data(r: "Router", river: pb.River) -> None:
         r.offer(n, river.name, pen.items + [stub1, stub4])
 
 
+# --- the power paths (P29) ------------------------------------------------------------------
+#
+# The reviewer's probe joined every net left after the rivers with the A* except +5V and
+# +5V_MOD: at the Power class's 0.5 mm the A* cannot enter U2's 0.5 mm-pitch VCCB pins, and
+# left to itself it runs +5V_MOD across the middle of the board, through the band every other
+# net must cross. So they are planned: +5V_MOD round the edges and through the highway, +5V
+# into U2 by vias under its body. Every piece is offered on its own, so one that does not fit
+# is reported and the rest kept. What the pieces leave apart (+5V's groups) is the router's, to
+# join after the single nets: the A* joining them before the singles took the corridor from
+# U2's corner to U3 that slot_a_dir needs; after them it found its own way (both checked on
+# the carrier).
+
+NECK_MM = 0.3                      # a Power-class neck: hw-drc allows 0.3 mm for at most 1.5 mm
+NECK_MAX_MM = 1.45
+
+
+def _overlap(a: tuple, b: tuple) -> tuple | None:
+    lo, hi = max(a[0], b[0]), min(a[1], b[1])
+    return (lo, hi) if hi > lo else None
+
+
+def _inset(p: P, box: tuple, d: float) -> P:
+    return (min(max(p[0], box[0] + d), box[2] - d), min(max(p[1], box[1] + d), box[3] - d))
+
+
+def link_items(r: "Router", p, q, w: float) -> list | None:
+    """Copper joining two pads of one net on their layer: a bar (width w) straight across where
+    their x or y ranges overlap by w, else a neck corner to corner (NECK_MM, at most
+    NECK_MAX_MM long); None if a neck would be longer."""
+    layer = F if p.IsOnLayer(F) else B
+    bp, bq = r.box(p, layer), r.box(q, layer)
+    cp, cq = _pt(p.GetPosition()), _pt(q.GetPosition())
+    ox, oy = _overlap((bp[0], bp[2]), (bq[0], bq[2])), _overlap((bp[1], bp[3]), (bq[1], bq[3]))
+    if ox and ox[1] - ox[0] >= w:
+        x = (ox[0] + ox[1]) / 2
+        return [Seg(layer, (x, cp[1]), (x, cq[1]), w)]
+    if oy and oy[1] - oy[0] >= w:
+        y = (oy[0] + oy[1]) / 2
+        return [Seg(layer, (cp[0], y), (cq[0], y), w)]
+    d = NECK_MM / 2 + 0.01
+    a = _inset(cq, bp, d)
+    b = _inset(a, bq, d)
+    if math.dist(a, b) > NECK_MAX_MM:
+        return None
+    return [Seg(layer, a, b, NECK_MM)]
+
+
+def loop_items(r: "Router", p, q, w: float) -> list[list]:
+    """Copper joining two pads one above the other round what sits between them: out to the
+    side by w, along, and back, on the right of both pads and on the left (in that order). The
+    side runs midway between the pads' column and the nearest pad beyond it."""
+    layer = F if p.IsOnLayer(F) else B
+    cp, cq = _pt(p.GetPosition()), _pt(q.GetPosition())
+    bp, bq = r.box(p, layer), r.box(q, layer)
+    out = []
+    for side in (1, -1):
+        edge = max(bp[2], bq[2]) if side > 0 else min(bp[0], bq[0])
+        lo, hi = min(cp[1], cq[1]), max(cp[1], cq[1])
+        beyond = [o.box[0] if side > 0 else o.box[2] for o in
+                  _pads_in(r, (edge, lo, edge + 3, hi) if side > 0 else (edge - 3, lo, edge, hi),
+                           layer, skip={p.GetNetname()})
+                  if (o.box[0] > edge if side > 0 else o.box[2] < edge)]
+        far = (min(beyond) if side > 0 else max(beyond)) if beyond else edge + side * 2.0
+        x = (edge + far) / 2
+        pen = Pen(cp, layer, w).horiz(x).vert(cq[1]).horiz(cq[0])
+        out.append(pen.items)
+    return out
+
+
+def _label(p) -> str:
+    return f"{p.GetParentFootprint().GetReference()}.{p.GetNumber()}"
+
+
+def join_pads(r: "Router", net: str, pads: list, w: float) -> None:
+    """Join a small group of a net's pads (one piece per link), nearest first (Prim, from the
+    first pad): a bar or a neck, else a loop round what is between; a link that fits none is
+    reported."""
+    done, rest = [pads[0]], list(pads[1:])
+    while rest:
+        p, q = min(((p, q) for p in done for q in rest),
+                   key=lambda pq: (math.dist(_pt(pq[0].GetPosition()), _pt(pq[1].GetPosition())),
+                                   _label(pq[0]), _label(pq[1])))
+        rest.remove(q)
+        done.append(q)
+        piece = f"{_label(p)}-{_label(q)}"
+        tries = [t for t in [link_items(r, p, q, w)] if t] + loop_items(r, p, q, w)
+        for items in tries:
+            hard = [h for it in items for h in r.space.check(net, it)[0]]
+            if not hard:
+                r.offer(net, "power", items, piece)
+                break
+        else:
+            first = next((h for it in tries[0] for h in r.space.check(net, it)[0]), "")
+            r.report.left[f"{net} {piece}"] = f"power: no bar, neck or loop fits: {first}"
+
+
+def _groups(pads: list, near: float = 3.0) -> list[list]:
+    """The pads in groups of pads within `near` mm of one another (single linkage), each sorted
+    by position, the groups by their first pad."""
+    groups: list[list] = []
+    for p in sorted(pads, key=lambda p: (p.GetX(), p.GetY())):
+        mine = [g for g in groups if any(math.dist(_pt(p.GetPosition()), _pt(q.GetPosition()))
+                                         <= near for q in g)]
+        merged = [p] + [q for g in mine for q in g]
+        groups = [g for g in groups if g not in mine] + [sorted(merged, key=lambda q: (q.GetX(), q.GetY()))]
+    return sorted(groups, key=lambda g: (g[0].GetX(), g[0].GetY()))
+
+
+def power_5v_mod(r: "Router", river: pb.River) -> None:
+    """+5V_MOD: from D1 up the right edge (outside J2's peg and boss), across the highway under
+    the module (between the top headers and the pegs), down the left edge into the regulator's
+    cluster (VR1, C24-C26); a bar with necks into J2's 5V pins; the cluster joined pad to pad."""
+    net = river.nets[0]
+    w = r.space.width(net)
+    need = r.space.clearance(net) + w / 2 + MARGIN
+    d1 = r.pad(net, river.ref)
+    j2 = r.part("J2")
+    pins = sorted((p for p in j2.Pads() if p.GetNetname() == net), key=lambda p: p.GetX())
+    if not pins:
+        raise CannotLay(f"J2 has no pad on {net}")
+    cluster = sorted((p for fp in r.board.GetFootprints() if fp.GetReference() not in (river.ref, "J2")
+                      for p in fp.Pads() if p.GetNetname() == net),
+                     key=lambda p: (p.GetY(), p.GetX()))
+    if not cluster:
+        raise CannotLay(f"{net} has no regulator side")
+    top = cluster[0]                                   # the cluster's pad nearest J2
+    def area(p):
+        x0, y0, x1, y1 = r.box(p)
+        return (x1 - x0) * (y1 - y0)
+    pegs = [p for p in j2.Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD
+            and not p.GetNetCode() and area(p) > 4.0]      # the solder pegs (MP), not the pins
+    if not pegs:
+        raise CannotLay("J2 has no solder pegs to route between")
+    holes = [p for p in j2.Pads() if p.HasHole()]
+    right = max([r.box(p)[2] + need for p in pegs]
+                + [_mm(p.GetX()) + _mm(p.GetDrillSize().x) / 2 + r.space.hole_cl + w / 2 + MARGIN
+                   for p in holes])
+    right = math.ceil(right * 100) / 100
+    peg_top = min(r.box(p)[1] for p in pegs)
+    above = max(o.box[3] for o in r.space.obs if o is not None and o.pad and o.kind == "poly"
+                and o.box[3] < peg_top - 1.0)
+    y_h = round((above + peg_top) / 2, 2)
+    rear_top = min(r.box(p)[1] for p in pins)
+    y_bar = round(rear_top + 0.4 - NECK_MAX_MM + 0.05, 2)      # each neck 1.4 mm
+    c = _pt(d1.GetPosition())
+    trunk = Pen(c, F, w).vert(r.box(d1)[1] - 0.6).diag(right).vert(y_h)
+    trunk.horiz(_mm(top.GetX())).vert(_mm(top.GetY()))
+    r.offer(net, "power", trunk.items, f"trunk {_label(d1)}-{_label(top)}")
+    bar = [Seg(F, (_mm(top.GetX()), y_bar), (_mm(pins[-1].GetX()), y_bar), w)]
+    bar += [Seg(F, (_mm(p.GetX()), y_bar), (_mm(p.GetX()), rear_top + 0.4), NECK_MM) for p in pins]
+    r.offer(net, "power", bar, f"J2 pins {pins[0].GetNumber()}-{pins[-1].GetNumber()}")
+    join_pads(r, net, cluster, w)
+
+
+def power_5v(r: "Router", river: pb.River) -> None:
+    """+5V: each group of its pads joined in place (D1-C2-F1, U3 and its capacitor, each of
+    U2's VCCB pins and its capacitor); U2's pins (0.5 mm pitch, too fine for 0.5 mm copper) by
+    a neck to a via under U2's body each, the vias joined on B.Cu across the body's middle. The
+    groups are the router's to join, after the single nets."""
+    net = river.nets[0]
+    w = r.space.width(net)
+    pads = [p for fp in r.board.GetFootprints() for p in fp.Pads() if p.GetNetname() == net]
+    if not pads:
+        raise CannotLay(f"no pad on {net}")
+    for g in _groups(pads):
+        if len(g) > 1:
+            join_pads(r, net, g, w)
+    u2 = r.part(river.ref)
+    fine = sorted((p for p in u2.Pads() if p.GetNetname() == net), key=lambda p: p.GetX())
+    pin_rows = sorted({round(_mm(p.GetY()), 3) for p in u2.Pads()})
+    y_mid = (pin_rows[0] + pin_rows[-1]) / 2
+    step = VIA_MM / 2 + rt.CLEARANCE_MM + MARGIN + 0.01
+    vias = []
+    for p in fine:
+        bx = r.box(p)
+        inner_up = _mm(p.GetY()) > y_mid                # the pin's inner end faces the middle
+        y_in = bx[1] if inner_up else bx[3]
+        at = (_mm(p.GetX()), y_in - step if inner_up else y_in + step)
+        neck = Seg(F, (_mm(p.GetX()), y_in + (0.3 if inner_up else -0.3)), at, NECK_MM)
+        if r.offer(net, "power", [neck, Via(at)], f"{_label(p)} via"):
+            vias.append(at)
+    if len(vias) > 1:
+        pen = Pen(vias[0], B, w).vert(y_mid)
+        for at in vias[1:]:
+            pen.horiz(at[0])
+        pen.vert(vias[-1][1])
+        r.offer(net, "power", pen.items, f"{river.ref} B link")
+
+
+_ADDRESS = next(r.ref for r in pb.RIVERS if r.name == "address")      # U2
+POWER = (pb.River("+5V_MOD", "D1", ("+5V_MOD",), "power", "edges and highway"),
+         pb.River("+5V", _ADDRESS, ("+5V",), "power", f"vias under {_ADDRESS}'s body"))
+POWER_LAYOUTS = {"+5V_MOD": power_5v_mod, "+5V": power_5v}
+
+
 # The layouts, by plan_buses' river names. A river the plan has and no layout here is not
 # attempted: its nets are reported as left, with why.
 LAYOUTS = {"data": river_data, "listen": river_listen, "address": river_address,
@@ -1228,7 +1428,7 @@ NOT_ATTEMPTED = {
 
 def carrier_plan() -> list[tuple]:
     """plan_buses' rivers (J2's, then the slot side's), each with its layout, CLOCKS, or the
-    reason it is not attempted."""
+    reason it is not attempted; then the power paths (POWER, P29)."""
     out = []
     for river in pb.RIVERS + pb.SLOT_RIVERS:
         if river.name in LAYOUTS:
@@ -1237,12 +1437,13 @@ def carrier_plan() -> list[tuple]:
             out.append((river, CLOCKS))
         else:
             out.append((river, NOT_ATTEMPTED.get(river.name, "no layout for this river")))
-    return out
+    return out + [(river, POWER_LAYOUTS[river.name]) for river in POWER]
 
 
 def run(board, plan=None, clocks: bool = True) -> Report:
-    """Lay the plan's rivers on `board` (after route.start: the P19 fanout), move the plane vias
-    in their way, lock everything, then the clocks (A*, Clock class). Every planned net ends up
+    """Lay the plan's rivers and power pieces on `board` (after route.start: the P19 fanout),
+    move the plane vias in their way, lock everything, then the clocks (A*, Clock class). A power
+    net the pieces leave apart is listed as left. Every planned net ends up
     laid or in the report's `left` with its reason; a river the board cannot take (CannotLay)
     is skipped and its nets listed."""
     plan = carrier_plan() if plan is None else plan
@@ -1274,6 +1475,14 @@ def run(board, plan=None, clocks: bool = True) -> Report:
                 r.report.left[n] = f"{river.name}: the clock step was not run"
             elif n in r.report.clocks_left:
                 r.report.left[n] = f"{river.name}: the clock step found no path"
+    for river, layout in plan:                # P29: what the planned pieces leave apart
+        if river.row == "power" and callable(layout):
+            for n in river.nets:
+                k = len(rt._components(board, board.FindNet(n).GetNetCode()))
+                if k > 1:
+                    r.report.left[f"{n} joins"] = (
+                        f"power: {k} pieces for the router to join at the Power width, after the "
+                        "single nets (the A* joining them first walls in slot_a_dir)")
     return r.report
 
 
