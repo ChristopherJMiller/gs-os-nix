@@ -16,11 +16,22 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def git_show(rev: str, path: str, out: Path) -> bool:
-    r = subprocess.run(["git", "show", f"{rev}:{path}"], cwd=ROOT, capture_output=True)
+    """`rev:path` into `out`; False if there is no such commit, no checkout, or no git."""
+    try:
+        r = subprocess.run(["git", "show", f"{rev}:{path}"], cwd=ROOT, capture_output=True)
+    except FileNotFoundError:            # no git on the PATH (the nix build sandbox)
+        return False
     if r.returncode != 0:
         return False
     out.write_bytes(r.stdout)
     return True
+
+
+def test_git_show_is_false_where_there_is_no_git(tmp_path, monkeypatch):
+    """`nix flake check` runs the tests with no git on the PATH: the plan-1 test must skip
+    there, not fail (it failed hw-tests with FileNotFoundError: 'git')."""
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert git_show("HEAD", "hw/justfile", tmp_path / "out") is False
 
 
 def test_run_capacity_is_the_open_edge_rate_for_a_free_edge():

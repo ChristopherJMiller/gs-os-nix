@@ -376,6 +376,32 @@ def test_route_drops_the_router_stubs_inside_their_pads(tmp_path):
     assert lengths == [18.0]
 
 
+def test_the_session_moves_no_part(tmp_path):
+    """Freerouting's session places every part on the DSN's 0.1 um grid, and pcbnew's import
+    moved J1 from 37.574999 to 37.575 mm: a part moved by the route (P22), and a second route
+    of the routed board then laid its rivers 1 nm aside (hw-repro failed). The import keeps
+    every part where it was."""
+    from hw.tests.test_finish import make_board
+    b = make_board(tmp_path, {"X": [(3, 6), (21, 6)], "GND": [(22, 11)]})
+    p1 = next(fp for fp in b.GetFootprints() if fp.GetReference() == "P1")
+    p1.Move(pcbnew.VECTOR2I(-1, 0))                     # 1 nm off the DSN grid, pad and all
+    path = tmp_path / "m.kicad_pcb"
+    pcbnew.SaveBoard(str(path), b)
+    before = {fp.GetReference(): (fp.GetPosition().x, fp.GetPosition().y)
+              for fp in pcbnew.LoadBoard(str(path)).GetFootprints()}
+
+    def stub(dsn, ses, passes, timeout_s, log, extra=()):
+        Path(ses).write_text(_ses("X", -6000).replace(
+            "(placement (resolution um 1))",
+            '(placement (resolution um 10) (component "x" (place P1 0 0 front 0)))'))
+        return 0
+
+    route.route(path, router=stub)
+    after = {fp.GetReference(): (fp.GetPosition().x, fp.GetPosition().y)
+             for fp in pcbnew.LoadBoard(str(path)).GetFootprints()}
+    assert after == before
+
+
 def test_repair_relays_a_thinned_rail_at_its_class_width(tmp_path):
     from hw.tests.test_finish import make_board
     b = make_board(tmp_path, {"+5V": [(3, 6), (21, 6)], "GND": [(22, 11)]})

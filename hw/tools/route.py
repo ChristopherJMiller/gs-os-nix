@@ -4,7 +4,8 @@
     python3 hw/tools/route.py BOARD.kicad_pcb [--passes N] [--timeout S] [--keep DIR]
 
 pcbnew exports the Specctra DSN (it carries the net classes of BOARD's .kicad_pro, so
-the Power class reaches the router), freerouting routes it, pcbnew imports the SES, and
+the Power class reaches the router), freerouting routes it, pcbnew imports the SES (without
+its part places: the route never moves a part, see no_placement), and
 what the router left is finished here (finish_unrouted); then the pours are refilled and
 BOARD is saved in place. Existing tracks and vias are dropped first, so a route is a fresh
 route; the zones and all else stay. Freerouting 2.5.0 (pinned in the flake) gives the same
@@ -278,6 +279,23 @@ def halo_wires(board, names: list[str]) -> str:
 
 def restore_ses(ses: str, back: dict[str, str]) -> str:
     return _retoken(ses, back)
+
+
+def no_placement(ses: str) -> str:
+    """The session without its parts' places. Freerouting writes every part's place on the
+    DSN's 0.1 um grid and pcbnew's import applies them: it moved J1 from 37.574999 to
+    37.575 mm, so the route moved a part (P22) and a second route of the routed board laid the
+    rivers 1 nm aside. The router places nothing; the board keeps its parts where they are."""
+    i = ses.find("(placement")
+    if i < 0:
+        return ses
+    depth, k = 0, i
+    while True:
+        depth += {"(": 1, ")": -1}.get(ses[k], 0)
+        k += 1
+        if depth == 0:
+            break
+    return ses[:i] + "(placement)" + ses[k:]
 
 
 # --- finishing what the router left -----------------------------------------------------
@@ -1564,7 +1582,7 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
         router(dsn, ses, passes, timeout_s, log, extra)
         if not ses.exists():
             raise SystemExit(f"freerouting wrote no session file; see {log}")
-        ses.write_text(restore_ses(ses.read_text(), back))
+        ses.write_text(no_placement(restore_ses(ses.read_text(), back)))
         if not pcbnew.ImportSpecctraSES(b, str(ses)):
             raise SystemExit(f"pcbnew could not import {ses}")
         if planes:
