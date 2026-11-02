@@ -271,7 +271,7 @@ HEADER = """\
 #
 # The balls are chosen by hw/tools/assign_pins.py for the placement in hw/carrier/
 # placement.toml: it moves each bit to the SODIMM contact that leaves the fewest ratsnest
-# crossings on the 2-layer board, keeping every bus in bit order along the socket. Do not
+# crossings on the board's two signal layers, keeping every bus in bit order along the socket. Do not
 # hand-edit; rerun `python3 hw/tools/assign_pins.py --write` after the placement changes.
 # Every bank is 3.3 V (the module powers VCCIO from 3V3), so the bank does not constrain it.
 #
