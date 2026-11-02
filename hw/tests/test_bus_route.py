@@ -505,6 +505,40 @@ def test_route_hands_the_router_the_halo_of_the_clocks_bus_route_laid(tmp_path):
 
 # --- the plan is plan_buses' (one source of truth) -------------------------------------------
 
+def _pin_board():
+    """A TSSOP-like U5 (two rows of 0.4 x 1.48 mm pins at 0.65 mm) with eight signal pins facing
+    down; under its pin A3, 1.55 mm below the pin ends, the series resistor R4 of the clock CLK,
+    which must reach a pad above the part: the carrier's U5, R3/R4 and slot_q3/slot_7m."""
+    b = make(w=30, h=30, clocks=("CLK",))
+    xs = [8 + 0.65 * k for k in range(8)]
+    part(b, "U5", [(k + 1, f"A{k}", x, 16.0, 0.4, 1.48) for k, x in enumerate(xs)]
+         + [(16 - k, f"T{k}", x, 10.28, 0.4, 1.48) for k, x in enumerate(xs)])
+    x3 = xs[3] + 0.23                                     # as R4 sits under U5.7, a little aside
+    part(b, "R4", [(2, "CLK", x3, 18.76, 0.8, 0.95), (1, "CLKB", x3, 20.41, 0.8, 0.95)])
+    part(b, "J2", [(1, "CLK", x3, 4.0, 0.35, 2.0)])
+    return b, xs
+
+
+def test_a_clock_leaves_the_first_millimetre_out_of_every_other_ic_pin_free():
+    """The Clock class's 0.3 mm walled a pin in on the carrier: the A* put slot_7m's via 0.6 mm
+    below U5.7's end, between its neighbours' tracks, and SLOT_IOSTRB_N could not leave the pin
+    within 0.3 mm of it. A clock keeps its clearance from a 0.15 mm track straight out of each
+    other signal net's IC pin, ESCAPE_MM long, so every pin can at least leave."""
+    b, xs = _pin_board()
+    assert route.lay_first(b, ["CLK"]) == []
+    clk = [t for t in b.GetTracks() if t.GetNetname() == "CLK"]
+    assert any(t.GetClass() == "PCB_VIA" for t in clk)
+    end = 16.0 + 0.74
+    for k, x in enumerate(xs):
+        stub = (v(x, end), v(x, end + route.ESCAPE_MM))
+        for t in clk:
+            if t.GetClass() != "PCB_VIA" and t.GetLayer() != F:
+                continue
+            a0, a1, r = route._shape(t)
+            gap = route._seg_dist(a0, a1, *stub) - r - route.MIN_TRACK_MM / 2
+            assert gap >= 0.3 - 1e-3, (f"A{k}", t.GetClass(), gap)
+
+
 def test_the_carrier_plan_is_plan_buses_rivers():
     plan = br.carrier_plan()
     assert [river for river, _ in plan] == list(pb.RIVERS + pb.SLOT_RIVERS + br.POWER)

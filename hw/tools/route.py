@@ -75,6 +75,7 @@ GND_JOIN_MM = 0.15                 # width of the GND tracks finish_unrouted lay
 RES_MM = 0.05                      # finish_unrouted's grid
 MARGIN_MM = 0.03                   # what it keeps over the minimum
 HOLE_CLEARANCE_MM = 0.25           # copper to hole wall, KiCad's default
+ESCAPE_MM = 1.0                    # a clock keeps clear of this much straight out of an IC pin
 VIA_COST = 12                      # in grid steps
 HEURISTIC_WEIGHT = 1.3             # a little greedy: paths a little long, found sooner
 MAX_EXPANSIONS = 3_000_000
@@ -378,6 +379,10 @@ class _Grid:
         self.via = via_maps[0] | via_maps[1]
         if net:                     # P28: no via over a pad, its own net's either; and every
             self.via |= self._own_smd_pads(board, PLANE_VIA_MIN_MM)   # via 0.4 mm off it (P19)
+        if clearance_mm > CLEARANCE_MM + 1e-6:      # a clock leaves room for the pins it passes
+            for l in _LAYERS:
+                self.track[l] |= self._escapes(board, l, trk)
+            self.via |= self._escapes(board, None, via)
         for l in self.track:
             self.track[l] |= self._outside(board, EDGE_CLEARANCE_MM + width_mm / 2 + MARGIN_MM)
         self.via |= self._outside(board, EDGE_CLEARANCE_MM + VIA_MM / 2 + MARGIN_MM)
@@ -462,6 +467,37 @@ class _Grid:
                         d.line(pts + pts[:1], fill=255, width=max(1, round(2 * g)), joint="curve")
                         for x, y in pts:
                             d.ellipse([x - g, y - g, x + g, y + g], fill=255)
+        return np.asarray(img, dtype=bool)
+
+    def _escapes(self, board, layer: int | None, grow_mm: float) -> np.ndarray:
+        """Cells nearer than `grow_mm` to the escape of an IC pin of another signal net (on
+        `layer`; None: any): a MIN_TRACK_MM track ESCAPE_MM long, straight out of the pin's outer
+        end. A Clock-class net (0.3 mm) laid before the router keeps clear of them, so that every
+        pin it passes can still leave (on the carrier, slot_7m's via under U5.7 walled
+        SLOT_IOSTRB_N in). Plane-net pins have their fanout via and need none."""
+        img, d = self._new()
+        planes = plane_nets(board)
+        r = (MIN_TRACK_MM / 2 + grow_mm) / RES_MM
+        for fp in board.GetFootprints():
+            if not fp.GetReference().startswith("U"):
+                continue
+            for p in fp.Pads():
+                if (not p.GetNetCode() or p.GetNetCode() == self.net or p.GetNetname() in planes
+                        or p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD
+                        or (layer is not None and not p.IsOnLayer(layer))):
+                    continue
+                out = _outward(fp, p)
+                if out is None:
+                    continue
+                bb = p.GetBoundingBox()
+                half = (bb.GetWidth() if out[0] else bb.GetHeight()) / 2
+                c = p.GetPosition()
+                a = (c.x + out[0] * half, c.y + out[1] * half)
+                b = (a[0] + out[0] * ESCAPE_MM * 1e6, a[1] + out[1] * ESCAPE_MM * 1e6)
+                pa, pb = self.px(*a), self.px(*b)
+                d.line([pa, pb], fill=255, width=max(1, round(2 * r)))
+                for x, y in (pa, pb):
+                    d.ellipse([x - r, y - r, x + r, y + r], fill=255)
         return np.asarray(img, dtype=bool)
 
     def _outside(self, board, inset_mm: float) -> np.ndarray:
