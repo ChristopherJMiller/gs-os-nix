@@ -1289,10 +1289,11 @@ def run_freerouting(dsn: Path, ses: Path, passes: int, timeout_s: int, log: Path
 def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | None = None,
           extra: list[str] = (), first: list[str] | None = None,
           router=run_freerouting, keep_locked: bool = False, keep_all: bool = False,
-          repair: bool = False) -> None:
-    """Route `board` in place. `first` (net names; [] for the default set) are laid by the
-    finisher before the router sees the board and locked, so the router keeps them as
-    fixed wires. `router` is run_freerouting's signature (a test passes a stub)."""
+          repair: bool = False, bus=None) -> None:
+    """Route `board` in place. `bus` (bus_route's rivers, e.g. bus_route.CARRIER) are laid and
+    locked right after the plane fanout, the clocks with them; then `first` (net names; [] for
+    the default set) are laid by the finisher and locked, so the router keeps both as fixed
+    wires. `router` is run_freerouting's signature (a test passes a stub)."""
     board = Path(board)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(keep) if keep else Path(tmp)
@@ -1309,6 +1310,10 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
                   + (f"; no room for: {', '.join(no_room)}" if no_room else ""))
             if no_room:
                 raise SystemExit("route: no room for a plane via at " + ", ".join(no_room))
+        if bus is not None:
+            from hw.tools import bus_route
+            for line in bus_route.run(b, bus).lines():
+                print(f"bus_route: {line}")
         names: list[str] = []
         if first is not None:
             names = first or default_first(b)
@@ -1363,11 +1368,17 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--repair", action="store_true",
                     help="after the router: re-lay what runs too near a clock, then finish")
     ap.add_argument("--router-args", default="", help="more arguments for freerouting")
+    ap.add_argument("--no-bus", action="store_true",
+                    help="do not lay the planned buses first (bus_route.py)")
     a = ap.parse_args(argv)
     first = None if a.first is None else [n for n in a.first.split(",") if n]
+    bus = None
+    if not a.no_bus:
+        from hw.tools import bus_route
+        bus = bus_route.CARRIER
     route(a.board, a.passes, a.timeout, a.keep, extra=a.router_args.split(), first=first,
           keep_locked=a.keep_locked,
-          keep_all=a.keep_all, repair=a.repair)
+          keep_all=a.keep_all, repair=a.repair, bus=bus)
 
 
 if __name__ == "__main__":

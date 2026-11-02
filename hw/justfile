@@ -45,10 +45,10 @@ board: carrier
       && python3 hw/tools/check_edge.py --selftest hw/carrier/carrier.kicad_pcb \
       && python3 hw/tools/check_edge.py hw/carrier/carrier.kicad_pcb
 
-# Route the carrier in two passes (minutes; the result is not reproducible, so the routed board
-# is committed): the clocks and the data bus first, by the A* finisher, locked; then Freerouting
-# for the rest, then the repair passes. Then the DRC and parity gate and the load gate on it
-# (selftest first).
+# Route the carrier (the routed board is committed): the plane fanout; the planned buses
+# (bus_route.py lays plan_buses.py's rivers, then the clocks by the A* finisher), locked; the
+# first pass for the nets of its list still open; then Freerouting for the rest, then the repair
+# passes. Then the DRC and parity gate and the load gate on it (selftest first).
 # Starts from `board`'s placement; run `board` first after changing placement.toml, and `artwork` after.
 route PASSES="20":
     cd {{justfile_directory()}}/.. \
