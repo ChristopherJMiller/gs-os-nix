@@ -1323,6 +1323,8 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
         if not pcbnew.ExportSpecctraDSN(b, str(dsn)):
             raise SystemExit(f"pcbnew could not export {dsn}")
         dsn_text = dsn.read_text()
+        if bus is not None:                  # the clocks bus_route laid keep their halo too
+            names = names + [n for n in clock_nets(b) if n not in names]
         if names:
             halos = halo_wires(b, names)
             i = dsn_text.index("(wiring") + len("(wiring\n")

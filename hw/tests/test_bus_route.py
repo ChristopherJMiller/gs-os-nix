@@ -454,3 +454,26 @@ def test_every_plane_pad_keeps_a_via_within_1mm_after_the_moves(carrier):
                 near = [q for q in vias[p.GetNetname()]
                         if min(br.seg_poly(q, q, poly) for poly in polys) <= 1.0 + 1e-6]
                 assert near, (fp.GetReference(), p.GetNumber())
+
+
+def test_route_hands_the_router_the_halo_of_the_clocks_bus_route_laid(tmp_path):
+    """bus_route lays the Clock-class nets (by class, after the rivers); route gives the router
+    their 0.3 mm as fat fixed wires, with or without a first pass."""
+    b = river_board(obstacle=False)
+    part(b, "CK", [(1, "CLK", 25, 6, 0.6, 0.6), (2, "CLK", 25, 20, 0.6, 0.6)])
+    path = tmp_path / "c.kicad_pcb"
+    pcbnew.SaveBoard(str(path), b)
+    seen = {}
+
+    def stub(dsn, ses, passes, timeout_s, log, extra=()):
+        text = Path(dsn).read_text()
+        seen["halo"] = any("(path F.Cu 460 " in line and "(net CLK)" in line
+                           for line in text.splitlines())
+        Path(ses).write_text(EMPTY_SES)
+        return 0
+
+    route.route(path, router=stub, bus=[("test", _test_river)])
+    b = pcbnew.LoadBoard(str(path))
+    clk = [t for t in b.GetTracks() if t.GetNetname() == "CLK"]
+    assert clk and all(t.IsLocked() and t.GetWidth() == pcbnew.FromMM(0.2) for t in clk)
+    assert seen["halo"]

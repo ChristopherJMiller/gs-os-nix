@@ -1209,9 +1209,14 @@ def run(board, rivers=CARRIER, clocks: bool = True) -> Report:
     r.relocate()
     r.lay()
     if clocks:
-        have = {n.GetNetname() for n in board.GetNetsByName().values() if n.GetNetCode()}
-        r.report.clocks_left = rt.lay_first(board, [n for n in rt.CLOCK_NETS if n in have])
+        r.report.clocks_left = rt.lay_first(board, clock_order(board))
     return r.report
+
+
+def clock_order(board) -> list[str]:
+    """The Clock-class nets, in the first pass's order (route.CLOCK_NETS), any others after."""
+    cls = set(rt.clock_nets(board))
+    return [n for n in rt.CLOCK_NETS if n in cls] + sorted(cls - set(rt.CLOCK_NETS))
 
 
 def prepare(board) -> None:
