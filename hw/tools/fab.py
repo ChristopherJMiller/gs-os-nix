@@ -51,6 +51,8 @@ def order_notes(board) -> str:
             "  Edge connector: gold fingers (bevelled), 45 degree bevel on the J1 tab (the bevel keepout is "
             "1 mm); no inner copper in the tab\n"
             "  Vias: through only; tented\n"
+            "  Order number: Remove order number (JLCPCB offers the option; the card "
+            "has no place kept for it on the silkscreen)\n"
             "  Assembly: top side, Standard PCBA\n")
 
 

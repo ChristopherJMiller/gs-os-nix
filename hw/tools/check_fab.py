@@ -41,7 +41,7 @@ FILES = ["bom.csv", "cpl.csv", "ibom.html", "render-top.png", "render-bottom.png
 
 
 # What the order notes must name (fab.order_notes writes them).
-ORDER_NOTE_TOKENS = ("4 layers", "JLC04161H-7628", "ENIG", "gold fingers")
+ORDER_NOTE_TOKENS = ("4 layers", "JLC04161H-7628", "ENIG", "gold fingers", "Remove order number")
 
 
 def placed_refs(board) -> set[str]:

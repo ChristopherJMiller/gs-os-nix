@@ -1520,16 +1520,21 @@ CLOCK_NETS = ["SLOT_PH0", "SLOT_PH1", "SLOT_Q3", "SLOT_7M",
 # The slot side only: the FPGA-side twins carry no slot load, and with them in the first
 # pass the finger lane did not close (they are routed by freerouting like the rest).
 DATA_NETS = [f"SLOT_D{i}" for i in range(8)]
-# P23: the two J1 nets nearest the 15 pF limit are laid short too, after the data bus.
+# P23: the two J1 nets nearest the 15 pF limit are laid short too, after the data bus (a 5c
+# leftover: still laid here, bus_route does not attempt them).
 LOAD_NETS = ["SLOT_RESET_N", "SLOT_IOSEL_N"]
-# 5c: the FPGA-side nets that three full routes left open every time (U1/U2/U5 to J2, through
+# 5c (a leftover: bus_route now lays most of these first): the FPGA-side nets that three full routes left open every time (U1/U2/U5 to J2, through
 # the band above row 2), laid first so they get their path before the router fills the band.
 BAND_NETS = [f"slot_d{i}" for i in range(8)] + ["slot_d_oe_n", "slot_a3", "slot_a11", "slot_m2sel_n"]
 FIRST_WEIGHT = 1.0                 # A* with no greed: as short as the grid allows
 
 
 def default_first(board) -> list[str]:
-    """CLOCK_NETS then DATA_NETS (the slot-side data bus), those the board has."""
+    """The first-pass list: CLOCK_NETS, DATA_NETS (the slot-side data bus), LOAD_NETS, BAND_NETS,
+    those the board has. LOAD_NETS and BAND_NETS are 5c leftovers: bus_route now lays the
+    rivers first, which include slot_d0-7, slot_a3, slot_a11 and slot_m2sel_n (and SLOT_D0-7),
+    so on the carrier this pass is left with the clocks, SLOT_RESET_N, SLOT_IOSEL_N and
+    slot_d_oe_n."""
     have = {n.GetNetname() for n in board.GetNetsByName().values() if n.GetNetCode()}
     return [n for n in CLOCK_NETS + DATA_NETS + LOAD_NETS + BAND_NETS if n in have]
 
@@ -1850,7 +1855,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--keep", type=Path, help="keep the DSN, SES and log in this directory")
     ap.add_argument("--first", nargs="?", const="", default=None, metavar="NETS",
                     help="lay these nets (comma-separated) before freerouting and lock them; "
-                    "no value: the clocks, then SLOT_D0-7")
+                    "no value: default_first (the clocks, SLOT_D0-7, LOAD_NETS and BAND_NETS; of these "
+                    "bus_route already lays most with its rivers)")
     ap.add_argument("--keep-locked", action="store_true",
                     help="keep the locked tracks of the board (a first pass done before)")
     ap.add_argument("--keep-all", action="store_true",

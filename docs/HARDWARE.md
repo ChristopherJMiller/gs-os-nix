@@ -296,8 +296,10 @@ LCSC C2675819) in place of the SN74LVC8T245 [SCAS581N]:
 - Cost: the 26 Ω is on both ports, so the A side's edges into the FPGA are slowed too;
   the budget (30-140 ns margins against sub-10 ns propagation) absorbs it **I**.
   Package: the TSSOP-20 (PW, C467018) is out of stock at LCSC and JLCPCB (2026-10-29),
-  so the card uses the DBQ, an SSOP-20 at 0.635 mm pitch, 150 mil (C2675819, 243 in
-  stock at LCSC). Fallback: SN74LVCR2245ADBR, SSOP-20 208 mil (C2865353, 50 in stock).
+  so the card uses the DBQ, an SSOP-20 at 0.635 mm pitch, 150 mil (C2675819, about 243 in
+  stock at LCSC). The ADBR (SN74LVCR2245ADBR, SSOP-20 208 mil, C2865353, 50 in stock) is a
+  fallback only in name: it is 208 mil against the DBQ's 150 mil, so using it means a new
+  footprint and a re-route of the data bus, not a part swap.
   The DBQ's land pattern (KiCad `SSOP-20_3.9x8.7mm_P0.635mm`) is **I** until checked
   against TI's DBQ0020A drawing, which SCAS581N does not print.
 
@@ -648,7 +650,8 @@ Three recorders, behind a passive tap:
    card, also a dog-bone generator for the BGA.
 5. **Routing:** the congestion gate, then the planned buses laid by our own router, then DSN →
    Freerouting 2.5.0 → SES for the rest, a clean-up and an A* finisher (HW-18). Planes as zones.
-6. **DRC:** KiCad's (`--severity-error`, `--refill-zones`, rules from the `.kicad_pro`)
+6. **DRC:** KiCad's (`--severity-all`, `--refill-zones`, rules from the `.kicad_pro` and
+   `carrier.kicad_dru`; errors, unconnected items and the gated warnings fail it)
    plus our own netlist ↔ board parity, both in `check_drc.py`. Not KiCad's
    `--schematic-parity`, which reads the generated schematic rather than the netlist.
 7. **Renders:** per-layer SVGs and top/bottom PNGs. The agent looks at them; so does a
@@ -841,7 +844,19 @@ The agent cannot judge intent. Before ordering, look at the package above for:
     the packages (mask-tented; nothing on the bottom side).
 13. **JLCPCB's 4-layer price**, from their calculator: it was not checked (HW-17).
 14. **The order notes** (`order-notes.txt`): 4 layers, stackup JLC04161H-7628, ENIG,
-    bevelled gold fingers.
+    bevelled gold fingers, "Remove order number" (JLC prints its order number on the silkscreen
+    otherwise; the card has no place kept for it).
+15. **LCSC stock and fees, on order day.** Re-check stock for every BOM line, and the
+    extended-part fees. The U1 and U4 translator (SN74LVCR2245ADBQR, C2675819) had about 243
+    in stock when this was written; the ADBR is no drop-in (HW-16: a new footprint and a
+    re-route).
+16. **+5V_MOD's long run.** It is 178 mm of copper at 0.5 mm, about 0.18 ohm (35 um copper).
+    The module's current is assumed to be at most the card's 300 mA target at +5 V, so the
+    run drops about 0.05 V, plus D1's Vf; the module's SY8008 bucks have headroom (HW-14).
+    Check that against the module's real draw.
+17. **The relaxed clock clearances.** The Clock class keeps 0.3 mm, not 0.4 (P12), and inside
+    J2_ESCAPE (J2's courtyard grown 2 mm) it relaxes to 0.15 mm (P16), for the socket's
+    0.5 mm-pitch fan-out. Judge the coupling on the clocks' short runs there.
 
 ## Open questions only a real IIgs answers
 

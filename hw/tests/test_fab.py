@@ -85,7 +85,8 @@ def test_a_package_without_an_inner_gerber_fails(tmp_path, layer, kikit):
 def test_the_order_notes_name_the_stackup(tmp_path):
     board = pcbnew.LoadBoard(str(CARRIER / "carrier.kicad_pcb"))
     notes = fab.order_notes(board)
-    for want in ("4 layers", "JLC04161H-7628", "1.6 mm", "ENIG", "gold fingers", "45 degree"):
+    for want in ("4 layers", "JLC04161H-7628", "1.6 mm", "ENIG", "gold fingers", "45 degree",
+                 "Remove order number"):
         assert want in notes, want
     d, board = _package(tmp_path, NAMES, notes="two layers, HASL")
     found = check_fab.problems(d, board)
