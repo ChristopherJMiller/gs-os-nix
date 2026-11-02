@@ -183,17 +183,22 @@ def test_unlocked_plane_copper_from_the_router_is_dropped(tmp_path):
 def test_the_real_board_fans_out_with_none_in_the_tab(tmp_path):
     b = pcbnew.LoadBoard(str(ROOT / "hw/carrier/carrier.kicad_pcb"))
     route.strip_routing(b)
-    placed, failed = route.fan_out_planes(b)
+    shares: list = []
+    placed, failed = route.fan_out_planes(b, shares=shares)
     assert failed == []
     assert check_edge.problems_inner(b) == []        # no via in the tab, none near an edge
+    assert _overlaps(b) == []                        # P28: no via on any pad
     smd = [(fp, p) for fp, p in _pads(b, PLANES) if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD]
-    assert len(placed) == 2 * len(smd)               # a neck and a via for each pad
-    assert len(_vias(b, "GND")) + len(_vias(b, "+3V3")) == len(smd)
+    # a neck and a via for each pad, but a share (one track) for a pad with no room (P28)
+    assert len(placed) == 2 * (len(smd) - len(shares)) + len(shares)
+    assert len(_vias(b, "GND")) + len(_vias(b, "+3V3")) == len(smd) - len(shares)
+    shared = {s.split(" -> ")[0] for s in shares}
     for fp, p in smd:
         lay = F if p.IsOnLayer(F) else pcbnew.B_Cu
         near = [x for x in _vias(b, p.GetNetname())
                 if _pad_dist(p, x.GetPosition(), lay) <= 1.0]
-        assert len(near) >= 1, (fp.GetReference(), p.GetNumber())
+        assert near or f"{fp.GetReference()}.{p.GetNumber()}" in shared, \
+            (fp.GetReference(), p.GetNumber())
 
 
 def test_route_py_runs_as_a_script_and_finds_the_hw_package():
@@ -272,3 +277,80 @@ def test_route_fans_out_first_and_drops_what_the_router_lays_for_a_plane(tmp_pat
     assert len(planes) == 6 and all(t.IsLocked() for t in planes)   # three necks, three vias
     assert seen["fixed"] >= 3                                # the router was handed them as fixed
     assert [t for t in b.GetTracks() if t.GetNetname() == "X"]
+
+
+# --- P28: no via in a pad ----------------------------------------------------------------------
+
+def _overlaps(b):
+    """(via, pad) pairs where a via's copper overlaps an SMD pad's (any net)."""
+    out = []
+    for x in b.GetTracks():
+        if x.GetClass() != "PCB_VIA":
+            continue
+        for fp, p in _pads(b, {n.GetNetname() for n in b.GetNetsByName().values()}):
+            if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD and \
+                    _pad_dist(p, x.GetPosition(), F if p.IsOnLayer(F) else pcbnew.B_Cu) < 0.3:
+                out.append((x.GetNetname(), fp.GetReference()))
+            if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD and p.HitTest(x.GetPosition()):
+                out.append((x.GetNetname(), fp.GetReference(), "inside"))
+    return out
+
+
+def _big(b, x, y, size=1.2):
+    """Grow the pad at (x, y) to size x size mm: its centre is then over 0.4 mm from its edge."""
+    for fp in b.GetFootprints():
+        for p in fp.Pads():
+            if abs(pcbnew.ToMM(p.GetX()) - x) < 1e-6 and abs(pcbnew.ToMM(p.GetY()) - y) < 1e-6:
+                p.SetSize(v(size, size))
+                return fp, p
+    raise AssertionError("no pad there")
+
+
+def _walls(x, y, d=1.3, skip=()):
+    return [(x + dx, y + dy) for dx in (-d, 0, d) for dy in (-d, 0, d)
+            if (dx, dy) != (0, 0) and (dx, dy) not in skip]
+
+
+def test_a_via_never_lands_inside_a_pad(tmp_path):
+    """P28: a 1.2 mm GND pad boxed in has no room for its via; its own middle (0.6 mm from its
+    edge) is not room: the pad is reported, and no via overlaps a pad."""
+    b = make_board(tmp_path, {"GND": [(6, 6)], "N1": _walls(6, 6), "+3V3": [(20, 3)]})
+    _big(b, 6, 6)
+    placed, failed = route.fan_out_planes(b)
+    assert _overlaps(b) == []
+    assert len(failed) == 1 and "GND" in failed[0]
+
+
+def test_a_pad_with_no_room_shares_a_same_net_neighbours_via(tmp_path):
+    """P28: a boxed-in GND pad 0.5 mm from another GND pad that has room is joined to it by a
+    short locked track and shares its via; nothing is reported, no via sits in a pad."""
+    b = make_board(tmp_path, {"GND": [(6, 6), (7.5, 6)], "N1": _walls(6, 6, skip={(1.3, 0)}),
+                              "+3V3": [(20, 3)]})
+    fp, boxed = _big(b, 6, 6)
+    placed, failed = route.fan_out_planes(b)
+    assert failed == []
+    assert _overlaps(b) == []
+    assert len(_vias(b, "GND")) == 1
+    gnd = b.FindNet("GND").GetNetCode()
+    assert len(route._components(b, gnd)) == 1             # boxed pad, track, neighbour, via
+    joins = [t for t in b.GetTracks() if t.GetClass() != "PCB_VIA" and t.GetNetname() == "GND"
+             and boxed.HitTest(t.GetStart()) or (t.GetClass() != "PCB_VIA" and boxed.HitTest(t.GetEnd()))]
+    assert joins and all(t.IsLocked() for t in joins)
+    assert all(pcbnew.ToMM(t.GetLength()) <= 1.5 for t in joins)
+
+
+def test_a_pad_with_no_room_and_no_neighbour_is_still_reported(tmp_path):
+    b = make_board(tmp_path, {"GND": [(6, 6)], "N1": _walls(6, 6), "+3V3": [(20, 3)]})
+    placed, failed = route.fan_out_planes(b)
+    assert len(failed) == 1 and "GND" in failed[0]
+
+
+def test_the_finisher_grid_puts_no_via_on_its_own_nets_pads(tmp_path):
+    """P28 for the A* (first pass, finisher): a via may not be laid over a pad of the net it
+    joins, even though its tracks may run onto that pad."""
+    b = make_board(tmp_path, {"GND": [(6, 6)], "N1": [(12, 6), (18, 6)]})
+    pad = next(p for fp in b.GetFootprints() for p in fp.Pads() if p.GetNetname() == "N1")
+    g = route._Grid(b, pad.GetNetCode(), 0.15)
+    i, j = g.px(pad.GetX(), pad.GetY())
+    assert g.via[int(j), int(i)]                   # no via on the pad
+    assert not g.track[F][int(j), int(i)]          # but a track may reach it

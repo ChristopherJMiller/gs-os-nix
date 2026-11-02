@@ -16,9 +16,13 @@ gate is what ties it back to the netlist. Two halves:
   no netlist pin (J2's solder pegs) must have no net. Tracks cannot cheat this, since a
   net is only ever what the pads say; a short shows up as a DRC violation.
 
-The selftest plants a pad on another net, a deleted footprint, a wrong footprint id and
-a track across two pads of different nets and a long +5V track thinned (twice), on temporary copies; each must fail with its
-own message.
+* no via over a pad (ruling P28), our own too: a via whose copper overlaps any SMD pad's,
+  whatever the nets, fails. KiCad's DRC does not see a via on a pad of its own net, and a via
+  in an SMD pad wicks the solder away from the joint.
+
+The selftest plants a pad on another net, a deleted footprint, a wrong footprint id, a track
+across two pads of different nets, a long +5V track thinned (twice) and a via in a pad, on
+temporary copies; each must fail with its own message.
 """
 import argparse
 import fnmatch
@@ -186,12 +190,33 @@ def problems_width(board, pro_path: Path) -> list[str]:
     return out
 
 
+# --- no via in a pad (P28) ---------------------------------------------------------------
+
+def problems_via_in_pad(board) -> list[str]:
+    """Every via whose copper overlaps an SMD pad's copper, whatever either net."""
+    pads = [(fp, p) for fp in board.GetFootprints() for p in fp.Pads()
+            if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD and p.IsOnCopperLayer()]
+    out = []
+    for v in board.GetTracks():
+        if v.Type() != pcbnew.PCB_VIA_T:
+            continue
+        pos, r = v.GetPosition(), v.GetWidth(pcbnew.F_Cu) // 2
+        for fp, p in pads:
+            if p.HitTest(pos, r - 1):
+                out.append(f"via in pad: {v.GetNetname() or '(no net)'} via at "
+                           f"({pcbnew.ToMM(pos.x):.2f}, {pcbnew.ToMM(pos.y):.2f}) overlaps "
+                           f"{fp.GetReference()}.{p.GetNumber()} "
+                           f"({p.GetNetname() or 'no net'})")
+    return out
+
+
 # --- the gate -----------------------------------------------------------------------------
 
 def problems(board_path: Path, nl: Netlist) -> list[str]:
     board = pcbnew.LoadBoard(str(board_path))
     return (problems_parity(board, nl)
             + problems_width(board, board_path.with_suffix(".kicad_pro"))
+            + problems_via_in_pad(board)
             + problems_drc(board_path))
 
 
@@ -253,6 +278,20 @@ def _thin_long_5v(width_mm):
     return mutate
 
 
+def _via_in_pad(board):
+    """A via on the middle of the first SMD pad (by reference): its own net's pad."""
+    fp, p = next((fp, p) for fp in sorted(board.GetFootprints(), key=lambda f: f.GetReference())
+                 for p in fp.Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD)
+    v = pcbnew.PCB_VIA(board)
+    v.SetPosition(p.GetPosition())
+    v.SetViaType(pcbnew.VIATYPE_THROUGH)
+    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+    v.SetWidth(pcbnew.FromMM(0.6))
+    v.SetDrill(pcbnew.FromMM(0.3))
+    v.SetNet(p.GetNet())
+    board.Add(v)
+
+
 # name -> (mutation, needs the DRC, text its failure must contain)
 MUTATIONS = {
     "pad on another net": (_pad_move, False, "parity: R"),
@@ -262,6 +301,7 @@ MUTATIONS = {
     "track deleted": (_track_delete, True, "DRC unconnected"),
     "+5V thinned to 0.15": (_thin_long_5v(0.15), False, "power width: +5V track 0.150"),
     "+5V long run at 0.3": (_thin_long_5v(0.3), False, "power width: +5V track 0.300"),
+    "via in a pad": (_via_in_pad, False, "via in pad"),
 }
 
 
@@ -282,7 +322,8 @@ def selftest(board_path: Path, nl: Netlist) -> int:
             _mutate(copy, mutate)
             board = pcbnew.LoadBoard(str(copy))
             found = (problems_parity(board, nl)
-                     + problems_width(board, copy.with_suffix(".kicad_pro")))
+                     + problems_width(board, copy.with_suffix(".kicad_pro"))
+                     + problems_via_in_pad(board))
             if drc:
                 found += problems_drc(copy)
             if not any(expect in p for p in found):

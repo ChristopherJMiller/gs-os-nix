@@ -11,6 +11,7 @@ import pytest
 
 from hw.tools import bus_route as br
 from hw.tools import check_drc
+from hw.tools import plan_buses as pb
 from hw.tools import route
 
 F, B = pcbnew.F_Cu, pcbnew.B_Cu
@@ -361,11 +362,15 @@ EMPTY_SES = """(session x.ses
 """
 
 
-def _test_river(r):
-    u1, j2 = r.board.FindFootprintByReference("U1"), r.board.FindFootprintByReference("J2")
-    members = [(p.GetNetname(), p, next(q for q in j2.Pads() if q.GetNetname() == p.GetNetname()))
-               for p in u1.Pads()]
-    br.vriver(r, "test", members, y0=17.0)
+def _test_layout(r, river):
+    j2 = r.board.FindFootprintByReference("J2")
+    members = [(n, r.pad(n, river.ref),
+                next(q for q in j2.Pads() if q.GetNetname() == n)) for n in river.nets]
+    br.vriver(r, river.name, members, y0=17.0)
+
+
+TEST_RIVER = pb.River("test", "U1", tuple(f"N{k}" for k in range(N)), pb.FRONT, pb.BELOW_F)
+TEST_PLAN = [(TEST_RIVER, _test_layout)]
 
 
 def test_route_lays_the_buses_before_the_router_and_hands_them_over_fixed(tmp_path):
@@ -380,7 +385,7 @@ def test_route_lays_the_buses_before_the_router_and_hands_them_over_fixed(tmp_pa
         Path(ses).write_text(EMPTY_SES)
         return 0
 
-    route.route(path, router=stub, bus=[("test", _test_river)])
+    route.route(path, router=stub, bus=TEST_PLAN)
     assert seen["fixed"] == [f"N{k}" for k in range(N)]
     b = pcbnew.LoadBoard(str(path))
     mine = [t for t in b.GetTracks() if t.GetNetname().startswith("N")]
@@ -403,6 +408,10 @@ ROOT = Path(__file__).resolve().parents[2]
 CARRIER = ROOT / "hw" / "carrier" / "carrier.kicad_pcb"
 RIVER_SIZES = {"data": 9, "listen": 8, "address": 17, "control": 7, "slot_data": 8,
                "slot_address": 16}
+NOT_ATTEMPTED = {"slot_d_oe_n", "uart_tx", "uart_rx", "safe_n", "slot_rw", "slot_a_dir",
+                 "slot_inh_n_o", "slot_rdy_o", "slot_reset_n_o", "slot_dma_n_o",
+                 "slot_irq_n_o", "slot_nmi_n_o"}
+CLOCKS = {"slot_ph0", "slot_ph1", "slot_q3", "slot_7m"}
 
 
 @pytest.fixture(scope="module")
@@ -414,20 +423,31 @@ def carrier(tmp_path_factory):
         (d / f"carrier{suffix}").write_bytes(CARRIER.with_suffix(suffix).read_bytes())
     path = d / "carrier.kicad_pcb"
     b = pcbnew.LoadBoard(str(path))
-    br.prepare(b)
+    shares = route.start(b)
     report = br.run(b, clocks=False)
     route.save_board(b, path)
-    return path, report
+    return path, report, shares
 
 
 def test_bus_route_lays_every_planned_net_of_the_carrier(carrier):
-    _, report = carrier
-    assert report.left == {}
+    _, report, _ = carrier
     assert {k: len(v) for k, v in report.laid.items()} == RIVER_SIZES
 
 
+def test_every_planned_net_is_laid_or_listed_left(carrier):
+    """One source of truth: bus_route walks plan_buses' rivers; a net it does not attempt is
+    reported with the reason, never dropped in silence."""
+    _, report, _ = carrier
+    planned = {n for r in pb.RIVERS + pb.SLOT_RIVERS for n in r.nets}
+    laid = {n for nets in report.laid.values() for n in nets}
+    assert planned == laid | set(report.left)
+    assert set(report.left) == NOT_ATTEMPTED | CLOCKS            # the clocks were off here
+    assert all("not attempted" in report.left[n] for n in NOT_ATTEMPTED), report.left
+    assert all("clock" in report.left[n] for n in CLOCKS)
+
+
 def test_the_carrier_copy_is_drc_clean_and_its_planes_whole(carrier):
-    path, report = carrier
+    path, report, _ = carrier
     rep = check_drc.run_drc(path)
     assert rep["violations"] == [], rep["violations"][:3]
     laid = {n for nets in report.laid.values() for n in nets}
@@ -441,8 +461,10 @@ def test_the_carrier_copy_is_drc_clean_and_its_planes_whole(carrier):
 
 
 def test_every_plane_pad_keeps_a_via_within_1mm_after_the_moves(carrier):
-    path, report = carrier
+    """P19 and P28: a via within 1 mm of every plane pad, or a share with a same-net pad."""
+    path, report, shares = carrier
     assert report.moved                       # C8 and C9 sit in the address river's way
+    shared = {s.split(" -> ")[0] for s in shares}
     b = pcbnew.LoadBoard(str(path))
     vias = {n: [br._pt(t.GetPosition()) for t in b.GetTracks()
                 if t.GetClass() == "PCB_VIA" and t.GetNetname() == n] for n in ("GND", "+3V3")}
@@ -453,7 +475,8 @@ def test_every_plane_pad_keeps_a_via_within_1mm_after_the_moves(carrier):
                 polys = br.pad_poly(p, layer)
                 near = [q for q in vias[p.GetNetname()]
                         if min(br.seg_poly(q, q, poly) for poly in polys) <= 1.0 + 1e-6]
-                assert near, (fp.GetReference(), p.GetNumber())
+                assert near or f"{fp.GetReference()}.{p.GetNumber()}" in shared, \
+                    (fp.GetReference(), p.GetNumber())
 
 
 def test_route_hands_the_router_the_halo_of_the_clocks_bus_route_laid(tmp_path):
@@ -472,8 +495,115 @@ def test_route_hands_the_router_the_halo_of_the_clocks_bus_route_laid(tmp_path):
         Path(ses).write_text(EMPTY_SES)
         return 0
 
-    route.route(path, router=stub, bus=[("test", _test_river)])
+    route.route(path, router=stub, bus=TEST_PLAN)
     b = pcbnew.LoadBoard(str(path))
     clk = [t for t in b.GetTracks() if t.GetNetname() == "CLK"]
     assert clk and all(t.IsLocked() and t.GetWidth() == pcbnew.FromMM(0.2) for t in clk)
     assert seen["halo"]
+
+
+# --- the plan is plan_buses' (one source of truth) -------------------------------------------
+
+def test_the_carrier_plan_is_plan_buses_rivers():
+    plan = br.carrier_plan()
+    assert [river for river, _ in plan] == list(pb.RIVERS + pb.SLOT_RIVERS)
+    laid_by = {river.name for river, layout in plan if callable(layout)}
+    assert laid_by == set(RIVER_SIZES)
+
+
+def test_a_layout_lays_the_nets_its_river_names():
+    """The listen layout given a river of four of U4's eight nets lays those four, no more."""
+    b = pcbnew.LoadBoard(str(CARRIER))
+    route.start(b)
+    four = pb.River("listen", "U4", tuple(f"slot_dl{i}" for i in range(4)), pb.REAR, pb.BELOW_B)
+    report = br.run(b, [(four, br.LAYOUTS["listen"])], clocks=False)
+    assert report.laid == {"listen": list(four.nets)}
+    assert {t.GetNetname() for t in b.GetTracks() if t.GetNetname().startswith("slot_dl")} \
+        == set(four.nets)
+
+
+def test_a_layout_refuses_a_river_reaching_j2_another_way():
+    b = river_board(obstacle=False)
+    wrong = pb.River("listen", "U1", TEST_RIVER.nets, pb.FRONT, pb.BELOW_F)
+    report = br.run(b, [(wrong, br.LAYOUTS["listen"])], clocks=False)
+    assert set(report.left) == set(wrong.nets)
+    assert all("river skipped" in why and "below-B" in why for why in report.left.values())
+
+
+def test_a_skipped_river_lists_its_nets():
+    b = river_board(obstacle=False)
+    missing = pb.River("address", "U9", ("N0", "N1"), pb.FRONT, pb.BELOW_F)    # no U9
+    report = br.run(b, [(missing, br.LAYOUTS["address"])], clocks=False)
+    assert set(report.left) == {"N0", "N1"}
+    assert all("river skipped" in why and "U9" in why for why in report.left.values())
+
+
+def test_a_coding_bug_in_a_layout_is_not_swallowed():
+    def broken(r, river):
+        return river.no_such_field
+    with pytest.raises(AttributeError):
+        br.run(river_board(obstacle=False), [(TEST_RIVER, broken)], clocks=False)
+
+
+# --- a moved via stays outside its pad; no via in the tab ------------------------------------
+
+def test_a_moved_via_is_offered_no_spot_on_or_by_its_pad():
+    """A 1.6 mm pad's middle is 0.8 mm from its edge: a spot there would pass a distance-to-edge
+    test. via_spots offers none on the pad and none nearer its outline than P19's 0.4 mm."""
+    b = make()
+    part(b, "C9", [(1, "+3V3", 15, 15, 1.6, 1.6)])
+    pad = b.FindFootprintByReference("C9").Pads()[0]
+    spots = br.via_spots(br.Space(b), pad, "+3V3")
+    assert spots
+    for p in spots:
+        assert not pad.HitTest(v(*p))
+        d = min(br.seg_poly(p, p, poly) for poly in br.pad_poly(pad, F))
+        assert d >= route.PLANE_VIA_MIN_MM - 1e-6, (p, d)
+
+
+def test_every_via_on_the_carrier_copy_keeps_0_4mm_from_every_pad(carrier):
+    """P28 on the whole copy (fanout, moves, rivers): every via centre at least 0.4 mm from every
+    SMD pad's copper (P19's spacing for its own pad; more than the 0.45 mm clearance to others)."""
+    path, _, _ = carrier
+    b = pcbnew.LoadBoard(str(path))
+    pads = [(f"{fp.GetReference()}.{p.GetNumber()}", poly) for fp in b.GetFootprints()
+            for p in fp.Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD
+            for L in (F, B) if p.IsOnLayer(L) for poly in br.pad_poly(p, L)]
+    worst = (9.0, "")
+    for t in b.GetTracks():
+        if t.GetClass() == "PCB_VIA":
+            c = br._pt(t.GetPosition())
+            for label, poly in pads:
+                d = 0.0 if br.inside(c, poly) else br.seg_poly(c, c, poly)
+                worst = min(worst, (d, f"{t.GetNetname()} via {c} to {label}"))
+    assert worst[0] >= route.PLANE_VIA_MIN_MM - 0.01, worst     # 0.01: rounded pads as polygons
+
+
+def tab_board():
+    """A 30 x 20 mm body with a 14 x 7 mm finger tab below it (x 8-22), as the card's."""
+    b = make(w=30, h=20)
+    for item in list(b.GetDrawings()):
+        b.Remove(item)
+    pts = [(0, 0), (30, 0), (30, 20), (22, 20), (22, 27), (8, 27), (8, 20), (0, 20)]
+    for a, c in zip(pts, pts[1:] + pts[:1]):
+        s = pcbnew.PCB_SHAPE(b)
+        s.SetShape(pcbnew.SHAPE_T_SEGMENT)
+        s.SetLayer(pcbnew.Edge_Cuts)
+        s.SetWidth(pcbnew.FromMM(0.1))
+        s.SetStart(v(*a))
+        s.SetEnd(v(*c))
+        b.Add(s)
+    part(b, "J1", [(1, "N0", 15, 24, 1.8, 5.0)])
+    part(b, "U1", [(1, "N0", 15, 8, 0.6, 0.6)])
+    return b
+
+
+def test_bus_route_puts_no_via_in_the_finger_tab():
+    b = tab_board()
+    r = br.Router(b)
+    hard, _ = r.space.check("N0", br.Via((15.0, 21.5)))      # below the body: in the tab
+    assert any("tab" in h for h in hard), hard
+    assert not r.space.check("N0", br.Via((15.0, 18.5)))[0]  # above it: fine
+    pen = br.Pen((15, 24), F, 0.15).vert(21.5).via(B).vert(8.0)
+    assert r.offer("N0", "test", pen.items) is False
+    assert "tab" in r.report.left["N0"]

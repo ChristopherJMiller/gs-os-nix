@@ -24,7 +24,7 @@ This does that, for the plan in hw/tools/plan_buses.py (which J2 contact each bi
 * the clocks are its too (the brief's second option): after the rivers, the Clock class nets
   are joined by route.lay_first (the A* first pass, which keeps the Clock clearance) and locked.
 
-The rivers (CARRIER, built from the pads' positions):
+The rivers (carrier_plan(): plan_buses' rivers, each with its layout here; built from the pads):
 
 FPGA side
   data      U1 slot_d0-7, d_dir: up out of U1 into the channel under U4 on F.Cu, left along U4's
@@ -56,6 +56,7 @@ if __package__ in (None, ""):          # run as a script: put the repo root on t
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from hw.tools import check_edge
+from hw.tools import plan_buses as pb
 from hw.tools import route as rt
 
 F, B = pcbnew.F_Cu, pcbnew.B_Cu
@@ -466,12 +467,12 @@ def lanes(xs: list[float], intervals: list[tuple[float, float, float]], gap: flo
         skip = prev + SKIP_COST
         take = place <= skip
         cur = np.where(take, place, skip)
-        back.append((np.where(take, a, idx), take, none))
+        back.append((np.where(take, a, idx), take))
         prev, none = cur, none + SKIP_COST
     out: list[float | None] = [None] * n
     j = int(np.argmin(prev)) if prev.min() < none else m
     for i in range(n - 1, -1, -1):
-        a, take, _ = back[i]
+        a, take = back[i]
         if j == m:
             continue
         if take[j]:
@@ -591,6 +592,17 @@ def neck_for(pad, p: P, w: float) -> Seg:
 
 # --- the router ----------------------------------------------------------------------------
 
+class CannotLay(Exception):
+    """A river cannot be laid on this board: a part or pad it needs is missing, it reaches J2
+    another way than its layout does, or there is no room. run() reports its nets; any other
+    exception is a bug and is raised."""
+
+
+def require(river: pb.River, row: str, access: str) -> None:
+    if (river.row, river.access) != (row, access):
+        raise CannotLay(f"the {river.name} layout reaches J2 {row}/{access}; the plan says "
+                        f"{river.row}/{river.access}")
+
 @dataclass
 class Report:
     laid: dict = field(default_factory=dict)        # river -> [nets]
@@ -626,12 +638,17 @@ class Router:
         self.existing = {t.GetNetname() for t in board.GetTracks()
                          if t.GetNetname() not in self.space.planes}
 
-    # -- pads --
-    def pad(self, net: str, ref: str, pick=None):
+    # -- parts and pads --
+    def part(self, ref: str):
         fp = self.board.FindFootprintByReference(ref)
-        pads = [p for p in fp.Pads() if p.GetNetname() == net]
+        if fp is None:
+            raise CannotLay(f"no {ref} on the board")
+        return fp
+
+    def pad(self, net: str, ref: str, pick=None):
+        pads = [p for p in self.part(ref).Pads() if p.GetNetname() == net]
         if not pads:
-            raise ValueError(f"bus_route: {ref} has no pad on {net}")
+            raise CannotLay(f"{ref} has no pad on {net}")
         return pick(pads) if pick else pads[0]
 
     def box(self, pad, layer=None) -> tuple:
@@ -1003,8 +1020,8 @@ def lriver(r: "Router", name: str, members: list, *, layer: int, row_top: float,
 
 # --- the carrier's rivers ---------------------------------------------------------------------
 
-def _courtyard(board, ref: str) -> tuple:
-    bb = board.FindFootprintByReference(ref).GetCourtyard(pcbnew.F_CrtYd).BBox()
+def _courtyard(r: "Router", ref: str) -> tuple:
+    bb = r.part(ref).GetCourtyard(pcbnew.F_CrtYd).BBox()
     return (_mm(bb.GetLeft()), _mm(bb.GetTop()), _mm(bb.GetRight()), _mm(bb.GetBottom()))
 
 
@@ -1020,22 +1037,23 @@ def _pads_in(r: "Router", box: tuple, layer: int, skip=()) -> list[Obs]:
 
 
 def _j2_front_bottom(r: "Router") -> float:
-    j2 = r.board.FindFootprintByReference("J2")
+    j2 = r.part("J2")
     yc = _mm(j2.GetY())
     return max(r.box(p)[3] for p in j2.Pads() if p.GetNumber().isdigit() and _mm(p.GetY()) > yc)
 
 
-def river_data(r: "Router") -> None:
+def river_data(r: "Router", river: pb.River) -> None:
     """U1's FPGA side to J2's rear row from above (module doc): the channel, U4's side, a fan
     onto a via row under J2's front row, the chimney up J2's unused left end, the highway."""
-    nets = [f"slot_d{i}" for i in range(8)] + ["slot_d_dir"]
-    src = {n: r.pad(n, "U1") for n in nets}
+    require(river, pb.REAR, pb.ABOVE)
+    nets = list(river.nets)
+    src = {n: r.pad(n, river.ref) for n in nets}
     dst = {n: r.pad(n, "J2") for n in nets}
     order = sorted(nets, key=lambda n: _mm(src[n].GetX()))
     k_max = len(order) - 1
     need = _need(r, nets)
     y_u1 = min(r.box(p)[1] for p in src.values())                 # U1's FPGA pins, top end
-    u4 = r.board.FindFootprintByReference("U4")
+    u4 = r.part("U4")
     u4_boxes = [r.box(p) for p in u4.Pads()]
     y_u4_low = max(b[3] for b in u4_boxes)                         # U4's lower row, bottom end
     y_u4_top = min(b[1] for b in u4_boxes)
@@ -1044,9 +1062,9 @@ def river_data(r: "Router") -> None:
     # the channel between U1 and U4: one row per net, the leftmost pin lowest
     row = {n: y_u1 - need - PITCH * k for k, n in enumerate(order)}
     if row[order[-1]] < y_u4_low + need - TOL:
-        raise ValueError("the channel under U4 is too narrow for the data bus")
+        raise CannotLay("the channel under U4 is too narrow for the data bus")
     # up U4's left side, outside its courtyard
-    col8 = _courtyard(r.board, "U4")[0] - need
+    col8 = _courtyard(r, "U4")[0] - need
     col = {n: col8 - PITCH * (k_max - k) for k, n in enumerate(order)}
     # sideways past what stands over U4's left end (C14), before reaching it
     over = _pads_in(r, (col[order[0]] - 0.2, y_front + 0.1, col8 + need, y_u4_top - 0.01), F,
@@ -1056,7 +1074,6 @@ def river_data(r: "Router") -> None:
                     skip=nets)
     y_end0 = (min(o.box[1] for o in left) - need) if left else y_u4_top
     stair = PITCH * math.sqrt(2) - PITCH + 0.01                    # parallel 45s stay a pitch apart
-    jog0 = y_end0                    # the first net's jog starts clear of what is on its left
     # a row of vias under the front row, and the fan onto it (the leftmost net highest)
     y_via = y_front + VIA_MM / 2 + rt.CLEARANCE_MM + MARGIN + 0.01
     vias_left = [o.geom[0] for o in r.space.obs if o is not None and o.kind == "cap"
@@ -1070,18 +1087,20 @@ def river_data(r: "Router") -> None:
     h_last = rear_top - VIA_MM / 2 - rt.CLEARANCE_MM - MARGIN - 0.01
     for k, n in enumerate(order):
         pen = Pen(_pt(src[n].GetPosition()), F, r.space.width(n))
-        pen.vert(row[n]).horiz(col[n]).vert(jog0 - stair * k).diag(col[n] - shift)
+        # the first net's jog starts clear of what is on its left; each next one a stair higher
+        pen.vert(row[n]).horiz(col[n]).vert(y_end0 - stair * k).diag(col[n] - shift)
         pen.vert(y_via + VIA_TRACK + PITCH * k).horiz(v0 + VIA_PITCH * k).vert(y_via).via(B)
         pen.vert(h_last - 0.6 * (k_max - k)).horiz(_mm(dst[n].GetX())).via(F)
         pen.vert(_mm(dst[n].GetY()))
-        r.offer(n, "data", pen.items)
+        r.offer(n, river.name, pen.items)
 
 
-def river_listen(r: "Router") -> None:
+def river_listen(r: "Router", river: pb.River) -> None:
     """U4's FPGA side to J2's rear row from below: stubs to staggered vias above U4, B.Cu at 45
     degrees under the front row, staggered vias in the gap, stubs up into the rear pads."""
-    nets = [f"slot_dl{i}" for i in range(8)]
-    src = {n: r.pad(n, "U4") for n in nets}
+    require(river, pb.REAR, pb.BELOW_B)
+    nets = list(river.nets)
+    src = {n: r.pad(n, river.ref) for n in nets}
     dst = {n: r.pad(n, "J2") for n in nets}
     order = sorted(nets, key=lambda n: _mm(src[n].GetX()))
     y_top = min(r.box(p)[1] for p in src.values())
@@ -1107,32 +1126,34 @@ def river_listen(r: "Router") -> None:
             chosen[n] = best[1]
     for k, n in enumerate(order):
         if n not in chosen:
-            r.report.left[n] = f"listen: {n}: no room for its via in the gap"
+            r.report.left[n] = f"{river.name}: {n}: no room for its via in the gap"
             continue
         pen = Pen(_pt(src[n].GetPosition()), F, r.space.width(n))
         pen.vert(near if k % 2 == 0 else far).via(B).vert(y0).diag(_mm(dst[n].GetX()))
         pen.vert(chosen[n]).via(F).vert(_mm(dst[n].GetY()))
-        r.offer(n, "listen", pen.items)
+        r.offer(n, river.name, pen.items)
 
 
-def river_address(r: "Router") -> None:
-    """U2's FPGA side to J2's front row on F.Cu: lanes round C8 and C9, then one jog."""
-    nets = ["slot_a_oe_n"] + [f"slot_a{i}" for i in range(16)]
-    src = {n: r.pad(n, "U2", pick=lambda ps: min(ps, key=lambda p: p.GetX())) for n in nets}
+def river_address(r: "Router", river: pb.River) -> None:
+    """U2's FPGA side to J2's front row on F.Cu: lanes round C8 and C9, then one jog. A net with
+    two pins on the part (slot_a_oe_n) leaves from the leftmost, as plan_buses plans it."""
+    require(river, pb.FRONT, pb.BELOW_F)
+    nets = list(river.nets)
+    src = {n: r.pad(n, river.ref, pick=lambda ps: min(ps, key=lambda p: p.GetX())) for n in nets}
     ye = min(r.box(p)[1] for p in src.values())
     xs = [_mm(p.GetX()) for p in src.values()]
     above = _pads_in(r, (min(xs) - 1, ye - 4, max(xs) + 1, ye - 0.05), F, skip=nets)
     y0 = min(o.box[1] for o in above) - _need(r, nets) if above else ye - 1.0
-    vriver(r, "address", [(n, src[n], r.pad(n, "J2")) for n in nets], y0=y0)
+    vriver(r, river.name, [(n, src[n], r.pad(n, "J2")) for n in nets], y0=y0)
 
 
-def river_control(r: "Router") -> None:
+def river_control(r: "Router", river: pb.River) -> None:
     """U5's FPGA side straight up into the front pads above it."""
-    nets = ["slot_iosel_n", "slot_devsel_n", "slot_m2sel_n", "slot_m2b0", "slot_sync_n",
-            "slot_iostrb_n", "slot_reset_n"]
-    src = {n: r.pad(n, "U5") for n in nets}
+    require(river, pb.FRONT, pb.BELOW_F)
+    nets = list(river.nets)
+    src = {n: r.pad(n, river.ref) for n in nets}
     ye = min(r.box(p)[1] for p in src.values())
-    vriver(r, "control", [(n, src[n], r.pad(n, "J2")) for n in nets], y0=ye - 1.5)
+    vriver(r, river.name, [(n, src[n], r.pad(n, "J2")) for n in nets], y0=ye - 1.5)
 
 
 def _finger(r: "Router", net: str) -> P:
@@ -1141,10 +1162,11 @@ def _finger(r: "Router", net: str) -> P:
     return (_mm(p.GetX()), r.box(p)[1] + 0.4)
 
 
-def river_slot_address(r: "Router") -> None:
+def river_slot_address(r: "Router", river: pb.River) -> None:
     """J1 A0-A15 (front fingers) to U2's slot pins on F.Cu: nested rows under the part row,
     lanes round C10 and C11, up into the pins."""
-    nets = [f"SLOT_A{i}" for i in range(16)]
+    require(river, pb.FINGERS, pb.FRONT_SIDE)
+    nets = list(river.nets)
     ends = {n: r.pad(n, "U2") for n in nets}
     y_end = max(r.box(p)[3] for p in ends.values())                # U2's slot pins, bottom end
     starts = {n: _finger(r, n) for n in nets}
@@ -1157,17 +1179,18 @@ def river_slot_address(r: "Router") -> None:
                     F, skip=nets)
     row_top = max([y_lo] + [o.box[3] + need for o in lane])
     members = [(n, starts[n], _pt(ends[n].GetPosition())) for n in nets]
-    pens = lriver(r, "slot_address", members, layer=F, row_top=row_top, approach=(y_end, y_lo))
+    pens = lriver(r, river.name, members, layer=F, row_top=row_top, approach=(y_end, y_lo))
     for n in nets:
         if n in pens:
-            r.offer(n, "slot_address", pens[n].items)
+            r.offer(n, river.name, pens[n].items)
 
 
-def river_slot_data(r: "Router") -> None:
+def river_slot_data(r: "Router", river: pb.River) -> None:
     """J1 D0-D7 (back fingers) on B.Cu: nested rows below U1, a via under U1's body with a stub
     to its pin, on at 45 degrees under the channel, a via under U4's body with a stub to its
     pin."""
-    nets = [f"SLOT_D{i}" for i in range(8)]
+    require(river, pb.FINGERS, pb.BACK)
+    nets = list(river.nets)
     u1 = {n: r.pad(n, "U1") for n in nets}
     u4 = {n: r.pad(n, "U4") for n in nets}
     order = sorted(nets, key=lambda n: _mm(u1[n].GetX()))
@@ -1176,9 +1199,9 @@ def river_slot_data(r: "Router") -> None:
     c = min(r.box(p)[1] for p in u4.values()) - step              # under U4's body
     via1 = {n: a - 0.92 * (k % 2) for k, n in enumerate(order)}
     via4 = {n: c - 0.92 * (k % 2) for k, n in enumerate(order)}
-    y_mid = min(_mm(p.GetY()) for p in r.board.FindFootprintByReference("U1").Pads())
+    y_mid = min(_mm(p.GetY()) for p in r.part("U1").Pads())
     members = [(n, _finger(r, n), (_mm(u1[n].GetX()), via1[n])) for n in nets]
-    pens = lriver(r, "slot_data", members, layer=B, row_top=a + VIA_TRACK)
+    pens = lriver(r, river.name, members, layer=B, row_top=a + VIA_TRACK)
     for n in order:
         if n not in pens:
             continue
@@ -1186,30 +1209,71 @@ def river_slot_data(r: "Router") -> None:
         stub1 = Seg(F, (pen.x, pen.y), _pt(u1[n].GetPosition()), r.space.width(n))
         pen.vert(y_mid).diag(_mm(u4[n].GetX())).vert(via4[n]).via(B)
         stub4 = Seg(F, (pen.x, pen.y), _pt(u4[n].GetPosition()), r.space.width(n))
-        r.offer(n, "slot_data", pen.items + [stub1, stub4])
+        r.offer(n, river.name, pen.items + [stub1, stub4])
 
 
-CARRIER = (("data", river_data), ("listen", river_listen), ("address", river_address),
-           ("control", river_control), ("slot_data", river_slot_data),
-           ("slot_address", river_slot_address))
+# The layouts, by plan_buses' river names. A river the plan has and no layout here is not
+# attempted: its nets are reported as left, with why.
+LAYOUTS = {"data": river_data, "listen": river_listen, "address": river_address,
+           "control": river_control, "slot_data": river_slot_data,
+           "slot_address": river_slot_address}
+CLOCKS = "clocks"                  # rivers laid by the clock step (the Clock class, A*)
+NOT_ATTEMPTED = {
+    "data_oe": "one pin on U1's slot-side row beside C7, with its pull-up R12: the first pass's",
+    "host": "the header lines start at the top edge, a short run down to the rear row: the "
+            "router's",
+    "rest": "single nets planned for the router (pads beyond the rivers)",
+}
 
 
-# --- the run ------------------------------------------------------------------------------
+def carrier_plan() -> list[tuple]:
+    """plan_buses' rivers (J2's, then the slot side's), each with its layout, CLOCKS, or the
+    reason it is not attempted."""
+    out = []
+    for river in pb.RIVERS + pb.SLOT_RIVERS:
+        if river.name in LAYOUTS:
+            out.append((river, LAYOUTS[river.name]))
+        elif river.name.startswith("clocks"):
+            out.append((river, CLOCKS))
+        else:
+            out.append((river, NOT_ATTEMPTED.get(river.name, "no layout for this river")))
+    return out
 
-def run(board, rivers=CARRIER, clocks: bool = True) -> Report:
-    """Lay the rivers on `board` (after the P19 fanout), move the plane vias in their way, lock
-    everything, then the clocks (A*, Clock class). A river whose parts the board lacks is
-    skipped and said so."""
+
+def run(board, plan=None, clocks: bool = True) -> Report:
+    """Lay the plan's rivers on `board` (after route.start: the P19 fanout), move the plane vias
+    in their way, lock everything, then the clocks (A*, Clock class). Every planned net ends up
+    laid or in the report's `left` with its reason; a river the board cannot take (CannotLay)
+    is skipped and its nets listed."""
+    plan = carrier_plan() if plan is None else plan
     r = Router(board)
-    for name, fn in rivers:
-        try:
-            fn(r)
-        except (ValueError, AttributeError, StopIteration) as e:
-            r.report.left[f"({name})"] = f"river skipped: {e}"
+    clock_rivers = []
+    for river, layout in plan:
+        if callable(layout):
+            try:
+                layout(r, river)
+            except CannotLay as e:
+                for n in river.nets:
+                    r.report.left.setdefault(n, f"{river.name}: river skipped: {e}")
+        elif layout == CLOCKS:
+            clock_rivers.append(river)
+        else:
+            for n in river.nets:
+                r.report.left[n] = f"{river.name}: not attempted: {layout}"
     r.relocate()
     r.lay()
     if clocks:
-        r.report.clocks_left = rt.lay_first(board, clock_order(board))
+        names = clock_order(board)
+        r.report.clocks_left = rt.lay_first(board, names)
+        laid = [n for n in names if n not in r.report.clocks_left]
+        if laid:
+            r.report.laid.setdefault("clocks", []).extend(laid)
+    for river in clock_rivers:
+        for n in river.nets:
+            if not clocks:
+                r.report.left[n] = f"{river.name}: the clock step was not run"
+            elif n in r.report.clocks_left:
+                r.report.left[n] = f"{river.name}: the clock step found no path"
     return r.report
 
 
@@ -1217,18 +1281,6 @@ def clock_order(board) -> list[str]:
     """The Clock-class nets, in the first pass's order (route.CLOCK_NETS), any others after."""
     cls = set(rt.clock_nets(board))
     return [n for n in rt.CLOCK_NETS if n in cls] + sorted(cls - set(rt.CLOCK_NETS))
-
-
-def prepare(board) -> None:
-    """What route.py does before anything: no tracks, solid zones, the P19 plane fanout."""
-    rt.strip_routing(board)
-    rt.solid_zones(board)
-    planes = rt.plane_nets(board)
-    if planes:
-        rt.thermal_tht(board, planes)
-        _, no_room = rt.fan_out_planes(board, tuple(sorted(planes)))
-        if no_room:
-            raise SystemExit("bus_route: no room for a plane via at " + ", ".join(no_room))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1239,7 +1291,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-clocks", action="store_true", help="leave the clocks out")
     a = ap.parse_args(argv)
     b = pcbnew.LoadBoard(str(a.board))
-    prepare(b)
+    rt.start(b)
     report = run(b, clocks=not a.no_clocks)
     for line in report.lines():
         print(line)

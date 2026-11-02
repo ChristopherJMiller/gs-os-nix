@@ -376,6 +376,8 @@ class _Grid:
         self.track = {l: self._copper(board, l, trk) for l in _LAYERS}
         via_maps = [self._copper(board, l, via) for l in _LAYERS]
         self.via = via_maps[0] | via_maps[1]
+        if net:                     # P28: no via over a pad, its own net's either
+            self.via |= self._own_smd_pads(board, VIA_MM / 2 + MARGIN_MM)
         for l in self.track:
             self.track[l] |= self._outside(board, EDGE_CLEARANCE_MM + width_mm / 2 + MARGIN_MM)
         self.via |= self._outside(board, EDGE_CLEARANCE_MM + VIA_MM / 2 + MARGIN_MM)
@@ -441,6 +443,25 @@ class _Grid:
                 (xa, ya), (xb, yb) = (self.px(k.GetLeft(), k.GetTop()),
                                       self.px(k.GetRight(), k.GetBottom()))
                 d.rectangle([xa - g, ya - g, xb + g, yb + g], fill=255)
+        return np.asarray(img, dtype=bool)
+
+    def _own_smd_pads(self, board, grow_mm: float) -> np.ndarray:
+        """Cells nearer than `grow_mm` to an SMD pad of our own net (on either layer)."""
+        img, d = self._new()
+        g = grow_mm / RES_MM
+        for fp in board.GetFootprints():
+            for p in fp.Pads():
+                if p.GetNetCode() != self.net or p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
+                    continue
+                for layer in _LAYERS:
+                    if not p.IsOnLayer(layer):
+                        continue
+                    for pts in self._pad_outlines(p, layer):
+                        if len(pts) > 2:
+                            d.polygon(pts, fill=255)
+                        d.line(pts + pts[:1], fill=255, width=max(1, round(2 * g)), joint="curve")
+                        for x, y in pts:
+                            d.ellipse([x - g, y - g, x + g, y + g], fill=255)
         return np.asarray(img, dtype=bool)
 
     def _outside(self, board, inset_mm: float) -> np.ndarray:
@@ -979,14 +1000,17 @@ def _ic_power_pads(board, name: str) -> list[tuple[float, float]]:
             for p in fp.Pads() if p.GetNetname() == name]
 
 
-def fan_out_planes(board, nets=PLANE_NETS, reach_mm: float = PLANE_VIA_REACH_MM
-                   ) -> tuple[list, list[str]]:
+def fan_out_planes(board, nets=PLANE_NETS, reach_mm: float = PLANE_VIA_REACH_MM,
+                   shares: list | None = None) -> tuple[list, list[str]]:
     """P19: for every SMD pad on `nets`, a short neck and a tented via (0.6/0.3 mm) within
     `reach_mm` of the pad's edge, clear of every other pad and via, outside the finger tab,
-    so the pad meets its inner plane. Everything is locked (the DSN gets it as fixed). A
-    pad with no room is reported, not forced. The edge fingers' ground pad sits in the tab:
-    its via is above the tab (check_edge forbids vias in it) and the neck leaves the tab.
-    A decoupling cap's via goes on the side of the IC's pin of that net if there is room.
+    so the pad meets its inner plane. Everything is locked (the DSN gets it as fixed). The
+    edge fingers' ground pad sits in the tab: its via is above the tab (check_edge forbids vias
+    in it) and the neck leaves the tab. A decoupling cap's via goes on the side of the IC's pin
+    of that net if there is room. P28: no via sits on any pad, its own included; a pad with
+    no room shares the via of a same-net pad at most SHARE_MM away that has one, by a short
+    locked track (pin -> decoupling cap -> via), listed in `shares` as 'REF.PAD -> REF.PAD
+    (NET)'. Only a pad with neither is reported, not forced.
     Returns (the tracks and vias added, the pads that found no room as 'REF.PAD (NET)')."""
     tab = check_edge.tab_geometry(board)
     pads = [(fp, p) for fp in board.GetFootprints() for p in fp.Pads()
@@ -997,20 +1021,24 @@ def fan_out_planes(board, nets=PLANE_NETS, reach_mm: float = PLANE_VIA_REACH_MM
     had = [(t.GetNetCode(), t.GetPosition()) for t in board.GetTracks()
            if t.GetClass() == "PCB_VIA"]            # vias there before this call
     placed, failed, placed_pts = [], [], []
+    no_room, with_via = [], set()
     ics = {n: _ic_power_pads(board, n) for n in nets}
     for fp, pad in pads:
         name = pad.GetNetname()
         box = pad.GetBoundingBox()
         box.Inflate(pcbnew.FromMM(reach_mm))
         if any(n == pad.GetNetCode() and box.Contains(pos) for n, pos in had):
+            with_via.add(pad.m_Uuid.AsString())
             continue                         # it has its via already (a continued route)
+        if _shared_already(board, pad):
+            continue                         # it shares a neighbour's via (a continued route)
         ic_pts = ics[name] if fp.GetReference().startswith("C") else []
         ref = fp.GetReference()
         out_dir = _outward(fp, pad) if (ref.startswith("U") or ref.startswith("J")) \
             and ref != "J1" else None
         found = _fan_one(board, grids, placed_pts, pad, ic_pts, tab, reach_mm, out_dir)
         if found is None:
-            failed.append(f"{fp.GetReference()}.{pad.GetNumber()} ({name})")
+            no_room.append((fp, pad))
             continue
         (vx, vy), (sx, sy), width, layer = found
         nets_item = board.FindNet(name)
@@ -1035,8 +1063,102 @@ def fan_out_planes(board, nets=PLANE_NETS, reach_mm: float = PLANE_VIA_REACH_MM
         board.Add(x)
         placed += [t, x]
         placed_pts.append((vx, vy))
+        with_via.add(pad.m_Uuid.AsString())
         _stamp(grids, pad.GetNetCode(), (vx, vy), ((sx, sy), (vx, vy), width), layer)
+    for fp, pad in no_room:                  # P28: share a near neighbour's via, or report
+        got = _share(board, grids, pad, [(f, q) for f, q in pads if q.m_Uuid.AsString() in with_via])
+        if got is None:
+            failed.append(f"{fp.GetReference()}.{pad.GetNumber()} ({pad.GetNetname()})")
+            continue
+        t, other = got
+        placed.append(t)
+        if shares is not None:
+            shares.append(f"{fp.GetReference()}.{pad.GetNumber()} -> {other} ({pad.GetNetname()})")
     return placed, failed
+
+
+SHARE_MM = 1.0                     # P28: a pad with no via room may join a same-net pad this near
+
+
+def _pad_mm_polys(pad, layer) -> list:
+    poly = pcbnew.SHAPE_POLY_SET()
+    pad.TransformShapeToPolygon(poly, layer, 0, 10000, pcbnew.ERROR_INSIDE)
+    return [[(_mm(o.CPoint(i).x), _mm(o.CPoint(i).y)) for i in range(o.PointCount())]
+            for o in (poly.Outline(k) for k in range(poly.OutlineCount()))]
+
+
+def _pad_gap(a, b, layer) -> float:
+    """Edge to edge distance between two pads' copper on `layer` (0 if they touch)."""
+    pa, pb = _pad_mm_polys(a, layer), _pad_mm_polys(b, layer)
+    va = np.array([p for pl in pa for p in pl])
+    vb = np.array([p for pl in pb for p in pl])
+    return float(min(_dist_to_polys(va, pb).min(), _dist_to_polys(vb, pa).min()))
+
+
+def _share(board, grids, pad, with_via):
+    """A locked track from `pad` to the nearest same-net pad (of `with_via`, on its layer, at
+    most SHARE_MM away edge to edge) that has its via, if one fits clear of everything:
+    (the track, 'REF.PAD' of the neighbour), or None."""
+    layer, name = _pad_layer(pad), pad.GetNetname()
+    near = []
+    for fp, q in with_via:
+        if q.GetNetCode() != pad.GetNetCode() or not q.IsOnLayer(layer):
+            continue
+        gap = _pad_gap(pad, q, layer)
+        if gap <= SHARE_MM:
+            near.append((gap, fp.GetReference(), q.GetNumber(), fp, q))
+    for _, ref, num, fp, q in sorted(near, key=lambda n: n[:3]):
+        qpts = np.array([p for pl in _pad_mm_polys(q, layer) for p in pl])
+        ppts = np.array([p for pl in _pad_mm_polys(pad, layer) for p in pl])
+        for width in _fan_widths(board, name):
+            key = (pad.GetNetCode(), width)
+            if key not in grids:
+                grids[key] = _Grid(board, pad.GetNetCode(), width - NECK_SLACK_MM)
+            g = grids[key]
+            b = _neck_start(q, (_mm(pad.GetX()), _mm(pad.GetY())), qpts)
+            a = _neck_start(pad, b, ppts)
+            b = _neck_start(q, a, qpts)
+            if name == "+3V3" and math.hypot(b[0] - a[0], b[1] - a[1]) > NECK_MAX_3V3_MM:
+                continue
+            if not _neck_clear(g, layer, a, b):
+                continue
+            t = pcbnew.PCB_TRACK(board)
+            t.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(a[0]), pcbnew.FromMM(a[1])))
+            t.SetEnd(pcbnew.VECTOR2I(pcbnew.FromMM(b[0]), pcbnew.FromMM(b[1])))
+            t.SetLayer(layer)
+            t.SetWidth(pcbnew.FromMM(width))
+            t.SetNet(board.FindNet(name))
+            t.SetLocked(True)
+            board.Add(t)
+            _stamp_track(grids, pad.GetNetCode(), (a, b, width), layer)
+            return t, f"{ref}.{num}"
+    return None
+
+
+def _shared_already(board, pad) -> bool:
+    """Does a locked track of the pad's net join it to another pad of the net (a share)?"""
+    for t in board.GetTracks():
+        if t.GetClass() == "PCB_VIA" or not t.IsLocked() or t.GetNetCode() != pad.GetNetCode():
+            continue
+        ends = (t.GetStart(), t.GetEnd())
+        if any(pad.HitTest(e) for e in ends):
+            other = ends[1] if pad.HitTest(ends[0]) else ends[0]
+            for fp in board.GetFootprints():
+                for q in fp.Pads():
+                    if q is not pad and q.GetNetCode() == pad.GetNetCode() and q.HitTest(other):
+                        return True
+    return False
+
+
+def _stamp_track(grids, placed_net: int, track, layer: int) -> None:
+    """Teach every cached grid of another net about a new track."""
+    (a, b, w) = track
+    for (net, width), g in grids.items():
+        if net == placed_net:
+            continue
+        pa, pb = g.px(a[0] * 1e6, a[1] * 1e6), g.px(b[0] * 1e6, b[1] * 1e6)
+        _thick_line(g.track[layer], pa, pb, (w / 2 + CLEARANCE_MM + width / 2 + MARGIN_MM) / RES_MM)
+        _thick_line(g.via, pa, pb, (w / 2 + CLEARANCE_MM + VIA_MM / 2 + MARGIN_MM) / RES_MM)
 
 
 # --- the first pass -------------------------------------------------------------------
@@ -1255,6 +1377,26 @@ def repair_clock_clearance(board, rounds: int = REPAIR_ROUNDS) -> list[str]:
 
 # --- the run ----------------------------------------------------------------------------
 
+def start(b, keep_locked: bool = False, keep_all: bool = False) -> list[str]:
+    """The start of every route (and of bus_route on its own): the tracks dropped (or the
+    locked ones, or all, kept), solid zones, and the P19 plane fanout. Returns the P28 shares;
+    a plane pad with neither room for a via nor a neighbour to share one ends the route."""
+    strip_routing(b, keep_locked, keep_all)
+    solid_zones(b)
+    planes = plane_nets(b)
+    shares: list[str] = []
+    if planes:
+        thermal_tht(b, planes)
+        placed, no_room = fan_out_planes(b, tuple(sorted(planes)), shares=shares)
+        vias = sum(1 for t in placed if t.GetClass() == "PCB_VIA")
+        print(f"plane fanout: {vias} vias for {', '.join(sorted(planes))}"
+              + (f"; shared (P28): {', '.join(shares)}" if shares else "")
+              + (f"; no room for: {', '.join(no_room)}" if no_room else ""))
+        if no_room:
+            raise SystemExit("route: no room for a plane via at " + ", ".join(no_room))
+    return shares
+
+
 ROUTER_THREADS = 6                 # the optimizer's thread cap (-mt alone does not set it)
 
 
@@ -1290,7 +1432,7 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
           extra: list[str] = (), first: list[str] | None = None,
           router=run_freerouting, keep_locked: bool = False, keep_all: bool = False,
           repair: bool = False, bus=None) -> None:
-    """Route `board` in place. `bus` (bus_route's rivers, e.g. bus_route.CARRIER) are laid and
+    """Route `board` in place. `bus` (a bus_route plan, e.g. bus_route.carrier_plan()) is laid and
     locked right after the plane fanout, the clocks with them; then `first` (net names; [] for
     the default set) are laid by the finisher and locked, so the router keeps both as fixed
     wires. `router` is run_freerouting's signature (a test passes a stub)."""
@@ -1300,16 +1442,8 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
         work.mkdir(parents=True, exist_ok=True)
         dsn, ses, log = work / "carrier.dsn", work / "carrier.ses", work / "freerouting.log"
         b = pcbnew.LoadBoard(str(board))
-        strip_routing(b, keep_locked, keep_all)
-        solid_zones(b)
+        start(b, keep_locked, keep_all)
         planes = plane_nets(b)
-        if planes:
-            thermal_tht(b, planes)
-            placed, no_room = fan_out_planes(b, tuple(sorted(planes)))
-            print(f"plane fanout: {len(placed) // 2} vias for {', '.join(sorted(planes))}"
-                  + (f"; no room for: {', '.join(no_room)}" if no_room else ""))
-            if no_room:
-                raise SystemExit("route: no room for a plane via at " + ", ".join(no_room))
         if bus is not None:
             from hw.tools import bus_route
             for line in bus_route.run(b, bus).lines():
@@ -1377,7 +1511,7 @@ def main(argv: list[str] | None = None) -> None:
     bus = None
     if not a.no_bus:
         from hw.tools import bus_route
-        bus = bus_route.CARRIER
+        bus = bus_route.carrier_plan()
     route(a.board, a.passes, a.timeout, a.keep, extra=a.router_args.split(), first=first,
           keep_locked=a.keep_locked,
           keep_all=a.keep_all, repair=a.repair, bus=bus)

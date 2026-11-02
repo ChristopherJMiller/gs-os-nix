@@ -95,6 +95,16 @@ RIVERS = (
 )
 ROWS = (FRONT, REAR, ANY)          # planned in this order; ANY takes what is left, beyond them
 
+# The slot side: J1's fingers to the translators' slot pins (bus_route lays them too). Their
+# order is the channels' (Task 1, Tasks 3+4), not J2's, so they take no part in the assignment;
+# `access` says which side of the fingers, and so which copper layer, they leave on.
+FINGERS = "fingers"
+BACK, FRONT_SIDE = "back fingers, B.Cu", "front fingers, F.Cu"
+SLOT_RIVERS = (
+    River("slot_data", "J1", tuple(f"SLOT_D{i}" for i in range(8)), FINGERS, BACK),
+    River("slot_address", "J1", tuple(f"SLOT_A{i}" for i in range(16)), FINGERS, FRONT_SIDE),
+)
+
 
 # --- positions --------------------------------------------------------------------------
 
