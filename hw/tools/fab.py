@@ -15,8 +15,9 @@ DIR gets:
     layers/<layer>.svg                   F.Cu, In1.Cu, In2.Cu, B.Cu, F.Silkscreen, Edge.Cuts
     schematic.pdf
 
-Everything runs on a temporary copy of the board, its project file and the schematic:
-kicad-cli and KiKit rewrite the .kicad_pro and write a .kicad_prl (ruling R21).
+Everything runs on a temporary copy of the board, its project file, its custom design rules
+(.kicad_dru: KiKit's DRC needs the Clock class's exemptions) and the schematic: kicad-cli and
+KiKit rewrite the .kicad_pro and write a .kicad_prl (ruling R21).
 """
 import argparse
 import csv
@@ -104,9 +105,10 @@ def build(board_src: Path, sch_src: Path, out: Path) -> None:
         board, sch = tmp / board_src.name, tmp / sch_src.name
         shutil.copy(board_src, board)
         shutil.copy(sch_src, sch)
-        pro = board_src.with_suffix(".kicad_pro")
-        if pro.exists():
-            shutil.copy(pro, tmp / pro.name)
+        for suffix in (".kicad_pro", ".kicad_dru"):    # the custom rules too: KiKit runs the DRC
+            src = board_src.with_suffix(suffix)
+            if src.exists():
+                shutil.copy(src, board.with_suffix(suffix))
 
         # gerbers, BOM, CPL
         kk = tmp / "kikit"

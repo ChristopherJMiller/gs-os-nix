@@ -93,3 +93,23 @@ def test_the_order_notes_name_the_stackup(tmp_path):
     d, board = _package(tmp_path / "b", NAMES)
     (d / "order-notes.txt").unlink()
     assert any("order-notes.txt is missing" in p for p in check_fab.problems(d, board))
+
+
+def test_kikit_checks_the_board_with_its_own_design_rules(tmp_path, monkeypatch):
+    """`kikit fab jlcpcb` runs KiCad's DRC on fab's temporary copy. Without carrier.kicad_dru
+    beside it the Clock class's exemptions (its pads, J2_ESCAPE) are missing, and the routed
+    carrier failed with 31 clearance errors that hw-drc, with the rules, does not have."""
+    seen = {}
+
+    def fake_run(cmd, cwd=None, env=None):
+        if cmd[:3] == ["kikit", "fab", "jlcpcb"]:
+            dru = Path(cmd[-2]).with_suffix(".kicad_dru")
+            seen["rules"] = dru.read_text() if dru.exists() else None
+            raise SystemExit("stop here")
+
+    monkeypatch.setattr(fab, "run", fake_run)
+    sch = tmp_path / "carrier.kicad_sch"
+    sch.write_text("")
+    with pytest.raises(SystemExit):
+        fab.build(CARRIER / "carrier.kicad_pcb", sch, tmp_path / "out")
+    assert seen["rules"] == (CARRIER / "carrier.kicad_dru").read_text()
