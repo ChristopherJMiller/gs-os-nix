@@ -1,0 +1,138 @@
+# SPDX-License-Identifier: CERN-OHL-S-2.0
+#
+# carrier_top's port -> ball assignment (rtl/board/carrier_top.v), for the LFE5U-25F on
+# the iCESugar-Pro module. The LPF is generated from this file. hw-pinmap checks that every
+# ball is a PIO in a 3.3 V bank, that each ball is on a SODIMM pin (hw/carrier/
+# icesugar_pro_v1_3.toml), and that the netlist carries the port's net on that pin.
+#
+# The balls are chosen by hw/tools/assign_pins.py for the placement in hw/carrier/
+# placement.toml: it moves each bit to the SODIMM contact that leaves the fewest ratsnest
+# crossings on the 2-layer board, keeping every bus in bit order along the socket. Do not
+# hand-edit; rerun `python3 hw/tools/assign_pins.py --write` after the placement changes.
+# Every bank is 3.3 V (the module powers VCCIO from 3V3), so the bank does not constrain it.
+#
+# Every one of the slot-side bits is a slot signal, so there is no pin-end preference to
+# honour: the socket's orientation against J1 is the placement task's choice.
+
+part = "LFE5U-25F-6BG256C"
+io_standard = "LVCMOS33"
+
+[ports.clk25]
+dir = "in"
+on_module = true
+balls = ["P6"]
+
+[ports.slot_a]
+dir = "in"
+# SODIMM pins 73 82 86 90 94 95 98 99 100 103 104 109 118 120 122 128
+balls = ["B3", "F13", "E13", "C13", "C12", "F2", "C11", "G2", "D11", "J1", "D10", "J2", "C7", "D7", "C6", "D5"]
+
+[ports.slot_rw]
+dir = "in"
+balls = ["T2"]   # pin 135
+
+[ports.slot_d]
+dir = "inout"
+# SODIMM pins 41 49 50 57 60 66 68 70
+balls = ["A8", "B8", "N13", "B7", "L14", "K13", "J14", "J13"]
+
+[ports.slot_dl]
+dir = "in"
+# SODIMM pins 42 44 46 48 52 54 58 62
+balls = ["P11", "P12", "N12", "P13", "P14", "M12", "M13", "L13"]
+
+[ports.slot_ph0]
+dir = "in"
+balls = ["K1"]   # pin 111
+
+[ports.slot_ph1]
+dir = "in"
+balls = ["L2"]   # pin 117
+
+[ports.slot_q3]
+dir = "in"
+balls = ["N3"]   # pin 125
+
+[ports.slot_7m]
+dir = "in"
+balls = ["R2"]   # pin 133
+
+[ports.slot_devsel_n]
+dir = "in"
+balls = ["M2"]   # pin 121
+
+[ports.slot_iosel_n]
+dir = "in"
+balls = ["M1"]   # pin 119
+
+[ports.slot_iostrb_n]
+dir = "in"
+balls = ["P2"]   # pin 129
+
+[ports.slot_m2sel_n]
+dir = "in"
+balls = ["N1"]   # pin 123
+
+[ports.slot_m2b0]
+dir = "in"
+balls = ["E4"]   # pin 136
+
+[ports.slot_reset_n]
+dir = "in"
+balls = ["E3"]   # pin 138
+
+[ports.slot_sync_n]
+dir = "in"
+balls = ["P1"]   # pin 127
+
+[ports.slot_d_dir]
+dir = "out"
+balls = ["B4"]   # pin 69
+
+[ports.slot_d_oe_n]
+dir = "out"
+balls = ["B1"]   # pin 77
+
+[ports.slot_a_dir]
+dir = "out"
+balls = ["R3"]   # pin 137
+
+[ports.slot_a_oe_n]
+dir = "out"
+balls = ["A4"]   # pin 67
+
+[ports.slot_irq_n_o]
+dir = "out"
+balls = ["R5"]   # pin 145
+
+[ports.slot_nmi_n_o]
+dir = "out"
+balls = ["K3"]   # pin 156
+
+[ports.slot_inh_n_o]
+dir = "out"
+balls = ["T3"]   # pin 139
+
+[ports.slot_dma_n_o]
+dir = "out"
+balls = ["R6"]   # pin 147
+
+[ports.slot_rdy_o]
+dir = "out"
+balls = ["G4"]   # pin 144
+
+[ports.slot_reset_n_o]
+dir = "out"
+balls = ["F4"]   # pin 140
+
+[ports.safe_n]
+dir = "in"
+balls = ["E14"]   # pin 84
+
+[ports.uart_rx]
+dir = "in"
+balls = ["E12"]   # pin 88
+
+[ports.uart_tx]
+dir = "out"
+balls = ["G14"]   # pin 76

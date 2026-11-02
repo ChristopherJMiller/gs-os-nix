@@ -1,8 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Re-assign carrier_top's FPGA balls so the ratsnest crosses itself as little as it can.
+"""Re-assign carrier_top's FPGA balls: the bus plan (plan_buses), scored by ratsnest crossings.
 
     assign_pins.py --report [--board B.kicad_pcb] [--pins pins.toml] [--module M.toml]
-    assign_pins.py --write  [...]            (rewrites pins.toml)
+    assign_pins.py --write  [...]            (rewrites pins.toml with plan_buses' plan)
+    assign_pins.py --write --anneal [...]    (the old ratsnest annealing instead)
+
+Since Task 5f (plan 1b, amendment 2) the assignment is hw/tools/plan_buses.py's: every bus an
+order-preserving river onto the J2 row its route reaches, which bus_route lays. This file keeps
+the ratsnest crossing count, which --report prints for the current and the planned assignment
+(a metric now, not the objective), and the annealing search it used before (--anneal).
 
 The carrier has 2 layers, so every crossing of two ratsnest lines is a via, a detour or a
 failed route. The FPGA module's pins can be wired to any of the SODIMM's PIO contacts, so
@@ -314,6 +320,9 @@ def main(argv: list[str] | None = None) -> int:
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--report", action="store_true", help="print current and proposed counts")
     mode.add_argument("--write", action="store_true", help="rewrite pins.toml")
+    ap.add_argument("--anneal", action="store_true",
+                    help="propose by the ratsnest annealing (--seed/--iters/--starts), not the "
+                    "bus plan")
     ap.add_argument("--board", type=Path, default=CARRIER / "carrier.kicad_pcb")
     ap.add_argument("--pins", type=Path, default=CARRIER / "pins.toml")
     ap.add_argument("--module", type=Path, default=CARRIER / "icesugar_pro_v1_3.toml")
@@ -325,12 +334,18 @@ def main(argv: list[str] | None = None) -> int:
     board = pcbnew.LoadBoard(str(a.board))
     nl = _netlist(a.netlist)
     mod, pm = modmod.load(a.module), pinsmod.load(a.pins)
-    new = propose(board, nl, mod, pm, seed=a.seed, iters=a.iters, starts=a.starts)
+    from hw.tools import plan_buses
+    if a.anneal:
+        new = propose(board, nl, mod, pm, seed=a.seed, iters=a.iters, starts=a.starts)
+    else:
+        new = plan_buses.plan(board, mod, pm)
     before, after = crossings_for(board, nl, mod, pm), crossings_for(board, nl, mod, new)
     print(f"current crossings: {before}")
     print(f"proposed crossings: {after}")
+    print(f"river problems: current {len(plan_buses.river_problems(board, mod, pm))}, "
+          f"proposed {len(plan_buses.river_problems(board, mod, new))}")
     if a.write:
-        a.pins.write_text(render(new, mod))
+        a.pins.write_text(render(new, mod) if a.anneal else plan_buses.render(new, mod))
         print(f"wrote {a.pins}")
     return 0
 
