@@ -334,7 +334,7 @@ def test_a_pad_with_no_room_shares_a_same_net_neighbours_via(tmp_path):
     gnd = b.FindNet("GND").GetNetCode()
     assert len(route._components(b, gnd)) == 1             # boxed pad, track, neighbour, via
     joins = [t for t in b.GetTracks() if t.GetClass() != "PCB_VIA" and t.GetNetname() == "GND"
-             and boxed.HitTest(t.GetStart()) or (t.GetClass() != "PCB_VIA" and boxed.HitTest(t.GetEnd()))]
+             and (boxed.HitTest(t.GetStart()) or boxed.HitTest(t.GetEnd()))]
     assert joins and all(t.IsLocked() for t in joins)
     assert all(pcbnew.ToMM(t.GetLength()) <= 1.5 for t in joins)
 
