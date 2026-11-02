@@ -26,13 +26,16 @@ on the in-memory board, never saved) are added and block cells. Then:
   leave, so this is optimistic by the little the pour's own bridging tracks take.
 * Every other net is routed as the tree of its minimum spanning tree: each pin in Prim order is
   maze-routed (A*) from the tree so far. A net's demand on an edge is its pitch (track + clearance:
-  0.30 mm signal; the Power class 0.65; the Clock class 0.50), and a via adds 0.30 to each edge of
+  0.30 mm signal; the Power class 0.65; the Clock class 0.50), and a via adds 0.10 to each edge of
   its cell on both layers and uses the cell's single via slot.
 * Negotiated congestion: rounds of rip-up and re-route of the nets that use an overflowing edge,
   with a present-congestion factor that grows and a history cost that accrues on edges that
   stayed overflowing.
 
-Pass means overflow 0 within the rounds. FAIL names its reasons: nets with NO OPEN PATH (every
+Pass means overflow 0 within the rounds and no plane via without room (route.fan_out_planes
+'no room' pads are reported and fail the gate, as they stop route.py). An edge counts as over
+only above TOL_UM = 100 um, per edge: across a wide cut of n edges that can hide up to about
+0.33 track on each, so the gate is lenient there by design. FAIL names its reasons: nets with NO OPEN PATH (every
 route between two of their pins crosses an edge of capacity 0), and OVERFLOW, with the worst edges
 (coordinates, layer, demand over capacity in tracks) and the nets through them. A heat-map PNG
 shows utilisation per layer. The result is deterministic.
@@ -200,6 +203,18 @@ class Model:
     """The board as the router sees it: edge capacities and the nets to route."""
 
     def __init__(self):
+        self.x0 = self.y0 = 0.0          # mm, the grid's origin
+        self.nx = self.ny = self.n = 0   # cells across, down, in all
+        self.hn = self.el = 0            # H edges per layer, edges per layer
+        self.cap: list[int] = []         # um of capacity per edge id (both layers)
+        self.open_cap = 0
+        self.via_ok: list[bool] = []     # a via fits somewhere in the cell
+        self.blk: list = []              # per layer: raster of centre-line-blocked samples
+        self.trk_raw: list = []
+        self.court: list = []
+        self.nets: list[Net] = []
+        self.planes: set = set()
+        self.pours: set = set()
         self.notes: list[str] = []
 
 
@@ -246,8 +261,6 @@ def build_model(board) -> Model:
     inside_m = inside.mask()
     outside = ~inside_m
 
-    own_zones: list = []        # (net name, layer idx, local mask origin, mask) for pad escapes
-
     for fp in board.GetFootprints():
         ic = _is_ic(fp)
         side = 0 if fp.GetLayer() == pcbnew.F_Cu else 1
@@ -279,8 +292,8 @@ def build_model(board) -> Model:
         if t.GetClass() == "PCB_VIA":
             p = t.GetPosition()
             for cv in trk:
-                cv.disc(pcbnew.ToMM(p.x), pcbnew.ToMM(p.y), pcbnew.ToMM(t.GetWidth()) / 2 + TRACK_HALO)
-            via.disc(pcbnew.ToMM(p.x), pcbnew.ToMM(p.y), pcbnew.ToMM(t.GetWidth()) / 2 + VIA_HALO)
+                cv.disc(pcbnew.ToMM(p.x), pcbnew.ToMM(p.y), pcbnew.ToMM(t.GetWidth(pcbnew.F_Cu)) / 2 + TRACK_HALO)
+            via.disc(pcbnew.ToMM(p.x), pcbnew.ToMM(p.y), pcbnew.ToMM(t.GetWidth(pcbnew.F_Cu)) / 2 + VIA_HALO)
         else:
             li = 0 if t.GetLayer() == pcbnew.F_Cu else 1
             trk[li].seg((pcbnew.ToMM(t.GetStart().x), pcbnew.ToMM(t.GetStart().y)),
@@ -329,7 +342,6 @@ def build_model(board) -> Model:
 
     # pads: pins of the routed nets, and the edges each pad lets its own net use
     by_net: dict[str, dict] = {}
-    m.own_raw: list = []
     for fp in board.GetFootprints():
         for pad in fp.Pads():
             name = pad.GetNetname()
@@ -456,13 +468,12 @@ class Router:
         best: dict[int, float] = {}
         prev: dict[int, int] = {}
         heap: list = []
+        heappop, heappush = heapq.heappop, heapq.heappush
         for s in sorted(sources):
             r = s % n_cells
             si, sj = r % nx, r // nx
             best[s] = 0.0
-            heappush = heapq.heappush
             heappush(heap, (abs(si - ti) + abs(sj - tj), 0.0, s))
-        heappop, heappush = heapq.heappop, heapq.heappush
         inv = 1.0 / PITCH_UM
         while heap:
             f, g, n = heappop(heap)
@@ -632,6 +643,12 @@ def open_components(m: Model) -> list[int]:
     return [find(a) for a in range(2 * n_cells)]
 
 
+def _hpwl(net: Net) -> int:
+    xs = [p[0] for p in net.pins]
+    ys = [p[1] for p in net.pins]
+    return (max(xs) - min(xs)) + (max(ys) - min(ys))
+
+
 def negotiate(m: Model, rounds: int = ROUNDS) -> Result:
     t0 = time.time()
     r = Router(m)
@@ -688,12 +705,6 @@ def negotiate(m: Model, rounds: int = ROUNDS) -> Result:
     return Result(m, r.overflow(), used, time.time() - t0, wl,
                   [(o / PITCH_UM, e) for o, e in over], blocked, list(r.use), nets_on,
                   sum(len(n.vias) for n in m.nets))
-
-
-def _hpwl(net: Net) -> int:
-    xs = [p[0] for p in net.pins]
-    ys = [p[1] for p in net.pins]
-    return (max(xs) - min(xs)) + (max(ys) - min(ys))
 
 
 def _pin_name(m: Model, pin) -> str:

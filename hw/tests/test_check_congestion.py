@@ -112,6 +112,13 @@ def test_a_wall_across_the_committed_board_fails_when_its_gap_is_too_narrow(gap,
         assert all(48 < y < 53 for y in cc._y(res)[:5])     # the worst edges are at the wall
 
 
+def test_a_run_on_the_committed_board_raises_no_kicad_assert(capfd):
+    board = pcbnew.LoadBoard(str(ROOT / "hw" / "carrier" / "carrier.kicad_pcb"))
+    capfd.readouterr()
+    cc.analyze(board)
+    assert "GetWidth" not in capfd.readouterr().err
+
+
 def test_plan1_routed_board_passes(tmp_path):
     """Plan 1's board (7430efe) routed on two layers, so the gate must not fail it."""
     pcb = tmp_path / "plan1.kicad_pcb"
