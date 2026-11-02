@@ -4,13 +4,14 @@
     python3 hw/tools/check_drc.py --netlist NET BOARD.kicad_pcb              # HW DRC OK
     python3 hw/tools/check_drc.py --selftest --netlist NET BOARD.kicad_pcb   # HW DRC SELFTEST OK
 
-Routing output is not reproducible, so the routed board is committed source and this
-gate is what ties it back to the netlist. Two halves:
+The routed board is committed source (`just repro` checks that `route` lays it again), and
+this gate is what ties it back to the netlist. Two halves:
 
-* `kicad-cli pcb drc --severity-error --refill-zones`: no violations, no unconnected
-  items. It runs on a temporary copy of the board and its project file, because
-  kicad-cli rewrites the .kicad_pro and writes a .kicad_prl. Warnings (silkscreen) do not
-  fail the gate; their count is printed.
+* `kicad-cli pcb drc --severity-all --refill-zones`: no errors, no unconnected items, and no
+  dangling copper (the warnings via_dangling and track_dangling, GATED_WARNINGS). It runs on a
+  temporary copy of the board, its project file and its custom rules, because kicad-cli
+  rewrites the .kicad_pro and writes a .kicad_prl. Other warnings (silkscreen, the footprint
+  library) do not fail the gate; their count is printed.
 * parity, our own: the board's footprints are the netlist's parts, each with the
   netlist's `lib:name`, and every pad is on the net the netlist gives its pin. Pads with
   no netlist pin (J2's solder pegs) must have no net. Tracks cannot cheat this, since a
@@ -21,8 +22,9 @@ gate is what ties it back to the netlist. Two halves:
   in an SMD pad wicks the solder away from the joint.
 
 The selftest plants a pad on another net, a deleted footprint, a wrong footprint id, a track
-across two pads of different nets, a long +5V track thinned (twice) and a via in a pad, on
-temporary copies; each must fail with its own message.
+across two pads of different nets, a long +5V track thinned (twice), a via in a pad, a via
+joined on one layer only and a track with a free end, on temporary copies; each must fail with
+its own message.
 """
 import argparse
 import fnmatch
@@ -46,6 +48,10 @@ NECK_MIN_MM = 0.3       # and even a neck stays this wide, for the 3V3/5V rail c
 WIDTH_TOL_MM = 0.001    # 1 um: KiCad stores nm, so 0.3004 passes and 0.2989 fails
 # GND is exempt: the In1.Cu plane carries the current; any outer GND track is a pad escape.
 WIDTH_EXEMPT = {"GND"}
+# KiCad's warnings that fail here: copper that leads nowhere. A via joined on one layer only is
+# a hole and 0.6 pF on its net for nothing (hw-load charges it); a track with a free end is a
+# stub. Freerouting's session left both on the carrier (Task 5h).
+GATED_WARNINGS = ("via_dangling", "track_dangling")
 
 
 # --- KiCad's DRC ----------------------------------------------------------------------
@@ -77,9 +83,12 @@ def _where(items: list) -> str:
 
 
 def problems_drc(board: Path) -> list[str]:
-    rep = run_drc(board)
+    """KiCad's errors, its unconnected items, and the warnings in GATED_WARNINGS."""
+    rep = run_drc(board, all_severities=True)
     out = []
     for v in rep.get("violations", []):
+        if v.get("severity") != "error" and v["type"] not in GATED_WARNINGS:
+            continue
         out.append(f"DRC {v['type']}: {v['description']} ({_where(v.get('items', []))})")
     for u in rep["unconnected_items"]:
         out.append(f"DRC unconnected: {u['description']} ({_where(u.get('items', []))})")
@@ -87,8 +96,10 @@ def problems_drc(board: Path) -> list[str]:
 
 
 def warning_count(board: Path) -> int:
+    """KiCad's warnings that are not gated (the silkscreen's, the footprint library's)."""
     rep = run_drc(board, all_severities=True)
-    return sum(1 for v in rep.get("violations", []) if v.get("severity") == "warning")
+    return sum(1 for v in rep.get("violations", [])
+               if v.get("severity") == "warning" and v["type"] not in GATED_WARNINGS)
 
 
 # --- parity -----------------------------------------------------------------------------
@@ -292,6 +303,43 @@ def _via_in_pad(board):
     board.Add(v)
 
 
+def _longest_track(board):
+    tracks = [t for t in board.GetTracks() if t.GetClass() == "PCB_TRACK"]
+    if not tracks:
+        raise SystemExit("selftest: the board has no track (route it first)")
+    return max(tracks, key=lambda t: (t.GetLength(), t.GetStart().x, t.GetStart().y))
+
+
+def _via_one_layer(board):
+    """A via on the middle of the longest track: joined on that track's layer only."""
+    t = _longest_track(board)
+    v = pcbnew.PCB_VIA(board)
+    v.SetPosition((t.GetStart() + t.GetEnd()) / 2)
+    v.SetViaType(pcbnew.VIATYPE_THROUGH)
+    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+    v.SetWidth(pcbnew.FromMM(0.6))
+    v.SetDrill(pcbnew.FromMM(0.3))
+    v.SetNet(t.GetNet())
+    board.Add(v)
+
+
+def _track_free_end(board):
+    """A 0.5 mm stub off the middle of the longest track, square to it, ending on nothing."""
+    t = _longest_track(board)
+    a, b = t.GetStart(), t.GetEnd()
+    mid = (a + b) / 2
+    d = b - a
+    n = pcbnew.VECTOR2I(int(-d.y / d.EuclideanNorm() * pcbnew.FromMM(0.5)),
+                        int(d.x / d.EuclideanNorm() * pcbnew.FromMM(0.5)))
+    s = pcbnew.PCB_TRACK(board)
+    s.SetStart(mid)
+    s.SetEnd(mid + n)
+    s.SetLayer(t.GetLayer())
+    s.SetWidth(t.GetWidth())
+    s.SetNet(t.GetNet())
+    board.Add(s)
+
+
 # name -> (mutation, needs the DRC, text its failure must contain)
 MUTATIONS = {
     "pad on another net": (_pad_move, False, "parity: R"),
@@ -302,6 +350,8 @@ MUTATIONS = {
     "+5V thinned to 0.15": (_thin_long_5v(0.15), False, "power width: +5V track 0.150"),
     "+5V long run at 0.3": (_thin_long_5v(0.3), False, "power width: +5V track 0.300"),
     "via in a pad": (_via_in_pad, False, "via in pad"),
+    "via joined on one layer": (_via_one_layer, True, "DRC via_dangling"),
+    "track with a free end": (_track_free_end, True, "DRC track_dangling"),
 }
 
 

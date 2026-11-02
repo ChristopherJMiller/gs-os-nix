@@ -39,3 +39,41 @@ def test_the_selftest_plants_a_via_in_a_pad():
     b = make_board(None, {"GND": [(6, 6)], "N1": [(12, 6)]})
     mutate(b)
     assert any(expect in p for p in check_drc.problems_via_in_pad(b))
+
+
+# --- dangling copper: KiCad warns, hw-drc fails ----------------------------------------------
+
+def _drc_board(tmp_path, extra):
+    """Two N1 pads joined by one F.Cu track, a GND pad, and `extra(b)` planted; saved."""
+    from hw.tests.test_route import _track
+    b = make_board(tmp_path, {"N1": [(4, 6), (20, 6)], "GND": [(22, 11)]})
+    b.GetDesignSettings().m_TrackMinWidth = pcbnew.FromMM(0.15)      # the carrier's minimum
+    _track(b, "N1", F, (4, 6), (20, 6))
+    extra(b)
+    path = tmp_path / "d.kicad_pcb"
+    pcbnew.SaveBoard(str(path), b)
+    return path
+
+
+def test_a_via_joined_on_one_layer_only_fails(tmp_path):
+    """Freerouting left eight vias on the carrier with copper on one side only (a pass-through,
+    or the end of a dead branch); KiCad calls them via_dangling, a warning. hw-drc fails them."""
+    path = _drc_board(tmp_path, lambda b: _via(b, "N1", 12, 6))
+    found = check_drc.problems_drc(path)
+    assert any("DRC via_dangling" in p for p in found), found
+
+
+def test_a_track_with_a_free_end_fails(tmp_path):
+    from hw.tests.test_route import _track
+    path = _drc_board(tmp_path, lambda b: _track(b, "N1", F, (12, 6), (12, 8)))
+    found = check_drc.problems_drc(path)
+    assert any("DRC track_dangling" in p for p in found), found
+
+
+def test_a_clean_board_has_no_drc_problem(tmp_path):
+    assert check_drc.problems_drc(_drc_board(tmp_path, lambda b: None)) == []
+
+
+def test_the_selftest_plants_a_dangling_via_and_a_dangling_track():
+    expects = {expect for _, (_, drc, expect) in check_drc.MUTATIONS.items() if drc}
+    assert {"DRC via_dangling", "DRC track_dangling"} <= expects
