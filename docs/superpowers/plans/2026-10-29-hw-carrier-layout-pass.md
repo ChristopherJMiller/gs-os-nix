@@ -299,3 +299,43 @@ Then the metrics. Because routes are now deterministic, `route` reproduces the c
 ### Task 6 (amended again)
 
 HARDWARE.md also records the routing strategy (HW-18): deterministic buses plus an autorouter for the remainder, and why. It cites the research where it was verified.
+
+---
+
+## Appendix: the controller's rulings P1–P29
+
+The code and HARDWARE.md cite these as P*n*. They were made during execution, within the owner's decisions, and each is recorded with its cost if wrong. Later rulings supersede earlier ones where they say so:
+- P11 supersedes P10;
+- P22 supersedes P11's "J1 only";
+- P15's routed GND and P13's GND bridging belong to the 2-layer board, which HW-17 retired;
+- P20's Freerouting is now 2.5.0 (HW-18).
+
+- **P1:** Tasks 3 and 4 run as one dispatch, in this order: placement (T4 Steps 1–2), pin assignment (T3), then T4 Steps 3–4. They are reviewed as one unit — the plan itself orders them so — cost if wrong: one larger review.
+- **P2:** T4 picks the smallest height at which placement fits with courtyards clear and ≥ 3 mm routing channels between rows. T5 may raise it (in 2 mm steps, ≤ 68) if routing fails, and records the final height — routability is only known in T5 — cost if wrong: a re-route.
+- **P3:** T2 adds a standalone `load` recipe only. `gate-board`, `check` and `checks.hw-load` get it in T5, when the board passes — keeps `just check` green between tasks — cost: none.
+- **P4:** from T1 until T5 the board-parity gates (hw-drc, hw-load, hw-fab) may be red, because T1 changes the netlist and T4 rebuilds the board. Netlist-level gates (hw-tests, hw-erc, hw-intent, hw-pinmap) stay green at every commit; `nix flake check` is green again at the end of T5 — the board is being replaced anyway — cost if wrong: none (the branch merges only at the end).
+- **P5:** hw-load follows each J1 net through 0 Ω parts (value "0", "0R", "0Ω"), counting the downstream copper and pins as the same load. Other resistors stop the walk. Jumpers and headers count 1 pF — a 0 Ω link is a wire — cost if wrong: a clock load under-counted.
+- **P6:** the data translator is SN74LVCR2245ADBQR (LCSC C2675819, SSOP-20 0.635 mm, 254 in stock), with the ADBR (C2865353) as fallback — the TSSOP is out of stock and an open-hardware board must be orderable; Task 4 re-places anyway — cost if wrong: a footprint swap.
+- **P7:** Tasks 3+4 may add decoupling capacitors to the schematic (slot_bus.py): one 100 nF per IC supply pin, plus 100 nF on each of the four slot rails at the fingers, with tests and counts updated and netlist gates green — the plan's Task 4 asks for that decoupling, which needs netlist parts — cost if wrong: a few extra 0603s.
+- **P8:** every component stays on F (top); slot-side traces from B.Cu fingers rise on B.Cu and via up — single-sided JLC assembly is cheaper and simpler — cost if wrong: longer data stubs (hw-load will tell).
+- **P9:** /IOSEL's 37.7 mm run to U5 is accepted (~3.8 pF copper + 4 pF ≈ 8 pF < 15); Task 5's hw-load is the check; a dedicated 1G17 is the fallback — cost if wrong: one extra part later.
+- **P10:** height 64 mm (not 62) is deliberate, to keep J2's art band — height doesn't change the price (audit) — cost: none.
+- **P11:** height 68 mm (P2's cap, plan 1's height) — the owner's "shrink if the re-layout allows" — it doesn't at 64/66; only the fingers move — cost: none (height doesn't change price).
+- **P12:** Clock clearance 0.3 mm, not 0.4 — on a 1.6 mm 2-layer board coupling is set by the ~1.5 mm height over the B.Cu plane, so 0.4 vs 0.3 mm changes crosstalk little; coupled length is the lever (route_metrics reports it) and the slot clocks pass through Schmitt 2G17s — cost if wrong: marginal crosstalk on the clocks.
+- **P13:** the route closes with deterministic post-passes after Freerouting, before stitching: (a) clock-clearance repair — rip non-Clock copper that violates the Clock clearance and re-lay it with the finisher, iterated; (b) GND-fragment bridging — a via per unconnected F.Cu GND fragment over B.Cu GND, refill, iterated. Stop and report (no other part moves, no >68 mm, keep the first pass) if 3 full attempts at 68 mm don't close — Freerouting alone can't be made to honour a class halo — cost if wrong: more tooling.
+- **P14:** passives whose courtyards sit in the U1–U4 channel (R14, the DIR pull, at least) move out of it; decoupling caps keep ≤2 mm to their pin (the existing test); no IC moves. Fallback in the same round if the channel still blocks: row 2 (U4, U5 and up through J2) moves up ≤2 mm into J2's art band, only if the art still clears J2's courtyard — cost: a small placement change.
+- **P15:** GND goes back into the DSN as a routed net in the Power class (plan 1's way); pours add to it; bridging vias may sit inside passive courtyards (tented, ≥0.2 mm from pads) as a backup; stitching keeps the board-edge clearance — plan 1's lesson — cost: GND tracks take some room.
+- **P16:** the Clock-clearance exemption covers J2's pad escape: a named rule area (J2's courtyard grown 2 mm) used by the .kicad_dru, not the courtyard itself — 0.5 mm-pitch fan-out can't hold 0.3 mm until it leaves the socket — cost: clocks may run 0.15 mm from a neighbour for ≤2 mm at the socket.
+- **P17:** the via term stays once per via (Johnson's form, T = the whole board), documented as such in check_load.py's header with the margin argument: the copper term's 0.10 vs the computed 0.073 pF/mm leaves ~27 % headroom — cost if wrong: ~0.6 pF/via under-count.
+- **P18:** inner layers are plane-only: any track on In1/In2 fails check_edge (a plant) — the stackup has no inner signal routing — cost: none.
+- **P19:** plane connections by a scripted fanout before routing — one locked, tented via within 1 mm of every GND/+3V3 SMD pad, none in the tab; edge-finger GND by a track out of the tab to a via; THT pads join the planes with thermals — deterministic connectivity, short decoupling loops — cost: ~100 vias.
+- **P20:** prepare_dsn keeps the (plane ...) entries; if Freerouting 2.4.1 mishandles them, strip again and rely on the fanout — cost: none.
+- **P21:** vias stay 0.6/0.3 mm (JLC no-surcharge; 5a's via term assumes it) — cost: slightly larger vias.
+- **P22:** widen the band: J2 and the top-edge headers (J4, JP1, JP2) move up 2 mm; height 69.5 mm (≤ 69.85) with every other part moving down 1.5 mm with J1 (supersedes P11's J1-only rule; rows keep their relation to the fingers). Band above U4: 3.2 → 6.7 mm. Art (y 9.8–27.9) stays inside the module outline (5.5–37.6) — cost: 1.5 mm taller, no price change.
+- **P23:** assign_pins is re-run after the move (its own documented procedure) and adopted if crossings don't rise; SLOT_RESET_N and SLOT_IOSEL_N join the first pass (laid short and locked) — the two J1 nets nearest 15 pF — cost: none.
+- **P24:** route.py must not rewrite carrier.kicad_pro (test-pinned) — cost: none.
+- **P25:** Tasks 5f and 5g run as one dispatch, reviewed as one unit — the bus router's topology defines what the assignment must optimise (as P1 did for Tasks 3+4) — cost if wrong: one larger review.
+- **P26:** Task 5e (hw-congestion) runs in parallel in an isolated worktree on a branch from 6448116, cherry-picked here when reviewed — it owns new files plus small justfile/hw.nix hunks — cost: a merge of two small hunks.
+- **P27:** tented vias under IC bodies (SLOT_D under U1/U4) are accepted — common practice, nothing on the bottom side, mask-tented — cost if wrong: none at assembly (single-sided).
+- **P28:** a plane SMD pad may share a via with a same-net pad ≤ 1 mm away, joined by a short track (pin → decoupling cap → via, the shortest loop); no via may overlap any SMD pad's copper — a new hw-drc rule with a selftest plant; the route never aborts for lack of via room when a share exists — cost: none.
+- **P29:** bus_route lays +5V and +5V_MOD as planned Power-class paths (≥ 0.5 mm, locked): +5V_MOD through the highway under the module, +5V to U2's VCCA pins (7, 18) under U2's body on B.Cu; report what it can't lay — the probe shows they are the only nets the remainder can't close — cost: two more planned paths.
