@@ -732,11 +732,12 @@ The module lies over the empty band above J2; nothing tall goes there.
 
 | File | |
 |---|---|
-| `gerbers.zip` | JLCPCB gerbers and drill |
-| `bom.csv` | 21 lines, LCSC numbers; hand-fitted parts included |
-| `cpl.csv` | 66 rows, KiKit's JLC rotation corrections applied; J1, J4, JP1, JP2 excluded (hand-fitted or board copper) |
+| `gerbers.zip` | JLCPCB gerbers (four copper layers: top, inner 1 and 2, bottom), masks, paste, silkscreen, outline and drill |
+| `order-notes.txt` | the order options for JLCPCB's form (below) |
+| `bom.csv` | 21 rows, LCSC numbers; hand-fitted parts included |
+| `cpl.csv` | 65 rows, KiKit's JLC rotation corrections applied; J1, J4, JP1, JP2 excluded (hand-fitted or board copper) |
 | `ibom.html` | Interactive HTML BOM |
-| `render-top.png`, `render-bottom.png`, `layers/*.svg` | what the owner looks at |
+| `render-top.png`, `render-bottom.png`, `layers/*.svg` (F.Cu, In1.Cu, In2.Cu, B.Cu, F.Silkscreen, Edge.Cuts) | what the owner looks at |
 | `schematic.pdf` | the labels-only schematic |
 
 J1, the fingers, is board copper (`Fab = "pcb"`, no LCSC number).
