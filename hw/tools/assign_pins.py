@@ -10,8 +10,8 @@ order-preserving river onto the J2 row its route reaches, which bus_route lays. 
 the ratsnest crossing count, which --report prints for the current and the planned assignment
 (a metric now, not the objective), and the annealing search it used before (--anneal).
 
-The carrier has 2 layers, so every crossing of two ratsnest lines is a via, a detour or a
-failed route. The FPGA module's pins can be wired to any of the SODIMM's PIO contacts, so
+The carrier routes its signals on 2 layers (F.Cu and B.Cu; the inner two are planes), so
+every crossing of two ratsnest lines is a via, a detour or a failed route. The FPGA module's pins can be wired to any of the SODIMM's PIO contacts, so
 which ball carries which bit is free; this chooses it for a given placement (the board
 file) by minimising the number of pairs of straight pad-to-pad segments that cross, each
 net being its minimum spanning tree. Ground and the rails are planes and are not counted.

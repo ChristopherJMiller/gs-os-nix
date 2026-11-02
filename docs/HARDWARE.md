@@ -763,7 +763,7 @@ unless the row says otherwise.
 | Ground under the bus row (box round U1, U2, U4, U5) | B.Cu GND pour, 8 % copper | In1 GND plane, 94 % copper |
 | Worst slot pin | 22.4 pF, SLOT_D5 (`hw-load` at be0a3dc, plan 1's copper, before the via term) | 14.3 pF, SLOT_D7 (limit 15) |
 | Clock coupled run: longest stretch of clock track within 0.3 mm of another signal | 6.4 mm (slot_q3) | 0.0 mm |
-| Who laid the nets | Freerouting 2.4.1, then an A* finisher | of 115 signal nets: the bus router 72, the A* first pass 3, Freerouting 2.5.0 and the finisher 40 |
+| Who laid the nets | Freerouting 2.4.1, then an A* finisher | of 115 signal nets, counting a net once it is whole after a stage: the bus router 72, the A* first pass 3, Freerouting 2.5.0 and the finisher 40 |
 | Reproducible | no | yes (`just repro`) |
 | KiCad warnings | 93, not gated | 0; the silkscreen and library ones fail `hw-drc` |
 
