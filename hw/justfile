@@ -92,8 +92,10 @@ fab: carrier
 render: fab
 
 # The silkscreen art (name, open-source-hardware logo, ASCII art; hw/carrier/artwork.toml)
-# applied to the committed board, in place, without touching copper. Idempotent. Run it after
-# `board` or `route`, which both rewrite the board and drop the art. Then the edge and DRC gates.
+# applied to the committed board, in place, without touching copper, then the reference
+# designators placed by rule (silk.py: clear of pads, other silkscreen and the edge, beside their
+# part; the few with no clear place are hidden and listed). Idempotent. Run it after `board`,
+# which makes a board without art, and after `route`. Then the board gates.
 artwork: carrier
     cd {{justfile_directory()}}/.. \
       && python3 -m hw.tools.artwork hw/carrier/carrier.kicad_pcb hw/carrier/artwork.toml \

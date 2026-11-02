@@ -49,20 +49,29 @@ art = '''
 '---------------------------'
 '''
 
+# The NixOS snowflake: six lambdas round a hexagonal hole. The hexagon has flat top and bottom
+# sides; at each corner one lambda's long bar passes through (a hexagon side, carried on past
+# the corner by as much again) and the next one's short bar leaves it outward, 60 degrees
+# round from the long bar, so every arm is a V. Each bar is drawn twice, a column apart, as
+# the logo's bars are wide. A diagonal step (one column, one row: 0.85 x 1.6 mm) runs at 62
+# degrees and is 1.8 mm long; three of them match a 6-column horizontal side. It is centred
+# between the Apple II and the gear; its last row's text boxes end 0.35 mm above J2's rear pads.
 [[ascii]]
 name = "snowflake"
-x_mm = 43.25
-y_mm = 8.6
+x_mm = 44.0
+y_mm = 6.5
 art = '''
-      \     \   /
-       \     \ /
-     ===\     /
-         =====     /
-        /     \   /
- =======       =======
-    /   \     /
-   /     =====
-        /     \===
-       / \     \
-      /   \     \
+      \\    \\    //
+       \\    \\  //
+        \\    \\//
+   ============\\    //
+        //      \\  //
+       //        \\//
+======//          //======
+     //\\        //
+    //  \\      //
+   //    \\============
+        //\\    \\
+       //  \\    \\
+      //    \\    \\
 '''

@@ -13,9 +13,11 @@ hw/carrier/artwork.toml (a design file) declares every item and its place:
            font dependency.
 
 Every item goes into one PCB_GROUP named `gsnix-artwork`. Applying the art first deletes that
-group and its items, so it is idempotent. It adds no footprints (netlist parity, BOM and CPL
-are unchanged) and touches no tracks, vias or zones. Run it after `board` or `route`: both
-rewrite the board.
+group and its items, so it is idempotent. Then the reference designators are placed around it
+by rule (hw/tools/silk.py), clear of pads, other silkscreen and the board edge; the few with no
+clear place are hidden and listed. It adds no footprints (netlist parity, BOM and CPL are
+unchanged) and touches no tracks, vias or zones. Run it after `board`, which makes a board
+with no art, and after `route`.
 """
 import functools
 import os
@@ -27,6 +29,11 @@ import tomllib
 from pathlib import Path
 
 import pcbnew
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from hw.tools import silk
 
 GROUP = "gsnix-artwork"
 LAYER = pcbnew.F_SilkS
@@ -142,7 +149,9 @@ def _logo(board, grp, spec: dict) -> None:
         grp.AddItem(c)
 
 
-def apply(board: pcbnew.BOARD, art: Path) -> None:
+def apply(board: pcbnew.BOARD, art: Path) -> list[str]:
+    """The art, then the reference designators placed around it (silk.place_references).
+    Returns the references hidden for want of a clear place."""
     spec = tomllib.loads(Path(art).read_text())
     _library_polygons(spec["logo"]["footprint"])   # fail early, before touching the board
     remove_art(board)
@@ -164,6 +173,7 @@ def apply(board: pcbnew.BOARD, art: Path) -> None:
                     _text(board, grp, ch, blk["x_mm"] + c * g["col_pitch_mm"],
                           blk["y_mm"] + r * g["row_pitch_mm"], g["width_mm"], g["height_mm"],
                           g["thickness_mm"])
+    return silk.place_references(board)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -179,10 +189,11 @@ def main(argv: list[str] | None = None) -> int:
         if pro.exists():
             shutil.copy(pro, copy.with_suffix(".kicad_pro"))
         board = pcbnew.LoadBoard(str(copy))
-        apply(board, Path(a[1]))
+        hidden = apply(board, Path(a[1]))
         board.Save(str(copy))
         n = len(group_items(art_groups(board)[0]))
         shutil.copy(copy, src)
+    print(f"references hidden on the silkscreen (no clear place): {' '.join(hidden) or 'none'}")
     print(f"HW ARTWORK OK ({n} items)")
     return 0
 
