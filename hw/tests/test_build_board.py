@@ -146,9 +146,10 @@ def test_carrier_height_is_69_5_mm():
 
 def test_the_band_between_row_2_and_j2_is_6_mm_or_more():
     """P22: the 18 FPGA-side nets of U1/U4 run through the band from U4's top to J2's pad
-    row; it was 3.2 mm, the aim is about 6.7."""
+    row; it was 3.2 mm, the aim is about 6.7. U4's box is its pads and outline, not its
+    reference text (silk.py puts that above it, in the band)."""
     b = pcbnew.LoadBoard(str(CARRIER_BOARD))
-    u4 = b.FindFootprintByReference("U4").GetBoundingBox()
+    u4 = b.FindFootprintByReference("U4").GetBoundingBox(False)
     j2 = min(pcbnew.ToMM(p.GetBoundingBox().GetBottom())
              for p in b.FindFootprintByReference("J2").Pads() if p.GetNumber() == "1")
     assert pcbnew.ToMM(u4.GetTop()) - j2 >= 6.0
