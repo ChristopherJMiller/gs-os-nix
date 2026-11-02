@@ -74,7 +74,7 @@ def test_smd_smd_rule_is_dropped():
 
 def test_edge_strips_cover_every_edge_but_the_tab_bottom():
     out, _ = route.prepare_dsn(DSN)
-    strips = [l for l in out.splitlines() if 'keepout "" (polygon F.Cu' in l]
+    strips = [l for l in out.splitlines() if l.strip().startswith('(keepout "" (polygon F.Cu')]
     assert len(strips) == 7                 # 8 edges less the tab's bottom
     pts = route.boundary_points(DSN)
     for poly in route.edge_strips(pts, 350):
@@ -84,6 +84,33 @@ def test_edge_strips_cover_every_edge_but_the_tab_bottom():
     # the body's top edge (y = 0): its strip lies inside the board, at y -350 .. 0
     top = [p for p in route.edge_strips(pts, 350) if all(y in (0, -350) for _, y in p)]
     assert len(top) == 1
+
+
+def test_the_router_gets_a_via_keepout_over_the_tab():
+    """hw-edge forbids a via whose inner pad reaches below the tab's top edge (y 6000 up here,
+    the tab x 1000-7000 down to y -7000); Freerouting put four there on the carrier. The DSN
+    keeps vias out of the tab and TAB_VIA_MM above it, on both layers."""
+    out, _ = route.prepare_dsn(DSN)
+    top = -6000 + int(route.TAB_VIA_MM * 1000)
+    for layer in ("F.Cu", "B.Cu"):
+        want = (f'(via_keepout "" (polygon {layer} 0  1000 -7000  7000 -7000  7000 {top}  '
+                f'1000 {top}  1000 -7000))')
+        assert want in out, [l for l in out.splitlines() if "via_keepout" in l]
+
+
+def test_the_finisher_puts_no_via_where_its_pad_reaches_the_tab(tmp_path):
+    """The A* grid refuses a via whose 0.6 mm pad comes within TAB_VIA_MM of the tab's top edge
+    (hw-edge: no inner copper below it), and allows one clear of it."""
+    from hw.tests.test_bus_route import tab_board          # body 30 x 20, tab x 8-22 below y 20
+    g = route._Grid(tab_board(), 0, 0.15)
+
+    def blocked(x, y):
+        i, j = g.px(pcbnew.FromMM(x), pcbnew.FromMM(y))
+        return bool(g.via[int(j), int(i)])
+
+    edge = 20.0 - route.VIA_MM / 2 - route.TAB_VIA_MM
+    assert blocked(15, edge + 0.06) and blocked(15, 21.5)
+    assert not blocked(15, edge - 0.1)
 
 
 def test_case_collision_with_a_suffixed_name_is_refused():
@@ -302,6 +329,51 @@ def test_prune_dangling_takes_a_spur_and_keeps_a_joined_track(tmp_path):
     _track(b, "N", F, (10, 6), (10, 9))                 # leaves the track and ends on nothing
     assert route.prune_dangling(b) == 1
     assert len(list(b.GetTracks())) == 1
+
+
+def test_a_router_stub_inside_its_own_pad_is_dropped(tmp_path):
+    """Freerouting joins a fixed wire that ends inside a pad to the pad's centre: on the carrier
+    a 2.77 mm track inside every J1 finger, nothing electrically, but hw-load counts its length.
+    Unlocked tracks wholly inside a pad of their net go; a track that leaves the pad, a locked
+    one, and one in a pad of another net stay."""
+    from hw.tests.test_finish import make_board
+    b = make_board(tmp_path, {"N": [(4, 6), (20, 6)], "M": [(12, 6)], "GND": [(22, 11)]})
+    for fp in b.GetFootprints():
+        if fp.Pads()[0].GetNetname() == "N":
+            fp.Pads()[0].SetSize(pcbnew.VECTOR2I(pcbnew.FromMM(1.8), pcbnew.FromMM(5.0)))
+    F = pcbnew.F_Cu
+    _track(b, "N", F, (4, 4.0), (20, 4.0))              # the fixed wire, ends 2 mm above centre
+    for t in b.GetTracks():
+        t.SetLocked(True)
+    _track(b, "N", F, (4, 4.0), (4, 6.0))               # the router's stub: inside pad 1
+    _track(b, "N", F, (20, 4.3), (20, 6.0))             # inside pad 2 too
+    _track(b, "N", F, (4, 7.0), (6, 9.0))               # leaves the pad: stays
+    _track(b, "M", F, (12, 5.8), (12, 6.2))             # inside M's own pad: dropped too
+    _track(b, "N", F, (11.9, 6.0), (12.1, 6.0))         # inside a pad of another net: stays
+    assert route.drop_pad_stubs(b) == 3
+    left = sorted((t.GetNetname(), pcbnew.ToMM(t.GetStart().x), pcbnew.ToMM(t.GetStart().y))
+                  for t in b.GetTracks())
+    assert left == [("N", 4.0, 4.0), ("N", 4.0, 7.0), ("N", 11.9, 6.0)]
+    pieces = route._components(b, b.FindNet("N").GetNetCode())
+    assert max(len(p["pad"]) for p in pieces) == 2                 # the pads are still joined
+
+
+def test_route_drops_the_router_stubs_inside_their_pads(tmp_path):
+    from hw.tests.test_finish import make_board
+    path = tmp_path / "s.kicad_pcb"
+    pcbnew.SaveBoard(str(path),
+                     make_board(tmp_path, {"X": [(3, 6), (21, 6)], "GND": [(22, 11)]}))
+
+    def stub(dsn, ses, passes, timeout_s, log, extra=()):
+        wire = "(wire (path F.Cu 150  3000 -6000  21000 -6000))"
+        Path(ses).write_text(_ses("X", -6000).replace(
+            wire, wire + "(wire (path F.Cu 150  2850 -6000  3150 -6000))"))
+        return 0
+
+    route.route(path, router=stub)
+    b = pcbnew.LoadBoard(str(path))
+    lengths = sorted(round(pcbnew.ToMM(t.GetLength()), 2) for t in b.GetTracks())
+    assert lengths == [18.0]
 
 
 def test_repair_relays_a_thinned_rail_at_its_class_width(tmp_path):

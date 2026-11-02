@@ -76,6 +76,7 @@ RES_MM = 0.05                      # finish_unrouted's grid
 MARGIN_MM = 0.03                   # what it keeps over the minimum
 HOLE_CLEARANCE_MM = 0.25           # copper to hole wall, KiCad's default
 ESCAPE_MM = 1.0                    # a clock keeps clear of this much straight out of an IC pin
+TAB_VIA_MM = 0.05                  # a via's pad stays this far above the finger tab's top edge
 VIA_COST = 12                      # in grid steps
 HEURISTIC_WEIGHT = 1.3             # a little greedy: paths a little long, found sooner
 MAX_EXPANSIONS = 3_000_000
@@ -189,6 +190,19 @@ def edge_strips(pts: list[tuple[int, int]], width: int) -> list[list[tuple[int, 
     return out
 
 
+def tab_via_keepout(pts: list[tuple[int, int]]) -> list[tuple[int, int]] | None:
+    """The finger tab (the outline below the body, DSN units, y up) and TAB_VIA_MM above it, as
+    a closed polygon: no via may be there (hw-edge: a via's inner pad never reaches below the
+    tab's top edge). None for an outline with no tab."""
+    ys = sorted({y for _, y in pts})
+    tab = sorted(x for x, y in pts if y == ys[0])
+    if len(ys) < 2 or len(tab) != 2:
+        return None
+    top = ys[1] + int(round(TAB_VIA_MM * 1000))
+    (xl, xr), low = tab, ys[0]
+    return [(xl, low), (xr, low), (xr, top), (xl, top), (xl, low)]
+
+
 def prepare_dsn(dsn: str) -> tuple[str, dict[str, str]]:
     """The DSN freerouting gets, and the net renames (new -> old) to undo in the SES."""
     rename = case_twins(net_names(dsn))
@@ -202,10 +216,16 @@ def prepare_dsn(dsn: str) -> tuple[str, dict[str, str]]:
                  lambda m: f"(clearance {min(int(m.group(1)), ROUTER_CLEARANCE_UM)})", dsn)
     strip = EDGE_CLEARANCE_UM - ROUTER_CLEARANCE_UM
     lines = []
-    for poly in edge_strips(boundary_points(dsn), strip):
+    pts = boundary_points(dsn)
+    for poly in edge_strips(pts, strip):
         coords = "  ".join(f"{x} {y}" for x, y in poly + poly[:1])
         for layer in ("F.Cu", "B.Cu"):
             lines.append(f'(keepout "" (polygon {layer} 0  {coords}))')
+    tab = tab_via_keepout(pts)
+    if tab:
+        coords = "  ".join(f"{x} {y}" for x, y in tab)
+        for layer in ("F.Cu", "B.Cu"):
+            lines.append(f'(via_keepout "" (polygon {layer} 0  {coords}))')
     text = "".join(f"    {line}\n" for line in lines)
     i = dsn.index("    (via ")
     return dsn[:i] + text + dsn[i:], {v: k for k, v in rename.items()}
@@ -386,6 +406,11 @@ class _Grid:
         for l in self.track:
             self.track[l] |= self._outside(board, EDGE_CLEARANCE_MM + width_mm / 2 + MARGIN_MM)
         self.via |= self._outside(board, EDGE_CLEARANCE_MM + VIA_MM / 2 + MARGIN_MM)
+        tab = check_edge.tab_geometry(board)
+        if tab:                     # hw-edge: no via's (inner) pad below the tab's top edge
+            limit = pcbnew.FromMM(tab["body_bottom"] - VIA_MM / 2 - TAB_VIA_MM)
+            centres = self.y0 + (np.arange(self.h) + 0.5) * RES_MM * 1e6
+            self.via[centres > limit, :] = True
 
     def px(self, x_nm: float, y_nm: float) -> tuple[float, float]:
         return ((x_nm - self.x0) / 1e6 / RES_MM, (y_nm - self.y0) / 1e6 / RES_MM)
@@ -851,6 +876,38 @@ def drop_plane_copper(board, nets) -> int:
     """Remove the unlocked tracks and vias of `nets`: the planes join them, and anything the
     router laid for them is a detour. The locked fanout stays. Returns how many."""
     gone = [t for t in board.GetTracks() if t.GetNetname() in nets and not t.IsLocked()]
+    for t in gone:
+        board.RemoveNative(t)
+    return len(gone)
+
+
+def _inside_pad(t, pad) -> bool:
+    """Is the whole of track `t` (its width too) on `pad`'s copper? Its ends are tested, each
+    with eight points round it at half the width (pads are convex)."""
+    r = t.GetWidth() / 2
+    for e in (t.GetStart(), t.GetEnd()):
+        for k in range(8):
+            a = k * math.pi / 4
+            p = pcbnew.VECTOR2I(int(e.x + r * math.cos(a)), int(e.y + r * math.sin(a)))
+            if not pad.HitTest(p):
+                return False
+    return True
+
+
+def drop_pad_stubs(board) -> int:
+    """Remove the unlocked tracks that lie wholly on a pad of their own net, on its layer:
+    Freerouting joins a fixed wire that ends inside a pad to the pad's centre (on the carrier a
+    2.77 mm track inside each J1 finger the rivers reach). They carry nothing, but hw-load
+    counts their length. Returns how many."""
+    pads: dict[int, list] = {}
+    for fp in board.GetFootprints():
+        for p in fp.Pads():
+            if p.GetNetCode():
+                pads.setdefault(p.GetNetCode(), []).append(p)
+    gone = [t for t in board.GetTracks()
+            if t.GetClass() != "PCB_VIA" and not t.IsLocked()
+            and any(p.IsOnLayer(t.GetLayer()) and _inside_pad(t, p)
+                    for p in pads.get(t.GetNetCode(), ()))]
     for t in gone:
         board.RemoveNative(t)
     return len(gone)
@@ -1512,6 +1569,7 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
             raise SystemExit(f"pcbnew could not import {ses}")
         if planes:
             print(f"dropped {drop_plane_copper(b, planes)} router tracks/vias on plane nets")
+        print(f"dropped {drop_pad_stubs(b)} router tracks inside a pad of their own net")
         print(f"widened {widen_stubs(b)} stubs")
         save_board(b, board)                 # the router's own result, kept
         if repair:
