@@ -15,7 +15,7 @@ With a module map (hw/carrier/icesugar_pro_v1_3.toml) the carrier's J2 rules app
 the module's 5V pins on +5V_MOD, its GND pins on GND, and +5V_MOD fed from +5V through
 one series diode and nothing else.
 
-Pin numbers below are the packages' own: SN74LVC8T245 (TSSOP-24), SN74ALVC164245
+Pin numbers below are the packages' own: SN74LVCR2245A (SSOP-20), SN74ALVC164245
 (TSSOP-48), SN74LVC1T45 (SOT-23-6); see the datasheets cited in hw/src/slot_bus.py.
 """
 import argparse
@@ -31,7 +31,8 @@ from hw.tools import netlist as nlmod  # noqa: E402
 from hw.tools.netlist import Netlist, PartInfo  # noqa: E402
 
 SLOT_5V, FUSED_5V, V3V3, GND, MOD_5V = "+5V_SLOT", "+5V", "+3V3", "GND", "+5V_MOD"
-LV_PARTS = ("74LVC541", "74LVC2G17", "74LVC1G07")  # 3.3 V parts: never on 5 V
+LV_PARTS = ("74LVC541", "74LVC2G17", "74LVC1G07",
+            "SN74LVCR2245A")  # 3.3 V parts (incl. the data translator): never on 5 V
 OE_NETS = ("slot_d_oe_n", "slot_a_oe_n")        # pulled up: off until the FPGA says so
 DIR_NETS = ("slot_d_dir", "slot_a_dir")         # pulled down: slot -> FPGA
 RELEASED_NETS = ("slot_irq_n_o", "slot_nmi_n_o", "slot_inh_n_o", "slot_dma_n_o",
@@ -41,7 +42,7 @@ NEG_RAIL_PINS = {"33": "-12V", "34": "-5V", "50": "+12V"}
 CHAINS = (("28", "23", "INT IN -> INT OUT"), ("27", "24", "DMA IN -> DMA OUT"))
 # (value, pin -> rail): which rail each supply pin of a dual-supply translator sits on.
 TRANSLATOR_SUPPLY = {
-    "SN74LVC8T245": {"1": V3V3, "23": FUSED_5V, "24": FUSED_5V},
+    "SN74LVCR2245A": {"20": V3V3},  # single supply: VCC only, no 5 V pin (HW-16)
     "74ALVC164245": {"31": V3V3, "42": V3V3, "7": FUSED_5V, "18": FUSED_5V},
     "SN74LVC1T45": {"1": V3V3, "6": FUSED_5V},
 }
@@ -183,8 +184,8 @@ def _supply_rules(nl: Netlist) -> list[str]:
             for pin, rail in sorted(pins.items()):
                 if pn.get(pin) != rail:
                     out.append(f"{ref} ({value}) supply pin {pin} is on "
-                               f"{pn.get(pin)!r}, not {rail}: A side is the FPGA "
-                               f"(3.3 V), B side the slot (fused 5 V)")
+                               f"{pn.get(pin)!r}, not {rail}: an FPGA-side supply is "
+                               f"3.3 V, a slot-side supply the fused 5 V")
     return out
 
 
@@ -199,8 +200,8 @@ def _data_rules(nl: Netlist) -> list[str]:
         if "74LVC541" not in vals:
             out.append(f"{net} (J1.{pin}) does not reach a 74LVC541: the FPGA could "
                        f"not listen to the real bus")
-        if "SN74LVC8T245" not in vals:
-            out.append(f"{net} (J1.{pin}) does not reach the SN74LVC8T245: the card "
+        if "SN74LVCR2245A" not in vals:
+            out.append(f"{net} (J1.{pin}) does not reach the SN74LVCR2245A: the card "
                        f"could not answer a read")
     return out
 
@@ -311,8 +312,8 @@ def _fuse_bypassed(nl: Netlist) -> None:
 
 
 def _load_on_slot_5v(nl: Netlist) -> None:
-    ref = _refs_valued(nl, "SN74LVC8T245")[0]
-    for pin in ("23", "24"):
+    ref = _refs_valued(nl, "74ALVC164245")[0]
+    for pin in ("7", "18"):
         _move(nl, ref, pin, SLOT_5V)
 
 
@@ -344,12 +345,8 @@ def _data_not_listened(nl: Netlist) -> None:
 
 def _data_not_translated(nl: Netlist) -> None:
     net = nlmod.net_of(nl, "J1", "44")
-    ref = _refs_valued(nl, "SN74LVC8T245")[0]
+    ref = _refs_valued(nl, "SN74LVCR2245A")[0]
     _move(nl, ref, _pin_of(nl, ref, net), "UNTRANSLATED")
-
-
-def _vcca_on_5v(nl: Netlist) -> None:
-    _move(nl, _refs_valued(nl, "SN74LVC8T245")[0], "1", FUSED_5V)
 
 
 def _vccb_on_3v3(nl: Netlist) -> None:
@@ -379,7 +376,7 @@ MUTATIONS: dict[str, Callable[[Netlist], None]] = {
     "541_on_5v": _lv_on_5v("74LVC541"),
     "2g17_on_5v": _lv_on_5v("74LVC2G17"),
     "1g07_on_5v": _lv_on_5v("74LVC1G07"),
-    "translator_vcca_on_5v": _vcca_on_5v,
+    "lvcr_on_5v": _lv_on_5v("SN74LVCR2245A"),
     "translator_vccb_on_3v3": _vccb_on_3v3,
     "data_not_listened": _data_not_listened,
     "data_not_translated": _data_not_translated,

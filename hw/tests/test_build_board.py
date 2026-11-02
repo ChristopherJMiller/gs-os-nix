@@ -57,12 +57,114 @@ def test_outline_and_zones(tiny):
     board = pcbnew.LoadBoard(str(tiny))
     assert ce.problems_outline(board) == []
     zones = {z.GetZoneName(): z for z in board.Zones()}
-    assert {"GND_F", "GND_B", "BEVEL_KEEPOUT"} <= set(zones)
-    assert zones["GND_F"].GetNetname() == "GND" and zones["GND_F"].IsOnLayer(pcbnew.F_Cu)
-    assert zones["GND_B"].GetNetname() == "GND" and zones["GND_B"].IsOnLayer(pcbnew.B_Cu)
+    assert {"GND_IN1", "BEVEL_KEEPOUT"} <= set(zones)
+    # 4 layers: the ground plane is In1; there are no outer GND pours (changed from the
+    # 2-layer GND_F / GND_B pours)
+    assert "GND_F" not in zones and "GND_B" not in zones
+    assert zones["GND_IN1"].GetNetname() == "GND" and zones["GND_IN1"].IsOnLayer(pcbnew.In1_Cu)
     ra = zones["BEVEL_KEEPOUT"]
     assert ra.GetIsRuleArea() and ra.GetDoNotAllowTracks() and ra.GetDoNotAllowVias()
     assert "CERN-OHL-S-2.0" in tiny.read_text()
+
+
+# --- the 4-layer stackup (plan 1b amendment, 2026-10-31) -------------------------------
+
+def _zones_on(board, layer):
+    return [z for z in board.Zones() if z.IsOnLayer(layer) and not z.GetIsRuleArea()]
+
+
+def test_the_board_has_four_copper_layers(tiny):
+    board = pcbnew.LoadBoard(str(tiny))
+    assert board.GetCopperLayerCount() == 4
+    assert board.GetLayerName(pcbnew.In1_Cu) == "In1.Cu"
+    assert board.GetLayerName(pcbnew.In2_Cu) == "In2.Cu"
+
+
+def test_in1_is_a_power_layer_with_one_gnd_zone(tiny):
+    board = pcbnew.LoadBoard(str(tiny))
+    assert board.GetLayerType(pcbnew.In1_Cu) == pcbnew.LT_POWER
+    assert board.GetLayerType(pcbnew.In2_Cu) == pcbnew.LT_POWER
+    z = _zones_on(board, pcbnew.In1_Cu)
+    assert len(z) == 1 and z[0].GetNetname() == "GND"
+    assert not z[0].IsOnLayer(pcbnew.F_Cu) and not z[0].IsOnLayer(pcbnew.B_Cu)
+
+
+def test_no_outer_layer_gnd_pour(tiny):
+    board = pcbnew.LoadBoard(str(tiny))
+    for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
+        assert _zones_on(board, layer) == []
+
+
+def test_the_stackup_is_jlc04161h_7628(tiny):
+    text = tiny.read_text()
+    assert "(stackup" in text
+    for want in ('"In1.Cu"', '"In2.Cu"', "7628", "(epsilon_r 4.4)", '(copper_finish "ENIG")'):
+        assert want in text, want
+    # the prepreg is 0.2104 mm and the core 1.065 mm; the board is 1.6 mm
+    assert text.count("(thickness 0.2104)") == 2 and "(thickness 1.065)" in text
+    assert "(thickness 1.6)" in text
+    # the file loads and saves with the stackup kept
+    board = pcbnew.LoadBoard(str(tiny))
+    pcbnew.SaveBoard(str(tiny), board)
+    assert "7628" in tiny.read_text()
+
+
+def test_the_stackup_survives_an_update(tiny):
+    bb.build(FIX / "tiny.net", FIX / "tiny_placement.toml", tiny, update=True)
+    assert tiny.read_text().count("7628") >= 2
+    assert pcbnew.LoadBoard(str(tiny)).GetCopperLayerCount() == 4
+
+
+def test_inner_zones_stay_out_of_the_finger_tab(tiny):
+    board = pcbnew.LoadBoard(str(tiny))
+    t = ce.tab_geometry(board)
+    for layer in (pcbnew.In1_Cu, pcbnew.In2_Cu):
+        for z in _zones_on(board, layer):
+            assert mm(z.GetBoundingBox().GetBottom()) <= t["body_bottom"] + 1e-6
+    assert ce.problems_inner(board) == []
+
+
+def test_carrier_board_is_four_layer_and_clean():
+    board = pcbnew.LoadBoard(str(CARRIER_BOARD))
+    assert board.GetCopperLayerCount() == 4
+    assert board.GetLayerType(pcbnew.In1_Cu) == pcbnew.LT_POWER
+    gnd = _zones_on(board, pcbnew.In1_Cu)
+    assert [(z.GetNetname(), z.GetZoneName()) for z in gnd] == [("GND", "GND_IN1")]
+    v33 = _zones_on(board, pcbnew.In2_Cu)
+    assert [(z.GetNetname(), z.GetZoneName()) for z in v33] == [("+3V3", "V3V3_IN2")]
+    assert _zones_on(board, pcbnew.F_Cu) == [] and _zones_on(board, pcbnew.B_Cu) == []
+    assert ce.problems_inner(board) == []
+    assert "7628" in CARRIER_BOARD.read_text()
+
+
+def test_carrier_height_is_69_5_mm():
+    # P22 (5c): 69.5 mm, the limit being 69.85; every part but J2 and the top-edge headers moved
+    # down with J1 so the IC rows keep their relation to the fingers
+    assert tomllib.loads(PLACEMENT.read_text())["board"]["height_mm"] == 69.5
+    assert ce.tab_geometry(pcbnew.LoadBoard(str(CARRIER_BOARD)))["height"] == pytest.approx(69.5)
+
+
+def test_the_band_between_row_2_and_j2_is_6_mm_or_more():
+    """P22: the 18 FPGA-side nets of U1/U4 run through the band from U4's top to J2's pad
+    row; it was 3.2 mm, the aim is about 6.7. U4's box is its pads and outline, not its
+    reference text (silk.py puts that above it, in the band)."""
+    b = pcbnew.LoadBoard(str(CARRIER_BOARD))
+    u4 = b.FindFootprintByReference("U4").GetBoundingBox(False)
+    j2 = min(pcbnew.ToMM(p.GetBoundingBox().GetBottom())
+             for p in b.FindFootprintByReference("J2").Pads() if p.GetNumber() == "1")
+    assert pcbnew.ToMM(u4.GetTop()) - j2 >= 6.0
+
+
+def test_the_top_headers_keep_the_edge_clearance():
+    b = pcbnew.LoadBoard(str(CARRIER_BOARD))
+    for ref in ("J4", "JP1", "JP2", "R11", "R18", "R19", "R20", "R21"):
+        top = pcbnew.ToMM(b.FindFootprintByReference(ref).GetBoundingBox().GetTop())
+        assert top >= 0.5, (ref, top)
+
+
+def test_project_file_matches_the_builder():
+    import json
+    assert json.loads((ROOT / "hw/carrier/carrier.kicad_pro").read_text()) == bb.project_json()
 
 
 def test_unplaced_part_is_error(tmp_path):
@@ -138,7 +240,9 @@ def test_carrier_board_is_clean(carrier_board):
 
 
 @pytest.mark.parametrize("name", ["move_pad_13", "flip_J1_to_back", "stretch_to_180mm",
-                                  "track_in_bevel"])
+                                  "track_in_bevel", "inner_copper_in_tab",
+                                  "inner_zone_to_edge", "inner_via_in_tab",
+                                  "inner_track", "pth_pad_at_edge"])
 def test_edge_mutation_fails(name, carrier_board):
     assert name in ce.MUTATIONS
     ce.MUTATIONS[name](carrier_board)
@@ -206,7 +310,7 @@ def test_decoupling_caps_within_2mm(carrier_board):
     """Each [decouple] entry (cap = "U.pin", or a list of pins for a shared cap) has the
     cap's supply pad within 2 mm (pad edge to pad edge) of every pin it serves."""
     dec = tomllib.loads(PLACEMENT.read_text())["decouple"]
-    assert len(dec) == 18
+    assert len(dec) == 17
     for cap, pins in dec.items():
         c = fp_of(carrier_board, cap)
         supply = [p for p in c.Pads() if p.GetNetname() != "GND"]
@@ -222,7 +326,7 @@ def test_decoupling_caps_within_2mm(carrier_board):
 
 
 def test_every_ic_supply_pin_has_a_cap(carrier_nl):
-    """The [decouple] table covers each IC's rail pins (U1's VCCB pair share one cap)."""
+    """The [decouple] table covers each IC's rail pins."""
     covered = set()
     for pins in tomllib.loads(PLACEMENT.read_text())["decouple"].values():
         covered |= set([pins] if isinstance(pins, str) else pins)
@@ -240,3 +344,87 @@ def test_tall_parts_are_clear_of_the_module(carrier_board):
             continue
         if any(p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH for p in f.Pads()):
             assert not area.Intersects(f.GetBoundingBox(False)), f.GetReference()
+
+
+def test_front_courtyards_do_not_overlap(carrier_board):
+    """No two parts' courtyards overlap (touching is fine). Courtyards here are rectangles,
+    so their bounding boxes are exact."""
+    boxes = {}
+    for f in carrier_board.GetFootprints():
+        cy = f.GetCourtyard(pcbnew.F_CrtYd)
+        if f.GetReference() != "J1" and cy.OutlineCount():
+            b = cy.BBox()
+            boxes[f.GetReference()] = (mm(b.GetLeft()), mm(b.GetTop()),
+                                       mm(b.GetRight()), mm(b.GetBottom()))
+    refs = sorted(boxes)
+    bad = []
+    for i, a in enumerate(refs):
+        for b in refs[i + 1:]:
+            A, B = boxes[a], boxes[b]
+            dx = min(A[2], B[2]) - max(A[0], B[0])
+            dy = min(A[3], B[3]) - max(A[1], B[1])
+            if dx > 0.005 and dy > 0.005:
+                bad.append((a, b, round(dx, 3), round(dy, 3)))
+    assert not bad, bad
+
+
+def test_j2_escape_rule_area_exists_and_the_dru_names_it():
+    """P16: the Clock clearance is relaxed at the module socket by a named rule area."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    board = pcbnew.LoadBoard(str(root / "hw/carrier/carrier.kicad_pcb"))
+    areas = [z for z in board.Zones() if z.GetZoneName() == bb.J2_ESCAPE]
+    assert len(areas) == 1 and areas[0].GetIsRuleArea()
+    box = areas[0].GetBoundingBox()
+    cy = board.FindFootprintByReference("J2").GetCourtyard(pcbnew.F_CrtYd).BBox()
+    assert box.GetLeft() < cy.GetLeft() and box.GetRight() > cy.GetRight()
+    assert box.GetTop() < cy.GetTop() and box.GetBottom() > cy.GetBottom()
+    dru = (root / "hw/carrier/carrier.kicad_dru").read_text()
+    assert f"intersectsArea('{bb.J2_ESCAPE}')" in dru
+
+
+# --- fix round 1: inner layers are plane-only (P18); through-hole pads --------------------
+
+def test_an_inner_layer_track_fails_wherever_it_is(carrier_board):
+    t = ce.tab_geometry(carrier_board)
+    assert ce.problems_inner(carrier_board) == []
+    ce.MUTATIONS["inner_track"](carrier_board)
+    found = ce.problems_inner(carrier_board)
+    assert any(ce.EXPECT["inner_track"] in p for p in found), found
+
+
+def test_an_inner_arc_fails(carrier_board):
+    arc = pcbnew.PCB_ARC(carrier_board)
+    arc.SetStart(pcbnew.VECTOR2I(bb._mm(20), bb._mm(20)))
+    arc.SetMid(pcbnew.VECTOR2I(bb._mm(22), bb._mm(21)))
+    arc.SetEnd(pcbnew.VECTOR2I(bb._mm(24), bb._mm(20)))
+    arc.SetWidth(bb._mm(0.15))
+    arc.SetLayer(pcbnew.In1_Cu)
+    carrier_board.Add(arc)
+    assert any("inner copper: arc" in p for p in ce.problems_inner(carrier_board))
+
+
+def test_outer_tracks_are_not_inner_copper(carrier_board):
+    ce.MUTATIONS["track_in_bevel"](carrier_board)      # an F.Cu track
+    assert not any("inner copper: track" in p for p in ce.problems_inner(carrier_board))
+
+
+def test_a_through_hole_pad_near_the_side_edge_fails(carrier_board):
+    ce.MUTATIONS["pth_pad_at_edge"](carrier_board)
+    found = ce.problems_inner(carrier_board)
+    assert any(ce.EXPECT["pth_pad_at_edge"] in p for p in found), found
+
+
+def test_an_npth_pad_is_not_inner_copper(carrier_board):
+    t = ce.tab_geometry(carrier_board)
+    fp = pcbnew.FootprintLoad(str(bb._lib_dir("Resistor_SMD")), "R_0603_1608Metric")
+    pad = pcbnew.PAD(fp)
+    pad.SetAttribute(pcbnew.PAD_ATTRIB_NPTH)
+    pad.SetShape(pcbnew.PAD_SHAPE_CIRCLE)
+    pad.SetSize(pcbnew.VECTOR2I(bb._mm(2), bb._mm(2)))
+    pad.SetDrillSize(pcbnew.VECTOR2I(bb._mm(2), bb._mm(2)))
+    pad.SetPosition(pcbnew.VECTOR2I(bb._mm(t["xmin"] + 0.9), bb._mm(t["body_bottom"] + 2)))
+    fp.Add(pad)
+    fp.SetPosition(pad.GetPosition())
+    carrier_board.Add(fp)
+    assert not any("through-hole" in p for p in ce.problems_inner(carrier_board))

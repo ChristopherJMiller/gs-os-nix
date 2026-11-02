@@ -83,15 +83,20 @@ def test_slot_pins_land_on_the_right_nets(nl):
         "+5V_SLOT", "GND", "-12V_SLOT", "-5V_SLOT", "+12V_SLOT")
 
 
-def test_8t245_polarity(nl):
-    """SN74LVC8T245 SCES584D table 7-1: OE=L DIR=L is B->A (slot -> FPGA); DIR and OE
-    are referenced to VCCA. A side (pins 3-10) FPGA, B side (21..14) slot."""
-    (u,) = by_value(nl, "SN74LVC8T245")
+def test_lvcr2245_polarity(nl):
+    """SN74LVCR2245A SCAS581N table 2: OE=L DIR=L is B->A (slot -> FPGA), DIR=H A->B; one
+    supply (VCC, pin 20, +3V3). A side (pins 2-9) FPGA, B side (18..11) slot. No +5V pin."""
+    (u,) = by_value(nl, "SN74LVCR2245A")
     p = pins_on(nl, u)
-    assert p["1"] == "+3V3" and p["23"] == p["24"] == "+5V"
-    assert p["2"] == "slot_d_dir" and p["22"] == "slot_d_oe_n"
+    assert p["20"] == "+3V3" and p["10"] == "GND"
+    assert p["1"] == "slot_d_dir" and p["19"] == "slot_d_oe_n"
     for i in range(8):
-        assert p[str(3 + i)] == f"slot_d{i}" and p[str(21 - i)] == f"SLOT_D{i}"
+        # bit i rides channel 7 - i: FPGA side pin 9 - i, slot side pin 11 + i
+        assert p[str(9 - i)] == f"slot_d{i}" and p[str(11 + i)] == f"SLOT_D{i}"
+    assert "+5V" not in p.values() and "+5V_SLOT" not in p.values()
+    assert nl.parts[u].footprint.startswith("Package_SO:SSOP-20_3.9x8.7mm_P0.635mm")
+    assert nl.parts[u].fields["MPN"] == "SN74LVCR2245ADBQR"
+    assert nl.parts[u].fields["LCSC"] == "C2675819"
 
 
 def test_164245_polarity(nl):
@@ -118,12 +123,12 @@ def test_1t45_polarity(nl):
 def test_541s(nl):
     u4, u5 = by_value(nl, "74LVC541")
     for u, pairs in ((u4, [(f"SLOT_D{i}", f"slot_dl{i}") for i in range(8)]),
-                     (u5, [("SLOT_DEVSEL_N", "slot_devsel_n"),
-                           ("SLOT_IOSEL_N", "slot_iosel_n"),
-                           ("SLOT_IOSTRB_N", "slot_iostrb_n"),
+                     (u5, [("SLOT_IOSEL_N", "slot_iosel_n"),
+                           ("SLOT_DEVSEL_N", "slot_devsel_n"),
                            ("SLOT_M2SEL_N", "slot_m2sel_n"), ("SLOT_M2B0", "slot_m2b0"),
-                           ("SLOT_RESET_N", "slot_reset_n"),
-                           ("SLOT_SYNC_N", "slot_sync_n")])):
+                           ("SLOT_SYNC_N", "slot_sync_n"),
+                           ("SLOT_IOSTRB_N", "slot_iostrb_n"),
+                           ("SLOT_RESET_N", "slot_reset_n")])):
         p = pins_on(nl, u)
         assert p["20"] == "+3V3" and p["10"] == "GND"
         assert p["1"] == "GND" and p["19"] == "GND"  # always enabled
@@ -171,7 +176,7 @@ def test_fuse_and_bypass(nl):
 
 
 def test_every_ic_supply_pin_has_a_bypass_cap(nl):
-    n_supply = {"SN74LVC8T245": 2, "74ALVC164245": 4, "SN74LVC1T45": 2, "74LVC541": 1,
+    n_supply = {"SN74LVCR2245A": 1, "74ALVC164245": 4, "SN74LVC1T45": 2, "74LVC541": 1,
                 "74LVC2G17": 1, "74LVC1G07": 1}
     need = sum(n * len(by_value(nl, v)) for v, n in n_supply.items())
     have = sum(1 for r, p in nl.parts.items() if r.startswith("C") and p.value == "100nF"

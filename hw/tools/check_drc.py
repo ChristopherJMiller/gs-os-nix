@@ -4,25 +4,37 @@
     python3 hw/tools/check_drc.py --netlist NET BOARD.kicad_pcb              # HW DRC OK
     python3 hw/tools/check_drc.py --selftest --netlist NET BOARD.kicad_pcb   # HW DRC SELFTEST OK
 
-Routing output is not reproducible, so the routed board is committed source and this
-gate is what ties it back to the netlist. Two halves:
+The routed board is committed source (`just repro` checks that `route` lays it again), and
+this gate is what ties it back to the netlist. Two halves:
 
-* `kicad-cli pcb drc --severity-error --refill-zones`: no violations, no unconnected
-  items. It runs on a temporary copy of the board and its project file, because
-  kicad-cli rewrites the .kicad_pro and writes a .kicad_prl. Warnings (silkscreen) do not
-  fail the gate; their count is printed.
+* `kicad-cli pcb drc --severity-all --refill-zones`: no errors, no unconnected items, and none
+  of the warnings in GATED_WARNINGS: dangling copper, silkscreen on pads, on other silkscreen or
+  over the edge, and footprints that differ from their library or whose library is missing. It
+  runs on a temporary copy of the board, its project file and its custom rules, because
+  kicad-cli rewrites the .kicad_pro and writes a .kicad_prl. Beside the copy goes a fp-lib-table
+  naming each library the board's footprints come from (fp_lib_table), so KiCad compares every
+  footprint with its library; without one it can only say that it has no library. Other
+  warnings do not fail the gate; their count is printed.
 * parity, our own: the board's footprints are the netlist's parts, each with the
   netlist's `lib:name`, and every pad is on the net the netlist gives its pin. Pads with
   no netlist pin (J2's solder pegs) must have no net. Tracks cannot cheat this, since a
   net is only ever what the pads say; a short shows up as a DRC violation.
 
-The selftest plants a pad on another net, a deleted footprint, a wrong footprint id and
-a track across two pads of different nets and a long +5V track thinned (twice), on temporary copies; each must fail with its
-own message.
+* no via over a pad (ruling P28), our own too: a via whose copper overlaps any SMD pad's,
+  whatever the nets, fails. KiCad's DRC does not see a via on a pad of its own net, and a via
+  in an SMD pad wicks the solder away from the joint.
+
+The selftest plants a pad on another net, a deleted footprint, a wrong footprint id, a track
+across two pads of different nets, a long +5V track thinned (twice), a via in a pad, a via
+joined on one layer only, a track with a free end, silkscreen text on a pad, on a reference
+designator and over the board edge, a pad grown away from its library's and a footprint from a
+library that does not exist, on temporary copies; each must fail with its own message.
 """
 import argparse
 import fnmatch
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,22 +46,51 @@ import pcbnew
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from hw.tools.build_board import LOCAL_LIB
 from hw.tools.netlist import Netlist, load
 
 # Power-track width rule. KiCad's DRC does not enforce net-class width as a minimum.
 NECK_MAX_MM = 1.5       # a neck is short: a pad escape or a jog, never a run
 NECK_MIN_MM = 0.3       # and even a neck stays this wide, for the 3V3/5V rail current
 WIDTH_TOL_MM = 0.001    # 1 um: KiCad stores nm, so 0.3004 passes and 0.2989 fails
-# GND is exempt: its pours carry the current; the routed GND tracks are only stitching.
+# GND is exempt: the In1.Cu plane carries the current; any outer GND track is a pad escape.
 WIDTH_EXEMPT = {"GND"}
+# KiCad's warnings that fail here.
+# * Copper that leads nowhere. A via joined on one layer only is a hole and 0.6 pF on its net
+#   for nothing (hw-load charges it); a track with a free end is a stub. Freerouting's session
+#   left both on the carrier (Task 5h).
+# * Silkscreen that does not print whole: on a pad (the mask opening clips it), on other
+#   silkscreen, or over the board edge. The carrier's reference designators had 95 such
+#   warnings before silk.py placed them (Task 6).
+# * A footprint that differs from its library, or whose library or footprint cannot be found.
+#   The board's footprints are generated from KiCad's library and ours (build_board.py), and
+#   this keeps them so.
+GATED_WARNINGS = ("via_dangling", "track_dangling",
+                  "silk_over_copper", "silk_overlap", "silk_edge_clearance",
+                  "lib_footprint_issues", "lib_footprint_mismatch")
 
 
 # --- KiCad's DRC ----------------------------------------------------------------------
 
+def fp_lib_table(board_text: str) -> str:
+    """A project fp-lib-table naming every library the board's footprints come from, at the
+    path build_board loads it from (hw/lib for ours, $KICAD10_FOOTPRINT_DIR for KiCad's). A
+    nickname that is in neither still gets its row, so KiCad reports the library missing."""
+    rows = []
+    for nick in sorted(set(re.findall(r'^\s*\(footprint "([^":]+):', board_text, re.M))):
+        local = LOCAL_LIB / f"{nick}.pretty"
+        root = os.environ.get("KICAD10_FOOTPRINT_DIR", "")
+        uri = local if local.is_dir() else Path(root) / f"{nick}.pretty"
+        rows.append(f'  (lib (name "{nick}")(type "KiCad")(uri "{uri}")(options "")(descr ""))')
+    return "(fp_lib_table\n  (version 7)\n" + "".join(r + "\n" for r in rows) + ")\n"
+
+
 def run_drc(board: Path, all_severities: bool = False) -> dict:
-    """kicad-cli's DRC report (parsed JSON) for `board`, run on a temporary copy."""
+    """kicad-cli's DRC report (parsed JSON) for `board`, run on a temporary copy, with the
+    board's footprint libraries in a fp-lib-table beside it."""
     with tempfile.TemporaryDirectory() as tmp:
         copy = _copy_project(Path(board), Path(tmp))
+        (Path(tmp) / "fp-lib-table").write_text(fp_lib_table(copy.read_text()))
         out = Path(tmp) / "drc.json"
         subprocess.run(
             ["kicad-cli", "pcb", "drc", "--format", "json", "--refill-zones",
@@ -61,9 +102,10 @@ def run_drc(board: Path, all_severities: bool = False) -> dict:
 
 def _copy_project(board_path: Path, dst: Path) -> Path:
     shutil.copy(board_path, dst / board_path.name)
-    pro = board_path.with_suffix(".kicad_pro")
-    if pro.exists():
-        shutil.copy(pro, dst / pro.name)
+    for suffix in (".kicad_pro", ".kicad_dru"):      # the project, and its custom DRC rules
+        extra = board_path.with_suffix(suffix)
+        if extra.exists():
+            shutil.copy(extra, dst / extra.name)
     return dst / board_path.name
 
 
@@ -72,9 +114,12 @@ def _where(items: list) -> str:
 
 
 def problems_drc(board: Path) -> list[str]:
-    rep = run_drc(board)
+    """KiCad's errors, its unconnected items, and the warnings in GATED_WARNINGS."""
+    rep = run_drc(board, all_severities=True)
     out = []
     for v in rep.get("violations", []):
+        if v.get("severity") != "error" and v["type"] not in GATED_WARNINGS:
+            continue
         out.append(f"DRC {v['type']}: {v['description']} ({_where(v.get('items', []))})")
     for u in rep["unconnected_items"]:
         out.append(f"DRC unconnected: {u['description']} ({_where(u.get('items', []))})")
@@ -82,8 +127,10 @@ def problems_drc(board: Path) -> list[str]:
 
 
 def warning_count(board: Path) -> int:
+    """KiCad's warnings that are not gated (the silkscreen's, the footprint library's)."""
     rep = run_drc(board, all_severities=True)
-    return sum(1 for v in rep.get("violations", []) if v.get("severity") == "warning")
+    return sum(1 for v in rep.get("violations", [])
+               if v.get("severity") == "warning" and v["type"] not in GATED_WARNINGS)
 
 
 # --- parity -----------------------------------------------------------------------------
@@ -185,12 +232,33 @@ def problems_width(board, pro_path: Path) -> list[str]:
     return out
 
 
+# --- no via in a pad (P28) ---------------------------------------------------------------
+
+def problems_via_in_pad(board) -> list[str]:
+    """Every via whose copper overlaps an SMD pad's copper, whatever either net."""
+    pads = [(fp, p) for fp in board.GetFootprints() for p in fp.Pads()
+            if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD and p.IsOnCopperLayer()]
+    out = []
+    for v in board.GetTracks():
+        if v.Type() != pcbnew.PCB_VIA_T:
+            continue
+        pos, r = v.GetPosition(), v.GetWidth(pcbnew.F_Cu) // 2
+        for fp, p in pads:
+            if p.HitTest(pos, r - 1):
+                out.append(f"via in pad: {v.GetNetname() or '(no net)'} via at "
+                           f"({pcbnew.ToMM(pos.x):.2f}, {pcbnew.ToMM(pos.y):.2f}) overlaps "
+                           f"{fp.GetReference()}.{p.GetNumber()} "
+                           f"({p.GetNetname() or 'no net'})")
+    return out
+
+
 # --- the gate -----------------------------------------------------------------------------
 
 def problems(board_path: Path, nl: Netlist) -> list[str]:
     board = pcbnew.LoadBoard(str(board_path))
     return (problems_parity(board, nl)
             + problems_width(board, board_path.with_suffix(".kicad_pro"))
+            + problems_via_in_pad(board)
             + problems_drc(board_path))
 
 
@@ -252,6 +320,106 @@ def _thin_long_5v(width_mm):
     return mutate
 
 
+def _via_in_pad(board):
+    """A via on the middle of the first SMD pad (by reference): its own net's pad."""
+    fp, p = _first_smd_pad(board)
+    v = pcbnew.PCB_VIA(board)
+    v.SetPosition(p.GetPosition())
+    v.SetViaType(pcbnew.VIATYPE_THROUGH)
+    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+    v.SetWidth(pcbnew.FromMM(0.6))
+    v.SetDrill(pcbnew.FromMM(0.3))
+    v.SetNet(p.GetNet())
+    board.Add(v)
+
+
+def _longest_track(board):
+    tracks = [t for t in board.GetTracks() if t.GetClass() == "PCB_TRACK"]
+    if not tracks:
+        raise SystemExit("selftest: the board has no track (route it first)")
+    return max(tracks, key=lambda t: (t.GetLength(), t.GetStart().x, t.GetStart().y))
+
+
+def _via_one_layer(board):
+    """A via on the middle of the longest track: joined on that track's layer only."""
+    t = _longest_track(board)
+    v = pcbnew.PCB_VIA(board)
+    v.SetPosition((t.GetStart() + t.GetEnd()) / 2)
+    v.SetViaType(pcbnew.VIATYPE_THROUGH)
+    v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+    v.SetWidth(pcbnew.FromMM(0.6))
+    v.SetDrill(pcbnew.FromMM(0.3))
+    v.SetNet(t.GetNet())
+    board.Add(v)
+
+
+def _track_free_end(board):
+    """A 0.5 mm stub off the middle of the longest track, square to it, ending on nothing."""
+    t = _longest_track(board)
+    a, b = t.GetStart(), t.GetEnd()
+    mid = (a + b) / 2
+    d = b - a
+    n = pcbnew.VECTOR2I(int(-d.y / d.EuclideanNorm() * pcbnew.FromMM(0.5)),
+                        int(d.x / d.EuclideanNorm() * pcbnew.FromMM(0.5)))
+    s = pcbnew.PCB_TRACK(board)
+    s.SetStart(mid)
+    s.SetEnd(mid + n)
+    s.SetLayer(t.GetLayer())
+    s.SetWidth(t.GetWidth())
+    s.SetNet(t.GetNet())
+    board.Add(s)
+
+
+def _first_smd_pad(board):
+    return next((fp, p) for fp in sorted(board.GetFootprints(), key=lambda f: f.GetReference())
+                for p in fp.Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD)
+
+
+def _silk_x(board, at, text="X"):
+    """A 1 mm silkscreen text centred on `at`."""
+    t = pcbnew.PCB_TEXT(board)
+    t.SetLayer(pcbnew.F_SilkS)
+    t.SetText(text)
+    t.SetTextSize(pcbnew.VECTOR2I(pcbnew.FromMM(1.0), pcbnew.FromMM(1.0)))
+    t.SetTextThickness(pcbnew.FromMM(0.15))
+    t.SetPosition(at)
+    board.Add(t)
+
+
+def _silk_on_pad(board):
+    """An "X" on the middle of the first SMD pad (by reference)."""
+    _silk_x(board, _first_smd_pad(board)[1].GetPosition())
+
+
+def _silk_on_reference(board):
+    """An "X" on the first reference designator (by reference) the silkscreen shows."""
+    for fp in sorted(board.GetFootprints(), key=lambda f: f.GetReference()):
+        f = fp.Reference()
+        if f.IsVisible() and f.GetLayer() == pcbnew.F_SilkS:
+            _silk_x(board, f.GetPosition())
+            return
+    raise SystemExit("selftest: no reference designator shows on the silkscreen")
+
+
+def _silk_over_edge(board):
+    """"XX" across the middle of the board's top edge."""
+    bb = board.GetBoardEdgesBoundingBox()
+    _silk_x(board, pcbnew.VECTOR2I(bb.GetCenter().x, bb.GetTop()), "XX")
+
+
+def _pad_unlike_library(board):
+    """The first SMD pad (by reference) 0.05 mm larger than its library footprint's."""
+    _, p = _first_smd_pad(board)
+    p.SetSize(pcbnew.F_Cu, p.GetSize(pcbnew.F_Cu) + pcbnew.VECTOR2I(pcbnew.FromMM(0.05),
+                                                                    pcbnew.FromMM(0.05)))
+
+
+def _library_missing(board):
+    """C1 from a library nobody has."""
+    fp = board.FindFootprintByReference("C1")
+    fp.SetFPID(pcbnew.LIB_ID("NoSuchLibrary", str(fp.GetFPID().GetLibItemName())))
+
+
 # name -> (mutation, needs the DRC, text its failure must contain)
 MUTATIONS = {
     "pad on another net": (_pad_move, False, "parity: R"),
@@ -261,6 +429,14 @@ MUTATIONS = {
     "track deleted": (_track_delete, True, "DRC unconnected"),
     "+5V thinned to 0.15": (_thin_long_5v(0.15), False, "power width: +5V track 0.150"),
     "+5V long run at 0.3": (_thin_long_5v(0.3), False, "power width: +5V track 0.300"),
+    "via in a pad": (_via_in_pad, False, "via in pad"),
+    "via joined on one layer": (_via_one_layer, True, "DRC via_dangling"),
+    "track with a free end": (_track_free_end, True, "DRC track_dangling"),
+    "silkscreen on a pad": (_silk_on_pad, True, "DRC silk_over_copper"),
+    "silkscreen on a reference": (_silk_on_reference, True, "DRC silk_overlap"),
+    "silkscreen over the edge": (_silk_over_edge, True, "DRC silk_edge_clearance"),
+    "pad unlike its library's": (_pad_unlike_library, True, "DRC lib_footprint_mismatch"),
+    "footprint library missing": (_library_missing, True, "DRC lib_footprint_issues"),
 }
 
 
@@ -281,7 +457,8 @@ def selftest(board_path: Path, nl: Netlist) -> int:
             _mutate(copy, mutate)
             board = pcbnew.LoadBoard(str(copy))
             found = (problems_parity(board, nl)
-                     + problems_width(board, copy.with_suffix(".kicad_pro")))
+                     + problems_width(board, copy.with_suffix(".kicad_pro"))
+                     + problems_via_in_pad(board))
             if drc:
                 found += problems_drc(copy)
             if not any(expect in p for p in found):
