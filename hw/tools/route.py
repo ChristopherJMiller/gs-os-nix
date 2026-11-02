@@ -3,15 +3,28 @@
 
     python3 hw/tools/route.py BOARD.kicad_pcb [--passes N] [--timeout S] [--keep DIR]
 
-pcbnew exports the Specctra DSN (it carries the net classes of BOARD's .kicad_pro, so
-the Power class reaches the router), freerouting routes it, pcbnew imports the SES (without
-its part places: the route never moves a part, see no_placement), and
-what the router left is finished here (finish_unrouted); then the pours are refilled and
-BOARD is saved in place. Existing tracks and vias are dropped first, so a route is a fresh
-route; the zones and all else stay. Freerouting 2.5.0 (pinned in the flake) gives the same
-output on every run; the routed board is still committed, and hw-drc (check_drc.py) is what
-ties it to the netlist. Freerouting runs with a temporary HOME and XDG directories, so it
-never touches ~/.config/freerouting.
+The pipeline (route(); `just -f hw/justfile route` runs it with --first --repair):
+
+1. start(): every track and via is dropped (a route is a fresh route; the zones and all else
+   stay), the zones are made solid, and fan_out_planes (P19) gives each GND/+3V3 SMD pad its
+   via, or a share of a neighbour's (P28).
+2. bus_route.run(): the planned rivers, the clocks (the A*, Clock class) and the 5 V power
+   pieces (P29), laid and locked.
+3. lay_first(): the first pass, the A* for the listed nets still open, locked.
+4. pcbnew exports the Specctra DSN (it carries the net classes of BOARD's .kicad_pro, so the
+   Power class reaches the router), prepare_dsn fixes it (below), freerouting routes the rest
+   in one go, and pcbnew imports the SES without its part places (no_placement: the route
+   never moves a part).
+5. The session's copper is cleaned: drop_plane_copper (the planes join those nets),
+   drop_pad_stubs (tracks wholly on a pad of their net), drop_dead_copper (vias joined on one
+   layer, tracks on a locked track, dead ends cut back), widen_stubs.
+6. With --repair, repair_clock_clearance; then finish_unrouted joins what the router left
+   (the A*); the repair again; the pours are refilled and BOARD is saved in place.
+
+Every step is deterministic (Freerouting 2.5.0 is pinned in the flake and gives the same
+session on every run): `just repro` routes a copy again and compares the copper. The routed
+board is committed, and hw-drc (check_drc.py) is what ties it to the netlist. Freerouting runs
+with a temporary HOME and XDG directories, so it never touches ~/.config/freerouting.
 
 The board has four copper layers (2026-10-31): In1.Cu is a solid GND plane and In2.Cu a +3V3
 plane. The 2-layer machinery for GND (outer pours, stitching vias, bridging vias, a narrow
@@ -38,6 +51,8 @@ What is fixed in the DSN between pcbnew and freerouting (prepare_dsn):
   its margin.
 * The planes stay (P20): on 4 layers In1/In2 are whole planes, not pours cut up by tracks, so
   telling the router that their nets' pins are joined by them is true.
+* No via in the finger tab (hw-edge: no inner copper below its top edge): a via_keepout over
+  the tab and TAB_VIA_MM above it, on both layers (tab_via_keepout).
 
 finish_unrouted is a small grid router (A*, two layers, vias) for the connections that
 freerouting gives up on. It joins the pieces of a net that the router left apart, keeping
@@ -196,8 +211,10 @@ def tab_via_keepout(pts: list[tuple[int, int]]) -> list[tuple[int, int]] | None:
     a closed polygon: no via may be there (hw-edge: a via's inner pad never reaches below the
     tab's top edge). None for an outline with no tab."""
     ys = sorted({y for _, y in pts})
+    if len(ys) < 2:
+        return None
     tab = sorted(x for x, y in pts if y == ys[0])
-    if len(ys) < 2 or len(tab) != 2:
+    if len(tab) != 2:
         return None
     top = ys[1] + int(round(TAB_VIA_MM * 1000))
     (xl, xr), low = tab, ys[0]
@@ -931,6 +948,235 @@ def drop_pad_stubs(board) -> int:
     return len(gone)
 
 
+TOUCH_NM = 1000                    # 1 um: "on" a track, for the dead-copper clean-up
+
+
+def _pieces_with_pads(board, net: int) -> int:
+    return sum(1 for c in _components(board, net) if c["pad"])
+
+
+def _on_track(t, pt) -> float | None:
+    """Where point `pt` lies along track `t` (0 at its start, 1 at its end), or None if it
+    is not on the track's copper."""
+    if not t.HitTest(pt):
+        return None
+    a, b = t.GetStart(), t.GetEnd()
+    d = b - a
+    n2 = float(d.x) * d.x + float(d.y) * d.y
+    if n2 == 0:
+        return 0.0
+    return max(0.0, min(1.0, ((pt.x - a.x) * d.x + (pt.y - a.y) * d.y) / n2))
+
+
+def _on_locked(t, locked) -> bool:
+    """Does track `t` lie wholly on one of the `locked` tracks (its layer, its copper)?"""
+    for o in locked:
+        if o.GetLayer() != t.GetLayer():
+            continue
+        slack = (o.GetWidth() - t.GetWidth()) / 2 + TOUCH_NM
+        if slack >= 0 and all(
+                pcbnew.FromMM(_seg_dist(e, e, o.GetStart(), o.GetEnd())) <= slack
+                for e in (t.GetStart(), t.GetEnd())):
+            return True
+    return False
+
+
+class _Junctions:
+    """A net's copper as a graph: nodes are the places where copper meets (a pad, a via, track
+    ends within half a width of each other, a track end on another track's body), edges the
+    track pieces between them."""
+
+    def __init__(self, tracks, vias, pads):
+        self.tracks, self.vias, self.pads = tracks, vias, pads
+        self.up: dict = {}
+        self.splits: dict[int, list] = {i: [] for i in range(len(tracks))}
+        ends = [(i, k, t.GetLayer(), e) for i, t in enumerate(tracks)
+                for k, e in enumerate((t.GetStart(), t.GetEnd()))]
+        for i, k, layer, e in ends:
+            for j, p in enumerate(pads):
+                if p.IsOnLayer(layer) and p.HitTest(e):
+                    self.union(("e", i, k), ("p", j))
+            for j, v in enumerate(vias):
+                if (v.GetPosition() - e).EuclideanNorm() <= v.GetWidth(pcbnew.F_Cu) // 2:
+                    self.union(("e", i, k), ("v", j))
+        for a in range(len(ends)):
+            i, k, layer, e = ends[a]
+            for b in range(a + 1, len(ends)):
+                j, m, layer2, f = ends[b]
+                reach = max(tracks[i].GetWidth(), tracks[j].GetWidth()) // 2
+                if layer == layer2 and (e - f).EuclideanNorm() <= reach:
+                    self.union(("e", i, k), ("e", j, m))
+        for i, t in enumerate(tracks):          # what lands on a track's body splits it there
+            near_end = lambda q: min((q - t.GetStart()).EuclideanNorm(),
+                                     (q - t.GetEnd()).EuclideanNorm()) <= t.GetWidth() // 2
+            for j, k, layer, e in ends:
+                if j != i and layer == t.GetLayer() and not near_end(e):
+                    s = _on_track(t, e)
+                    if s is not None:
+                        self.split(i, s, ("e", j, k))
+            for j, v in enumerate(vias):
+                if not near_end(v.GetPosition()):
+                    s = _on_track(t, v.GetPosition())
+                    if s is not None:
+                        self.split(i, s, ("v", j))
+        self.edges = []                          # (track, s0, s1, node0, node1)
+        for i, t in enumerate(tracks):
+            cuts = [(0.0, ("e", i, 0))] + sorted(self.splits[i]) + [(1.0, ("e", i, 1))]
+            for (s0, n0), (s1, n1) in zip(cuts, cuts[1:]):
+                self.edges.append((i, s0, s1, self.find(n0), self.find(n1)))
+
+    def find(self, x):
+        self.up.setdefault(x, x)
+        while self.up[x] != x:
+            self.up[x] = self.up[self.up[x]]
+            x = self.up[x]
+        return x
+
+    def union(self, a, b) -> None:
+        self.up[self.find(a)] = self.find(b)
+
+    def split(self, i: int, s: float, key) -> None:
+        width = self.tracks[i].GetWidth() / 2 / max(1, self.tracks[i].GetLength())
+        for s2, k2 in self.splits[i]:
+            if abs(s2 - s) <= width:             # the same place on the track
+                self.union(key, k2)
+                return
+        self.splits[i].append((s, key))
+        self.find(key)
+
+    def prune(self) -> list:
+        """The edges left once every dead end is cut back. A node that is no pad and no locked
+        via, with at most one edge to another node, is a dead end: that edge goes (if unlocked),
+        and so does every unlocked piece that loops on the node (a stub inside a via's pad, or
+        a short jog whose ends both lie in it). Loops on a live node stay."""
+        terminal = {self.find(("p", j)) for j in range(len(self.pads))}
+        terminal |= {self.find(("v", j)) for j, v in enumerate(self.vias) if v.IsLocked()}
+        live = list(self.edges)
+        while True:
+            out: dict = {}
+            for e in live:
+                if e[3] != e[4]:
+                    out[e[3]] = out.get(e[3], 0) + 1
+                    out[e[4]] = out.get(e[4], 0) + 1
+            dead_end = lambda n: n not in terminal and out.get(n, 0) <= 1
+            dead = [e for e in live if not self.tracks[e[0]].IsLocked()
+                    and (dead_end(e[3]) or dead_end(e[4]))]
+            if not dead:
+                return live
+            live = [e for e in live if e not in dead]
+
+
+def _joined_by_a_track(a, b, layer: int, tracks) -> bool:
+    """Is there a track on `layer` whose centre line runs through both points?"""
+    return any(t.GetLayer() == layer and
+               all(pcbnew.FromMM(_seg_dist(p, p, t.GetStart(), t.GetEnd())) <= TOUCH_NM
+                   for p in (a, b)) for t in tracks)
+
+
+def _dead_net(board, net: int, tracks, vias, pads) -> int:
+    """Cut back the dead copper of one net (see drop_dead_copper); undone if the net's pads
+    part. Returns how many items it changed."""
+    g = _Junctions(tracks, vias, pads)
+    live = g.prune()
+    if len(live) == len(g.edges) and all(
+            v.IsLocked() or len({tracks[e[0]].GetLayer() for e in live
+                                 if g.find(("v", j)) in (e[3], e[4])}) >= 2
+            for j, v in enumerate(vias)):
+        return 0                                 # nothing dead
+    before = _pieces_with_pads(board, net)
+    undo, changed, gone = [], 0, set()
+    for i, t in enumerate(tracks):
+        if t.IsLocked():
+            continue
+        spans = sorted((s0, s1) for j, s0, s1, _, _ in live if j == i)
+        if spans and any(b[0] > a[1] + 1e-9 for a, b in zip(spans, spans[1:])):
+            continue                             # a gap in the middle: leave it whole
+        if not spans:
+            saved = _clone(t)
+            board.RemoveNative(t)
+            gone.add(i)
+            undo.append(lambda saved=saved: board.Add(saved))
+            changed += 1
+        elif spans[0][0] > 1e-9 or spans[-1][1] < 1 - 1e-9:
+            a, b = t.GetStart(), t.GetEnd()
+            d = b - a
+            t.SetStart(pcbnew.VECTOR2I(int(a.x + d.x * spans[0][0]), int(a.y + d.y * spans[0][0])))
+            t.SetEnd(pcbnew.VECTOR2I(int(a.x + d.x * spans[-1][1]), int(a.y + d.y * spans[-1][1])))
+            undo.append(lambda t=t, a=a, b=b: (t.SetStart(a), t.SetEnd(b)))
+            changed += 1
+    for j, v in enumerate(vias):
+        if v.IsLocked():
+            continue
+        node = g.find(("v", j))
+        mine = [e for e in live if node in (e[3], e[4])]
+        if len({tracks[e[0]].GetLayer() for e in mine}) >= 2:
+            continue
+        joiners = []
+        kept = [x for k, x in enumerate(tracks) if k not in gone]
+        if len([e for e in mine if e[3] != e[4]]) >= 2:   # the ends it joined on one layer:
+            for e in (e for e in mine if e[3] != e[4]):    # join them at its centre instead
+                t = tracks[e[0]]
+                for k, s in ((0, 0.0), (1, 1.0)):
+                    end = t.GetStart() if k == 0 else t.GetEnd()
+                    if g.find(("e", e[0], k)) == node and (s in (e[1], e[2])) and \
+                            (end - v.GetPosition()).EuclideanNorm() > TOUCH_NM and \
+                            not _joined_by_a_track(end, v.GetPosition(), t.GetLayer(), kept):
+                        j_ = pcbnew.PCB_TRACK(board)
+                        j_.SetStart(end)
+                        j_.SetEnd(v.GetPosition())
+                        j_.SetLayer(t.GetLayer())
+                        j_.SetWidth(t.GetWidth())
+                        j_.SetNet(t.GetNet())
+                        board.Add(j_)
+                        joiners.append(j_)
+        saved = _clone(v)
+        board.RemoveNative(v)
+        undo.append(lambda saved=saved, joiners=joiners: (
+            board.Add(saved), [board.RemoveNative(x) for x in joiners]))
+        changed += 1
+    if changed and _pieces_with_pads(board, net) > before:
+        for u in reversed(undo):
+            u()
+        return 0
+    return changed
+
+
+def drop_dead_copper(board) -> int:
+    """Clean the router's copper that leads nowhere (Freerouting's session on the carrier: eight
+    vias joined on one layer only, a dead branch ending in one, a piece lying on a locked
+    track). Unlocked tracks lying wholly on a locked track of their net go; then, per net, every
+    unlocked piece of track that ends on nothing (no pad, no locked via, no other copper) is cut
+    back, again and again, to where the copper is joined; an unlocked via left joined on one
+    layer goes, and the track ends it joined there are joined at its centre instead. A change
+    that would part a net's pads is undone. Plane nets are drop_plane_copper's. Repeated until
+    nothing changes; returns how many items it changed."""
+    planes = plane_nets(board)
+    pads_of: dict[int, list] = {}
+    for fp in board.GetFootprints():
+        for p in fp.Pads():
+            pads_of.setdefault(p.GetNetCode(), []).append(p)
+    total = 0
+    while True:
+        changed = 0
+        nets = sorted({t.GetNetCode() for t in board.GetTracks()
+                       if not t.IsLocked() and t.GetNetCode() and t.GetNetname() not in planes})
+        for net in nets:
+            mine = [t for t in board.GetTracks() if t.GetNetCode() == net]
+            tracks = [t for t in mine if t.GetClass() != "PCB_VIA"]
+            locked = [t for t in tracks if t.IsLocked()]
+            for t in tracks:
+                if not t.IsLocked() and _on_locked(t, locked):
+                    board.RemoveNative(t)
+                    changed += 1
+            mine = [t for t in board.GetTracks() if t.GetNetCode() == net]
+            changed += _dead_net(board, net, [t for t in mine if t.GetClass() != "PCB_VIA"],
+                                 [t for t in mine if t.GetClass() == "PCB_VIA"],
+                                 pads_of.get(net, []))
+        total += changed
+        if not changed:
+            return total
+
+
 def _dist_to_polys(pts: np.ndarray, polys: list) -> np.ndarray:
     """Distance from each of `pts` (N x 2) to the nearest edge of the closed polygons."""
     best = np.full(len(pts), 1e9)
@@ -1588,6 +1834,7 @@ def route(board: Path, passes: int = 30, timeout_s: int = 3000, keep: Path | Non
         if planes:
             print(f"dropped {drop_plane_copper(b, planes)} router tracks/vias on plane nets")
         print(f"dropped {drop_pad_stubs(b)} router tracks inside a pad of their own net")
+        print(f"dead copper: {drop_dead_copper(b)} router vias and tracks dropped or cut back")
         print(f"widened {widen_stubs(b)} stubs")
         save_board(b, board)                 # the router's own result, kept
         if repair:

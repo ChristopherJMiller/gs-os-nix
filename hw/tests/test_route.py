@@ -98,6 +98,12 @@ def test_the_router_gets_a_via_keepout_over_the_tab():
         assert want in out, [l for l in out.splitlines() if "via_keepout" in l]
 
 
+def test_an_outline_with_no_tab_gets_no_tab_keepout():
+    assert route.tab_via_keepout([]) is None
+    assert route.tab_via_keepout([(0, 0), (10, 0)]) is None
+    assert route.tab_via_keepout([(0, 0), (10, 0), (10, -5), (5, -8), (0, -5)]) is None
+
+
 def test_the_finisher_puts_no_via_where_its_pad_reaches_the_tab(tmp_path):
     """The A* grid refuses a via whose 0.6 mm pad comes within TAB_VIA_MM of the tab's top edge
     (hw-edge: no inner copper below it), and allows one clear of it."""
@@ -350,12 +356,117 @@ def test_a_router_stub_inside_its_own_pad_is_dropped(tmp_path):
     _track(b, "N", F, (4, 7.0), (6, 9.0))               # leaves the pad: stays
     _track(b, "M", F, (12, 5.8), (12, 6.2))             # inside M's own pad: dropped too
     _track(b, "N", F, (11.9, 6.0), (12.1, 6.0))         # inside a pad of another net: stays
+    _track(b, "N", F, (4, 7.5), (4, 8.0)).SetLocked(True)   # inside pad 1, but locked: stays
+    _track(b, "N", pcbnew.B_Cu, (20, 7.0), (20, 7.5))   # under pad 2, on B.Cu (no pad): stays
     assert route.drop_pad_stubs(b) == 3
     left = sorted((t.GetNetname(), pcbnew.ToMM(t.GetStart().x), pcbnew.ToMM(t.GetStart().y))
                   for t in b.GetTracks())
-    assert left == [("N", 4.0, 4.0), ("N", 4.0, 7.0), ("N", 11.9, 6.0)]
+    assert left == [("N", 4.0, 4.0), ("N", 4.0, 7.0), ("N", 4.0, 7.5), ("N", 11.9, 6.0),
+                    ("N", 20.0, 7.0)]
     pieces = route._components(b, b.FindNet("N").GetNetCode())
     assert max(len(p["pad"]) for p in pieces) == 2                 # the pads are still joined
+
+
+def _via_at(b, net, x, y, locked=False):
+    from hw.tests.test_finish import v
+    t = pcbnew.PCB_VIA(b)
+    t.SetPosition(v(x, y))
+    t.SetViaType(pcbnew.VIATYPE_THROUGH)
+    t.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+    t.SetWidth(pcbnew.FromMM(0.6))
+    t.SetDrill(pcbnew.FromMM(0.3))
+    t.SetNet(b.FindNet(net))
+    t.SetLocked(locked)
+    b.Add(t)
+    return t
+
+
+def _dead_copper_board(tmp_path):
+    """What Freerouting's session left on the carrier, in small (unlocked unless said):
+    X: pads (3, 6), (21, 6), (21, 9.5); a locked F.Cu run (3, 6)-(12, 6) with an unlocked piece
+       on it; (12, 6)-(21, 6) through a via joined on F.Cu only; a branch down from the run at
+       x 16 ending in a 0.03 mm jog and a via joined on F.Cu only (slot_a_dir: the jog's end lies
+       on the branch, so each holds the other up); a branch down at x 18 that goes on past the
+       track (18, 9.5)-(21, 9.5) joined to its middle, to a free end at y 10.5.
+    Y: pads (3, 10.5), (10, 10.5); F.Cu to a via joined on F.Cu only, and on from 0.25 mm beside
+       it (SLOT_M2SEL_N): the via goes, and a track joins the two ends at its centre.
+    Z: pads (3, 2), (12, 2): F, a via, B, a via, F: both vias are joined on two layers. And a
+       locked Z via joined on F only, which stays (only the router's copper is cleaned)."""
+    from hw.tests.test_finish import make_board
+    F, B = pcbnew.F_Cu, pcbnew.B_Cu
+    b = make_board(tmp_path, {"X": [(3, 6), (21, 6), (21, 9.5)], "Z": [(3, 2), (12, 2)],
+                              "Y": [(3, 10.5), (10, 10.5)], "GND": [(22, 11)]})
+    b.GetDesignSettings().m_TrackMinWidth = pcbnew.FromMM(0.15)
+    _track(b, "X", F, (3, 6), (12, 6)).SetLocked(True)
+    _track(b, "X", F, (5, 6), (8, 6))                    # lies on the locked run
+    _track(b, "X", F, (12, 6), (21, 6))
+    _via_at(b, "X", 12, 6)                               # a pass-through: F on both sides
+    _track(b, "X", F, (16, 6), (16, 8))
+    _track(b, "X", F, (16, 8), (16.03, 8))
+    _via_at(b, "X", 16.03, 8)                            # the end of a dead branch
+    _track(b, "X", F, (18, 6), (18, 10.5))               # live to y 9.5, dead below
+    _track(b, "X", F, (18, 9.5), (21, 9.5))
+    _track(b, "Y", F, (3, 10.5), (6, 10.5))
+    _via_at(b, "Y", 6, 10.5)
+    _track(b, "Y", F, (6.25, 10.5), (10, 10.5))
+    _track(b, "Z", F, (3, 2), (6, 2))
+    _via_at(b, "Z", 6, 2)
+    _track(b, "Z", B, (6, 2), (9, 2))
+    _via_at(b, "Z", 9, 2)
+    _track(b, "Z", F, (9, 2), (12, 2))
+    _track(b, "Z", F, (12, 2), (12, 3.5)).SetLocked(True)
+    _via_at(b, "Z", 12, 3.5, locked=True)
+    return b
+
+
+def _ends(b, net):
+    mm = pcbnew.ToMM
+    return sorted((t.GetClass(), round(mm(t.GetStart().x), 2), round(mm(t.GetStart().y), 2),
+                   round(mm(t.GetEnd().x), 2), round(mm(t.GetEnd().y), 2))
+                  for t in b.GetTracks() if t.GetNetname() == net)
+
+
+def test_the_dead_copper_of_the_session_goes_and_every_net_stays_whole(tmp_path):
+    """Freerouting's session left eight vias joined on one layer only (seven on J1 nets: 0.6 pF
+    each in hw-load for nothing), a dead branch (slot_a_dir) and a piece lying on a locked track
+    (slot_ph0). drop_dead_copper takes them away, trims a track back to the last thing joined
+    to it, and leaves every net whole; locked copper and vias joined on two layers stay."""
+    b = _dead_copper_board(tmp_path)
+    route.drop_dead_copper(b)
+    x = _ends(b, "X")
+    assert ("PCB_TRACK", 5.0, 6.0, 8.0, 6.0) not in x                  # the piece on the run
+    assert not [t for t in x if t[0] == "PCB_VIA"]                     # both X vias
+    assert not [t for t in x if 16.0 <= t[1] <= 16.03]                 # the dead branch
+    assert ("PCB_TRACK", 18.0, 6.0, 18.0, 9.5) in x                    # trimmed at the joint
+    assert _ends(b, "Y") == [("PCB_TRACK", 3.0, 10.5, 6.0, 10.5),
+                             ("PCB_TRACK", 6.25, 10.5, 6.0, 10.5),
+                             ("PCB_TRACK", 6.25, 10.5, 10.0, 10.5)]
+    z = _ends(b, "Z")
+    assert len([t for t in z if t[0] == "PCB_VIA"]) == 3 and len(z) == 7
+    for net in ("X", "Y", "Z"):
+        assert len(route._components(b, b.FindNet(net).GetNetCode())) == 1, net
+    path = tmp_path / "dead.kicad_pcb"
+    pcbnew.SaveBoard(str(path), b)
+    dangling = [p for p in cd.problems_drc(path) if "dangling" in p]
+    assert [p for p in dangling if "Z" not in p] == []                 # the locked Z via is ours
+
+
+def test_route_cleans_the_session_s_dead_copper_before_the_finisher(tmp_path, monkeypatch):
+    from hw.tests.test_finish import make_board
+    path = tmp_path / "s.kicad_pcb"
+    pcbnew.SaveBoard(str(path),
+                     make_board(tmp_path, {"X": [(3, 6), (21, 6)], "GND": [(22, 11)]}))
+    calls = []
+    real = route.drop_dead_copper
+    monkeypatch.setattr(route, "drop_dead_copper", lambda b: calls.append(
+        len([t for t in b.GetTracks() if t.GetNetname() == "X"])) or real(b))
+
+    def stub(dsn, ses, passes, timeout_s, log, extra=()):
+        Path(ses).write_text(_ses("X", -6000))
+        return 0
+
+    route.route(path, router=stub)
+    assert calls == [1]                     # once, with the session's copper on the board
 
 
 def test_route_drops_the_router_stubs_inside_their_pads(tmp_path):
