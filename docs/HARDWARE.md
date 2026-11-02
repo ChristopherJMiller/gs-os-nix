@@ -847,7 +847,7 @@ The agent cannot judge intent. Before ordering, look at the package above for:
     bevelled gold fingers, "Remove order number" (JLC prints its order number on the silkscreen
     otherwise; the card has no place kept for it).
 15. **LCSC stock and fees, on order day.** Re-check stock for every BOM line, and the
-    extended-part fees. The U1 and U4 translator (SN74LVCR2245ADBQR, C2675819) had about 243
+    extended-part fees. The data translator U1 (SN74LVCR2245ADBQR, C2675819) had about 243
     in stock when this was written; the ADBR is no drop-in (HW-16: a new footprint and a
     re-route).
 16. **+5V_MOD's long run.** It is 178 mm of copper at 0.5 mm, about 0.18 ohm (35 um copper).
