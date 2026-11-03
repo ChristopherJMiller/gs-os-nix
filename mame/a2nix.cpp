@@ -89,8 +89,11 @@ private:
 };
 
 // The card's heap lives off-chip (docs/HEAP.md), so the device has to provide it --
-// the RTL exposes a port, not an array. Must match HEAP_TOP in rtl/a2nix_card.v.
-constexpr u32 HEAP_BYTES = 1u << 20;
+// the RTL exposes a port, not an array. Two halves of 2^heap_half_log2 bytes
+// (rtl/a2nix_card.v: half A from $10, half B from the half's size + $10, each
+// ending 16 bytes short), so twice the half is all of it.
+constexpr unsigned HEAP_HALF_LOG2 = 23;		// 8 MB a half, as a2min's and rev A's
+constexpr u32 HEAP_BYTES = 2u << HEAP_HALF_LOG2;
 
 void a2bus_a2nix_device::device_start()
 {
@@ -98,7 +101,7 @@ void a2bus_a2nix_device::device_start()
 	m_heap = std::make_unique<u8 []>(HEAP_BYTES);
 	std::fill_n(m_heap.get(), HEAP_BYTES, 0);
 
-	m_card->heap_half_log2 = 19;	// a half of HEAP_BYTES: 512 KB
+	m_card->heap_half_log2 = HEAP_HALF_LOG2;
 	m_card->clk       = 0;
 	m_card->rst_n     = 0;
 	m_card->c0n_addr  = 0;

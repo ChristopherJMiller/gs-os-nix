@@ -216,12 +216,15 @@ With the core at 60% of the part:
 - **A drop-in LFE5U-45F**, which also comes in caBGA256, is kept possible where
   Lattice's pinouts allow; `hw-pinmap` checks the map against both parts' pinout files.
 
-### HW-12 -- The heap stays 1 MB on rev A; the SDRAM map leaves it room
+### HW-12 -- The heap's size is the core's input; rev A ties it to the 16 MB it keeps
 
-The core's heap is fixed (`SPACE_SIZE`, 512 KB a side, matching MAME's `HEAP_BYTES`).
-Rev A runs the same 1 MB, so the card and MAME behave alike. The SDRAM map reserves its
-first 16 MB for the heap and puts capture's ring above it. Growing the heap is the
-software side's decision.
+The core's half-space is an input, `heap_half_log2` (a half is 2^n bytes and the heap
+two halves), and the core reports it to the VM (`GEOMETRY`, $26, CARD-ISA.md), which
+no longer assumes one. MAME and a2min run 8 MB a half (23, matching MAME's
+`HEAP_BYTES`), so the card and MAME behave alike; the tests that must fill a half run
+512 KB ones. Rev A's top ties it to 23. The SDRAM map is unchanged: its first 16 MB
+are the heap's, and capture's ring sits above them. Growing the heap was the software
+side's decision, and it grew from 1 MB on 2026-11-03 (HEAP.md "Long lists", step 0).
 
 ### HW-13 -- The carrier has no JTAG header; it is programmed over the module's USB
 

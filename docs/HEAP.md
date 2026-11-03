@@ -230,7 +230,7 @@ promotion empties the nursery every time; it only turns the no-card
 configuration's hang-shaped failure into a loud one. **Under GC stress**, every
 value is promoted before it can die; until mature space was collected
 (2026-10-27, below) a stress run failed with `E_NOMEM` once a program had
-allocated about 512 KB in total, half the harness card's heap.
+allocated about 512 KB in total, half the harness card's heap (1 MB then).
 
 **The collection** is `target/heap/nursery.s`'s algorithm on these roots: a Cheney
 copy of the live graph into a staging area in bank 1 (long addressing; the nursery
@@ -418,7 +418,7 @@ into it: copied as 8, over the next object's header. Both are RTL mutations.
 
 Until 2026-10-27 nothing did: the card had `MARK` and `COMPACT` (L3) and the VM
 never called them, so a program could promote 512 KB in all -- half the
-harness card's heap -- and a GC-stress run of `eval-okay-tail-call-1` reached
+harness card's heap, 1 MB then -- and a GC-stress run of `eval-okay-tail-call-1` reached
 that. Now a collection of mature space follows a nursery collection, and the
 four things "The VM and the two spaces" listed to resolve first are resolved:
 a closure's word 0 is opaque and a `BLACKHOLE` 12 bytes (the table above);
@@ -431,13 +431,16 @@ only ever follows a promotion, which empties it.
 (64 KB), and the largest root list (below, 9.5 KB): ~73 KB. The CPU knows the
 card's allocation pointer exactly without asking: every `RESERVE` returns its
 base and moves it by `max(4, round4(n))`, and a promotion's size is a
-multiple of 4, at least 8; the half's end is `CARD_HALF` (`vm.h`, the RTL's
-`SPACE_SIZE`, 512 KB) after the half's start. Checked after every promotion,
-the margin is there before the next, so its `RESERVE` cannot fail. If a
-collection still leaves less than the margin, live data has filled the half,
-and it is `E_NOMEM` -- the overhead limit, as the nursery's -- rather than a
-collection at every promotion. So the card holds ~439 KB of live data, and
-a program may promote without limit.
+multiple of 4, at least 8; the half's end is `card_half` after the half's
+start, the size the card reports (`GEOMETRY`, which `card_find` asks; the
+core's input `heap_half_log2`): 8 MB on a2min, MAME and rev A, 512 KB in the
+tests that must fill a half. Checked after every promotion, the margin is
+there before the next, so its `RESERVE` cannot fail. If a collection still
+leaves less than the margin, live data has filled the half, and it is
+`E_NOMEM` -- the overhead limit, as the nursery's -- rather than a
+collection at every promotion. So the card holds its half less ~73 KB of
+live data (~8.1 MB; ~439 KB on 512 KB halves), and a program may promote
+without limit.
 
 **How** (`gc.c` `gc_mature`). The roots are the nursery collector's, in its
 order: the value stack, `env`, the root stack, the force stack, each catch
@@ -465,8 +468,10 @@ followed by a mature collection, needed or not: with GC stress, every fixture
 runs through the moving collector, and with reserve stress every reserve
 does. It found the third disagreement in the table above: five fixtures
 that use `with` were `E_NOMEM`. `eval-okay-mature-collection` promotes 1.45
-MB with little live -- three mature collections in a plain run, both flips,
-where it was `E_NOMEM` at 530 KB. A root left out of `MARK`'s list does not fail at once:
+MB with little live -- three mature collections in a plain run on 512 KB
+halves, both flips, where it was `E_NOMEM` at 530 KB. On 8 MB halves it fills
+none, so `checks.scoreboard` also runs it on 512 KB ones and requires the
+three (`scripts/small-card.sh`, `just fixtures-small-card`). A root left out of `MARK`'s list does not fail at once:
 its old address keeps the old bytes until a later collection copies into
 that half, so a test has to move an object twice and then use it.
 `eval-okay-tryeval-mature` does that for the one root nothing else reached,
@@ -566,10 +571,10 @@ before every slot of it is valid.
   anything that collects; bank 0 is nearly full; no 32-bit products
   (`~UMUL4`).
 
-**Step 0: the card's heap, grown.** The harness card's heap is 1 MB, two
-halves of 512 KB (`SPACE_SIZE` in `rtl/a2nix_card.v`, `cardbus.h`,
-`CARD_HALF` in `vm.h`, MAME's `HEAP_BYTES`), and after `MATURE_MARGIN` about
-439 KB can be live. That holds neither step: `genList` keeps ~44 bytes an
+**Step 0: the card's heap, grown** (done 2026-11-03, below). The harness
+card's heap was 1 MB, two halves of 512 KB (`SPACE_SIZE` in
+`rtl/a2nix_card.v`, `cardbus.h`, `CARD_HALF` in `vm.h`, MAME's
+`HEAP_BYTES`), and after `MATURE_MARGIN` about 439 KB could be live. That holds neither step: `genList` keeps ~44 bytes an
 element live, so ~10,000 elements fit, where step 1 asks 15,000; step 2's
 60,000-element `genList` keeps ~2.6 MB live, and `sort`, `filter`,
 `partition` and `tail` hold two or three lists at once. The board has 32 MB
@@ -588,6 +593,25 @@ which leaves the heap's size to this side).
 - `regress`, the RTL mutations and every mature-space gate run at the new
   size; a mature pointer stays a card address with bit 31 clear, which 16
   MB leaves room for.
+
+*Done* (2026-11-03), as called: the core's half is an input,
+`heap_half_log2` (`regress` builds cards of 512 KB and 8 MB), reported by
+`GEOMETRY` ($26, CARD-ISA.md), which `card_find` asks once and keeps in
+`card_half`; a2min and MAME run 8 MB halves (`A2MIN_CARD_HALF` sets a2min's).
+The measurement the call waited on: `fixtures-mature` -- a mature collection
+after every promotion -- over every fixture but the new one costs
+5,521,663,225 CPU cycles at 8 MB a half and 5,521,663,225 at 512 KB,
+identical, because `MARK` and `COMPACT` copy what is live, not the half. So
+8 MB stands. `eval-okay-card-heap-big` keeps ~1.2 MB live: at 8 MB it
+promotes 1,233,004 bytes in 20 collections and answers in 272,845,435
+cycles; at 512 KB it is `E_NOMEM` after 492,604 bytes and one mature
+collection. Under mature stress it answers at 8 MB (874,786,847 cycles,
+5,895 mature collections), but past the scoreboard's 600 s, and that pass
+skips it (`scoreboard.py --skip`). The tests that must fill a half --
+`eval-okay-mature-collection` (above) and `mutation-vm` -- run on 512 KB
+halves, the size they were written against. It costs ~930 CPU cycles and 7
+bus accesses a run (the bench, at `card_find`) and 4 bytes of bank 0
+(16,403). HW-12 is rewritten to match; rev A's SDRAM map is unchanged.
 
 **Step 1: every list primop to the nursery's size.**
 

@@ -78,7 +78,7 @@ Three rules make this work, and they are load-bearing:
    bounded **remembered set**; the next collection promotes it and rewrites the
    field. Sound only while nothing card-side chases pointers: the set must be
    empty whenever the CPU issues `MARK` or `FOLLOW` ([DECISIONS.md](DECISIONS.md) D20).
-2. **Young pointers carry bit 31.** The card's 1 MB heap never uses it, so the two
+2. **Young pointers carry bit 31.** The card's heap (16 MB) never reaches it, so the two
    address spaces cannot be confused.
 3. **Promotion translates by a constant.** Cheney lays survivors out contiguously
    with sizes preserved, so `card = base + (addr − staging_base)` — no forwarding

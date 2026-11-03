@@ -60,12 +60,25 @@ mame.overrideAttrs (old: {
     echo "--- a2nix card injected and verified ---"
   '';
 
-  makeFlags = (old.makeFlags or [ ]) ++ [
+  # In the environment, which MAME's makefile reads as its variables, not in
+  # makeFlags: without structured attributes, makeFlags is split at every space,
+  # so "ARCHOPTS=-Ia -Ib" handed make "-Ib" as an option of its own -- the
+  # compiler never saw verilator's headers ("verilated.h: No such file"), and
+  # LDOPTS lost -la2nixcard the same way.
+  env = (old.env or { }) // {
     # Headers for the generated model and verilator's runtime.
-    "ARCHOPTS=-I${verilatedCard}/include -I${verilatedCard.verilatorInclude}"
-    # The model itself.
-    "LDOPTS=-L${verilatedCard}/lib -la2nixcard"
-  ];
+    ARCHOPTS = "-I${verilatedCard}/include -I${verilatedCard.verilatorInclude}";
+    # The model itself, whole: genie links $(LDFLAGS) before $(LIBS), and the
+    # card's device is in one of those libraries (liboptional.a), so a plain
+    # -la2nixcard is passed over before anything needs it.
+    LDOPTS = "-L${verilatedCard}/lib -Wl,--whole-archive -la2nixcard -Wl,--no-whole-archive";
+  };
+
+  # MAME builds with -Wundef -Werror, and verilated.h tests the model's VM_*
+  # settings with #if: they come from the build that made the model.
+  preBuild = (old.preBuild or "") + ''
+    export ARCHOPTS="$ARCHOPTS $(cat ${verilatedCard}/nix-support/cflags)"
+  '';
 
   meta = (old.meta or { }) // {
     description = "MAME with the gs-os-nix a2nix accelerator card for the Apple IIgs";

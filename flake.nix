@@ -231,6 +231,12 @@
               --skip fixtures/eval-okay-card-heap-big \
               | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
 
+            # And the fixture that fills a card's half, on 512 KB halves: on
+            # a2min's 8 MB ones it never fills, and mature space is never
+            # collected in a plain run (HEAP.md "Long lists", step 0).
+            ./scripts/small-card.sh ./build/a2min nbc "$vm" | tee -a "$out"
+            grep -q "^SMALL CARD OK" "$out"
+
             # Once more with the remembered set shrunk to one entry (D20), so a
             # second young store finds it full and collects mid-instruction -- a
             # path the fixtures never take otherwise. A normal run, not GC

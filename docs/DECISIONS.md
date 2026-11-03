@@ -819,6 +819,12 @@ The harness card is the only one, and a wrong constant fails loudly -- too
 large, and a `RESERVE` fails (`E_NOMEM`); too small, and the VM collects
 early. A real board sized to its SDRAM needs the register (L7).
 
+**Superseded on the card's size (2026-11-03):** the card has the register.
+`GEOMETRY` ($26) reports the half, the core's input `heap_half_log2`, and
+the VM keeps it in `card_half`, read once at `card_find`. Two sizes made any
+constant wrong somewhere: 8 MB halves on a2min and MAME, 512 KB in the tests
+that must fill one (HEAP.md "Long lists", step 0).
+
 **The layout the card traces is the VM's.** The RTL's tracer, written at L3
 before the C VM, read a closure's word 0 as a pointer, sized a `BLACKHOLE` by
 the 8-byte default, and took counts from 23 bits of the header -- each wrong
