@@ -115,12 +115,35 @@ def _lib_dir(nick: str) -> Path:
     return Path(root) / f"{nick}.pretty"
 
 
+# KiCad's 3D library lacks a model for some footprints it ships; a same-size body stands in,
+# so the 3D view and the renders show the part. Pictures only: no fab output reads models,
+# and hw-drc's library check does not compare them.
+MODEL_STANDINS = {
+    # F1, the polyfuse: KiCad has Fuse_1812_4532Metric but its fuse models stop at 1210.
+    "Fuse:Fuse_1812_4532Metric":
+        "${KICAD10_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_1812_4532Metric.stpZ",
+}
+
+
+def _stand_in_model(fp, path: str) -> None:
+    """Replace `fp`'s 3D model with `path`, keeping its scale, rotation and offset."""
+    old = list(fp.Models())
+    m = pcbnew.FP_3DMODEL()
+    m.m_Filename = path
+    if old:
+        m.m_Scale, m.m_Rotation, m.m_Offset = old[0].m_Scale, old[0].m_Rotation, old[0].m_Offset
+    fp.Models().clear()
+    fp.Add3DModel(m)
+
+
 def load_footprint(fpid: str) -> "pcbnew.FOOTPRINT":
     nick, _, name = fpid.partition(":")
     fp = pcbnew.FootprintLoad(str(_lib_dir(nick)), name)
     if fp is None:
         raise SystemExit(f"footprint {fpid} not found in {_lib_dir(nick)}")
     fp.SetFPID(pcbnew.LIB_ID(nick, name))      # record lib:name, as the netlist has it
+    if fpid in MODEL_STANDINS:
+        _stand_in_model(fp, MODEL_STANDINS[fpid])
     return fp
 
 

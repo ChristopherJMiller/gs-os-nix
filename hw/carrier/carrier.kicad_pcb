@@ -9907,7 +9907,7 @@
 			(uuid "fba57efc-ceee-4f79-9e8c-f3e843c2cd4d")
 		)
 		(embedded_fonts no)
-		(model "${KICAD10_3DMODEL_DIR}/Fuse.3dshapes/Fuse_1812_4532Metric.stpZ"
+		(model "${KICAD10_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_1812_4532Metric.stpZ"
 			(offset
 				(xyz 0 0 0)
 			)

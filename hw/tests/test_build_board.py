@@ -428,3 +428,25 @@ def test_an_npth_pad_is_not_inner_copper(carrier_board):
     fp.SetPosition(pad.GetPosition())
     carrier_board.Add(fp)
     assert not any("through-hole" in p for p in ce.problems_inner(carrier_board))
+
+
+R1812_MODEL = "${KICAD10_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_1812_4532Metric.stpZ"
+
+
+def test_the_1812_fuse_gets_a_stand_in_3d_model():
+    """KiCad ships Fuse_1812_4532Metric but no 3D model for it: the same-size 1812 chip body
+    stands in, so the 3D view and the renders show F1."""
+    fp = bb.load_footprint("Fuse:Fuse_1812_4532Metric")
+    assert [m.m_Filename for m in fp.Models()] == [R1812_MODEL]
+
+
+def test_a_footprint_with_a_model_keeps_its_own():
+    fp = bb.load_footprint("Resistor_SMD:R_0603_1608Metric")
+    assert [m.m_Filename for m in fp.Models()] == [
+        "${KICAD10_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.stpZ"]
+
+
+def test_the_committed_board_shows_f1():
+    board = pcbnew.LoadBoard(str(CARRIER_BOARD))
+    f1 = board.FindFootprintByReference("F1")
+    assert [m.m_Filename for m in f1.Models()] == [R1812_MODEL]
