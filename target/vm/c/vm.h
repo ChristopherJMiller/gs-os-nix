@@ -254,14 +254,16 @@ _Static_assert(sizeof(obj_t) == 4, "a header is four bytes (HEAP.md)");
 #define CHUNK_MAX  256
 
 /* Mature space (HEAP.md "Collecting mature space"). The card's heap is two
- * halves of CARD_HALF bytes (rtl/a2nix_card.v SPACE_SIZE: A from $10, B from
- * CARD_HALF + $10), and a promotion only ever goes into the current one. After
+ * halves of card_half bytes, a power of two the card reports (GEOMETRY,
+ * CARD-ISA.md: an input of the card, set by the board or the simulator; A from
+ * $10, B from card_half + $10), and a promotion only ever goes into the
+ * current one. After
  * every promotion, if less than MATURE_MARGIN is left in it -- the most the
  * next promotion can need, a whole nursery, and the largest root list -- the
  * card's MARK and COMPACT collect it; if that still leaves less, live data has
  * filled the half, and it is E_NOMEM rather than a collection at every
  * promotion. */
-#define CARD_HALF     0x00080000UL
+extern uint32_t card_half;          /* card.c: set by card_find; unused with no card */
 #define ROOTS_MAX     (VSTACK_N + 1 + RSTACK_N + FSTACK_N + CATCH_N + CTAB_N + CHUNK_MAX + 1)
 #define MATURE_MARGIN (0x00010000UL + 4UL * ROOTS_MAX)
 
@@ -446,6 +448,7 @@ void remember(obj_t *container, uint16_t off);   /* the field now holds a young 
 
 /* --- card.c: the a2nix card -------------------------------------------------------- */
 void card_find(void);
+uint32_t card_geometry(void);       /* GEOMETRY: the bytes in a heap half */
 int  card_alu64(uint8_t op, const uint8_t *a, const uint8_t *b, uint8_t *r);
 void card_read_at(uint32_t addr, void *dst, uint16_t n);
 void card_read_more(void *dst, uint16_t n);      /* continue from where the last read stopped */

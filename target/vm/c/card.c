@@ -34,6 +34,7 @@ segment "core";
 #define ST_READY  0x10
 #define FIFO_BURST 16                           /* bytes one READY poll licenses (CARD-ISA.md) */
 #define V_RESERVE 0x25
+#define V_GEOMETRY 0x26
 #define V_MARK    0x40
 #define V_COMPACT 0x41
 #define V_LOOKUP  0x30
@@ -75,11 +76,18 @@ static void cw8(uint16_t off, uint16_t v)
     }
 }
 
-/* Find the card: ID $A2 at $C0n1, slot 7 down to 1. slot_x = 0 if none. */
+/* The bytes in a heap half, as the card reports them (vm.h); set by card_find */
+uint32_t card_half;
+
+/* Find the card: ID $A2 at $C0n1, slot 7 down to 1. slot_x = 0 if none. Once
+ * found, ask it how big its heap's halves are. */
 void card_find(void)
 {
     for (slot_x = 0x70; slot_x != 0; slot_x -= 0x10)
-        if (cr8(REG_CTRL) == CARD_ID) return;
+        if (cr8(REG_CTRL) == CARD_ID) {
+            card_half = card_geometry();
+            return;
+        }
 }
 
 static void card_wait(void)
@@ -274,6 +282,22 @@ int card_sha256_at(uint32_t addr, uint16_t n, uint8_t *out)
     do st = cr8(REG_CMD); while (!(st & (ST_DONE | ST_ERR)));
     if (st & ST_ERR) { cw8(REG_CTRL, 0x01); return 0; }
     return hash_finish(out, 0);
+}
+
+/* GEOMETRY: the bytes in a heap half, in LEN (CARD-ISA.md) -- the size the
+ * board built the card with, which software never assumes */
+uint32_t card_geometry(void)
+{
+    uint32_t n;
+    uint8_t *b = (uint8_t *)&n;               /* bytes in, not shifted in (see set_a0) */
+    cw8(REG_CMD, V_GEOMETRY);
+    card_wait();
+    cw8(REG_CTRL, 0x08);                        /* rewind LEN's index (CARD-ISA.md) */
+    b[0] = (uint8_t)cr8(REG_LEN);
+    b[1] = (uint8_t)cr8(REG_LEN);
+    b[2] = (uint8_t)cr8(REG_LEN);
+    b[3] = (uint8_t)cr8(REG_LEN);
+    return n;
 }
 
 uint32_t card_reserve(uint16_t n)

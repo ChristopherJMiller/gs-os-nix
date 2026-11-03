@@ -22,8 +22,13 @@
 template <typename CardT>
 class HeapMem {
 public:
-    // 1 MB, matching HEAP_TOP in rtl/a2nix_card.v. Keep the two in step.
+    // The card's two heap halves: twice the half its heap_half_log2 input says
+    // (rtl/a2nix_card.v, CARD-ISA.md GEOMETRY). 1 MB, two halves of 512 KB,
+    // unless a harness says otherwise.
     explicit HeapMem(std::size_t bytes = 1u << 20) : m_ram(bytes, 0) {}
+
+    // Another size, zeroed: before the card is reset, for the half it is built with
+    void resize(std::size_t bytes) { m_ram.assign(bytes, 0); }
 
     // Present the aligned word containing the addressed byte.
     void settle(CardT *card) {

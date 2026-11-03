@@ -66,6 +66,10 @@ WORK=$(mktemp -d)
 BUDGET=500000000
 export A2MIN_VAR_TEST_VAR=foo                       # as Nix's tests/functional/lang.sh
 export A2MIN_PRINT=1                                # the VM prints too (print.c), in every mode: held to a2min
+# The card's halves at 512 KB, the size every fixture here was written against:
+# filling one is cheap, which is what the mature mutations need (a2min's
+# default, 8 MB, is the scoreboard's).
+export A2MIN_CARD_HALF=0x80000
 trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$WORK/orig" "$WORK/src"
@@ -281,6 +285,10 @@ mutate "a mature collection keeps the window table" gc.c \
 
 mutate "the card's half fills and nothing collects it" gc.c \
        's/^    if (card_end - card_next < MATURE_MARGIN) gc_mature();$/    if (0) gc_mature();/'
+# The half's size a constant again, and a bigger one than the card has: the VM
+# never collects in time, and a 512 KB half fills (HEAP.md "Long lists", step 0).
+mutate "the VM assumes an 8 MB half" card.c \
+       's/^            card_half = card_geometry();$/            card_half = 0x00800000UL;/'
 
 mutate "store_field holds its mature object across a collection" data.c \
        's/rpush(c); push(v); gc_collect(); v = pop(); c = rpop();/push(v); gc_collect(); v = pop();/'

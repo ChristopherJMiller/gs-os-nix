@@ -107,6 +107,10 @@ def main():
     ap.add_argument("--verbose", "-v", action="store_true")
     ap.add_argument("--gc-stress", action="store_true",
                     help="collect the nursery at every bytecode boundary (slow; a collector test)")
+    ap.add_argument("--skip", action="append", default=[], metavar="TEST",
+                    help="leave TEST (e.g. fixtures/eval-okay-x) out of this run, which the "
+                         "caller says why: one a mode cannot run in its budget. Out of the "
+                         "ratchet's check too, which weighs only what a run looked at")
     ap.add_argument("--on-target", action="store_true",
                     help="the VM compiles each test itself: a2min --run-nix (docs/COMPILER.md)")
     ap.add_argument("--jobs", "-j", type=int,
@@ -184,6 +188,13 @@ def main():
             tests.append((f"{tag}/{rel}", nix, exp, nyp))
     for n in overridden:
         print(f"  scored against the host's answer, where tvix's .exp disagrees: {n}")
+    unknown = set(args.skip) - {t[0] for t in tests}
+    if unknown:
+        print(f"--skip names no test: {', '.join(sorted(unknown))}")
+        return 1
+    tests = [t for t in tests if t[0] not in args.skip]
+    for n in args.skip:
+        print(f"  skipped in this run, as its caller asked: {n}")
 
     # Every test is its own a2min process (~6 MB) with its own files, so they
     # run side by side; map() keeps the report in corpus order regardless.

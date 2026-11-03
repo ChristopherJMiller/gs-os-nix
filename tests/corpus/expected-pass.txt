@@ -189,6 +189,7 @@ fixtures/eval-okay-big-constants
 fixtures/eval-okay-big-operations
 fixtures/eval-okay-bool-ops
 fixtures/eval-okay-builtins-corners
+fixtures/eval-okay-card-heap-big
 fixtures/eval-okay-carry-chain
 fixtures/eval-okay-closure-capture
 fixtures/eval-okay-coerce-sets

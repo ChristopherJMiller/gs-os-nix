@@ -323,9 +323,25 @@ bool load_image(const char *bin_path, size_t *size_out = nullptr) {
     return true;
 }
 
+// A2MIN_CARD_HALF=<bytes>: the card's heap half, a power of two from 512 KB
+// to 8 MB (default 8 MB), which the card is built with (heap_half_log2) and
+// reports by GEOMETRY; the heap memory is twice it. The tests whose point is
+// filling a half run at 512 KB, where that is cheap.
+unsigned card_half_log2() {
+    const char *e = std::getenv("A2MIN_CARD_HALF");
+    if (!e || !*e) return 23;
+    const unsigned long v = std::strtoul(e, nullptr, 0);
+    for (unsigned lg = 19; lg <= 23; ++lg)
+        if (v == (1ul << lg)) return lg;
+    std::fprintf(stderr, "A2MIN_CARD_HALF must be a power of two from 0x80000 to 0x800000\n");
+    std::exit(2);
+}
+
 void bring_up_card() {
+    const unsigned lg = card_half_log2();
+    heap.resize(std::size_t{2} << lg);
     card = new Va2nix_card;
-    card->heap_half_log2 = 19;                  // its half: 512 KB, as the heap memory is sized
+    card->heap_half_log2 = static_cast<uint8_t>(lg);
     card->clk = 0; card->rst_n = 0;
     card->c0n_addr = 0; card->c0n_read = 0; card->c0n_write = 0; card->c0n_wdata = 0;
     card->c8_addr = 0; card->mem_rdata = 0;

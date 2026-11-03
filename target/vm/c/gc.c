@@ -317,7 +317,9 @@ void gc_collect(void)
     /* RESERVE moved the card's allocation pointer by exactly size (a multiple
      * of 4, at least 8), so the CPU knows how full the half is without asking */
     card_next = xbase + size;
-    if (!card_end) card_end = (xbase & CARD_HALF) + CARD_HALF;   /* the first: then only COMPACT moves it */
+    /* The half an address is in, and its end: the halves are a power of two and
+     * half A's base is 0, so the bit card_half masks says which. */
+    if (!card_end) card_end = (xbase & card_half) + card_half;   /* the first: then only COMPACT moves it */
     if (card_end - card_next < MATURE_MARGIN) gc_mature();
     else if (*(volatile uint8_t *)MATURE_STRESS_ADDR &&
              ++mature_tick >= *(volatile uint8_t *)MATURE_STRESS_ADDR) {
@@ -364,7 +366,7 @@ static void gc_mature(void)
     card_compact();
     at = card_reserve(4);                       /* where allocation resumes, after the survivors */
     card_next = at + 4;
-    card_end = (at & CARD_HALF) + CARD_HALF;
+    card_end = (at & card_half) + card_half;
     windows_turnover();
     /* The overhead limit, as the nursery's: live data that leaves less than a
      * promotion's room would be collected again at every promotion, and the
