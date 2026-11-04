@@ -439,7 +439,7 @@ there before the next, so its `RESERVE` cannot fail. If a collection still
 leaves less than the margin, live data has filled the half, and it is
 `E_NOMEM` -- the overhead limit, as the nursery's -- rather than a
 collection at every promotion. So the card holds its half less ~73 KB of
-live data (~8.1 MB; ~439 KB on 512 KB halves), and a program may promote
+live data (~7.9 MB; ~439 KB on 512 KB halves), and a program may promote
 without limit.
 
 **How** (`gc.c` `gc_mature`). The roots are the nursery collector's, in its
@@ -471,9 +471,13 @@ that use `with` were `E_NOMEM`. `eval-okay-mature-collection` promotes 1.45
 MB with little live -- three mature collections in a plain run on 512 KB
 halves, both flips, where it was `E_NOMEM` at 530 KB. On 8 MB halves it fills
 none, so `checks.scoreboard` also runs it on 512 KB ones and requires the
-three (`scripts/small-card.sh`, `just fixtures-small-card`). A root left out of `MARK`'s list does not fail at once:
-its old address keeps the old bytes until a later collection copies into
-that half, so a test has to move an object twice and then use it.
+three (`scripts/small-card.sh`, `just fixtures-small-card`). The same script
+holds the 8 MB card to its size: `eval-okay-card-heap-big` must collect no
+mature space in a plain run there (a VM that took its half for smaller
+would), and under mature stress alone must answer after moving its ~1.2 MB,
+20 collections, both flips. A root left out of `MARK`'s list does not fail
+at once: its old address keeps the old bytes until a later collection copies
+into that half, so a test has to move an object twice and then use it.
 `eval-okay-tryeval-mature` does that for the one root nothing else reached,
 a catch frame's environment: under mature stress, 1,248 collections inside a
 `tryEval`, then a throw, then the `let`'s variables read through the frame.
@@ -591,7 +595,9 @@ which leaves the heap's size to this side).
 - HW-12 and rev A's memory map are the hardware session's: the change is
   agreed with it and its document updated in the same commit.
 - `regress`, the RTL mutations and every mature-space gate run at the new
-  size; a mature pointer stays a card address with bit 31 clear, which 16
+  size -- *as built:* but the tests whose point is filling a half
+  (`mutation-vm`, `scripts/small-card.sh`, the REPL session), which run on
+  512 KB halves, where filling one is cheap, and require the collections; a mature pointer stays a card address with bit 31 clear, which 16
   MB leaves room for.
 
 *Done* (2026-11-03), as called: the core's half is an input,

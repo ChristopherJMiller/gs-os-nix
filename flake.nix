@@ -295,7 +295,8 @@
         # M3 (docs/COMPILER.md "Stage 4"): a session of typed lines, each compiled,
         # run and printed by the VM, the transcript as the host's answers make it
         # (scripts/repl-session.py) -- the full session, whose heavy lines fill
-        # mature space across lines, then the light one under GC stress; then
+        # mature space across lines (on 512 KB halves, and it must collect at
+        # least 5 times), then the light one under GC stress; then
         # planted REPL bugs, each of which must be caught.
         repl = pkgs.runCommandCC "check-repl"
           { nativeBuildInputs = [ pkgs.verilator pkgs.python3 ours.orca-toolchain ]; }

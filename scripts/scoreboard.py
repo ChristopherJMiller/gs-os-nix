@@ -196,7 +196,7 @@ def main():
     for n in args.skip:
         print(f"  skipped in this run, as its caller asked: {n}")
 
-    # Every test is its own a2min process (~6 MB) with its own files, so they
+    # Every test is its own a2min process (~22 MB: a 16 MB card heap) with its own files, so they
     # run side by side; map() keeps the report in corpus order regardless.
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         for name, bucket, want, got, secs in pool.map(one, tests):

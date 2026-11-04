@@ -96,7 +96,7 @@ static void card_wait(void)
     do st = cr8(REG_CMD); while (!(st & (ST_DONE | ST_ERR)));
     if (st & ST_ERR) {
         cw8(REG_CTRL, 0x01);                    /* clear the error state */
-        err_exit(E_NOMEM);                      /* RESERVE is the only caller that can fail */
+        err_exit(E_NOMEM);                      /* RESERVE's E_OOM; MARK and COMPACT should not fail */
     }
 }
 
@@ -285,13 +285,16 @@ int card_sha256_at(uint32_t addr, uint16_t n, uint8_t *out)
 }
 
 /* GEOMETRY: the bytes in a heap half, in LEN (CARD-ISA.md) -- the size the
- * board built the card with, which software never assumes */
+ * board built the card with, which software never assumes. A card built
+ * before the verb answers E_BADVERB: not a card this VM can use. */
 uint32_t card_geometry(void)
 {
+    uint16_t st;
     uint32_t n;
     uint8_t *b = (uint8_t *)&n;               /* bytes in, not shifted in (see set_a0) */
     cw8(REG_CMD, V_GEOMETRY);
-    card_wait();
+    do st = cr8(REG_CMD); while (!(st & (ST_DONE | ST_ERR)));
+    if (st & ST_ERR) { cw8(REG_CTRL, 0x01); err_exit(E_NOCARD); }
     cw8(REG_CTRL, 0x08);                        /* rewind LEN's index (CARD-ISA.md) */
     b[0] = (uint8_t)cr8(REG_LEN);
     b[1] = (uint8_t)cr8(REG_LEN);

@@ -369,8 +369,11 @@ host's answers make (`nix-instantiate --eval --strict -E` a line; for a line
 Nix rejects too, the VM's error line, as for an eval-fail fixture). Its heavy
 lines fill mature space across lines, so that a later line's mature
 collection takes an earlier line's garbage (measured: one alone collects
-nothing, the sixth of six collects mature space and answers right); a light
-session, the same less those, runs under GC stress. Four planted REPL bugs
+nothing, the sixth of six collects mature space and answers right). That
+needs 512 KB halves, which the session runs on: on 8 MB ones its ~2.5 MB
+never fills one, so the gate requires at least 5 mature collections over the
+session, counted by a2min on the bus (9 measured; HEAP.md "Long lists",
+step 0). A light session, the same less those, runs under GC stress. Four planted REPL bugs
 must be caught: a CR that does not end a line, an empty line compiled, no
 prompt, a line read after the last one.
 

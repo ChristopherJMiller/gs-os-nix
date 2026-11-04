@@ -614,10 +614,11 @@ a2min.
   (8 KB are not), as before speed step 3 (measured at c8e1d71): the views
   and the result in one instruction. A program under no stress keeps such
   strings young and is not affected.
-- **10,000 pairs are `E_NOMEM` under GC stress**, after two mature
-  collections (`builtins.concatLists` of a 100-by-100 `genList` of pairs,
-  M3's session's heavy line), alone as in a session; why is not yet looked
-  into. Under no stress it answers, and the REPL's light session leaves it
+- **10,000 pairs are `E_NOMEM` under GC stress** (`builtins.concatLists`
+  of a 100-by-100 `genList` of pairs, M3's session's heavy line), alone as
+  in a session; why is not yet looked into. Not the card's half: on 512 KB
+  halves after two mature collections, on 8 MB ones after none, at the same
+  point both times (492,140 bytes promoted; measured 2026-11-03). Under no stress it answers, and the REPL's light session leaves it
   out for its GC-stress pass.
 - **The printers** -- a2min's, and the VM's (`print.c`), which is held to
   it -- show `«repeated»` for a list printed twice when it is one object,

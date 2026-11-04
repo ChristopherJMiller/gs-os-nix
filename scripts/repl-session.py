@@ -21,6 +21,7 @@ heavy lines are beyond the VM (E_NOMEM, alone as in a session).
 """
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,10 @@ import tempfile
 
 PROMPT = b"nix> "
 SESSION = ANSWERS = None
+# The mature collections a session must make across its lines, counted by
+# a2min over the whole session ("the session: N of mature space"): `session`'s
+# heavy lines promote ~2.5 MB, five 512 KB halves' worth (9 as measured).
+MIN_MATURE = {"session": 5}
 
 
 def use(name):
@@ -66,8 +71,11 @@ def transcript(data, answers):
 
 
 def run_vm(a2min, vm, gc_stress):
+    # On 512 KB halves, the size the sessions were written against: on a2min's
+    # 8 MB ones `session`'s heavy lines never fill one (HEAP.md "Long lists").
     p = subprocess.run([a2min, "--repl-gc-stress" if gc_stress else "--repl", vm, SESSION],
-                       capture_output=True, timeout=3600)
+                       capture_output=True, timeout=3600,
+                       env=dict(os.environ, A2MIN_CARD_HALF="0x80000"))
     return p.stdout, p.stderr.decode(errors="replace")
 
 
@@ -80,6 +88,13 @@ def check(args, vm=None, quiet=False):
     data = open(SESSION, "rb").read()
     want = transcript(data, answers())
     got, err = run_vm(args.a2min, vm or args.vm, args.gc_stress)
+    m = re.search(r"the session: (\d+) of mature space", err)
+    mature, need = int(m.group(1)) if m else -1, 0 if args.gc_stress else MIN_MATURE.get(args.session, 0)
+    if got == want and mature < need:
+        if not quiet:
+            print(f"  the session collected mature space {mature if m else 'no'} times, under {need}: "
+                  f"its heavy lines no longer fill a half\nREPL SESSION FAILED")
+        return False
     if got == want:
         if not quiet:
             n = sum(1 for l in lines_of(data)[0] if l)

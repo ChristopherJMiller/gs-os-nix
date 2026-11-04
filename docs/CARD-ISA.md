@@ -256,7 +256,10 @@ set by a simulator -- and `GEOMETRY` returns a half's size in `LEN`. Half A
 starts at `$10` and half B at the size plus `$10`, so neither hands out address
 0, the null pointer. Software never assumes a size: the VM asks once, when it
 finds the card (HEAP.md "Long lists", step 0). Each simulator says what it
-runs; the regress suite builds cards of 512 KB and 8 MB.
+runs; the regress suite builds cards of 512 KB and 8 MB. `n` is 19 to 23 in
+every harness and test (a2min refuses any other); the core does not check it.
+Its hard limits: `n` <= 30, so the whole heap stays under bit 31, the young
+tag; and a half larger than the VM's `MATURE_MARGIN` (~73 KB), so `n` >= 17.
 
 The rule that makes this sound: **a mature object never points into the nursery,
 except through a field in the CPU's remembered set** ([DECISIONS.md](DECISIONS.md)

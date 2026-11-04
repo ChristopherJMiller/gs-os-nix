@@ -1016,7 +1016,9 @@ void l3_geometry() {
               lg == 19 ? "RESERVE stops at a 512 KB half's top" : "RESERVE stops at an 8 MB half's top",
               "a bound left at 512 KB");
 
-        // One live INT in half A, moved to half B and back by two collections
+        // One live INT in half A, moved to half B and back by two collections:
+        // the only survivor, so each copy is the first in its to-space, at
+        // the half's base exactly
         mem.poke32(0x1000, TAG_INT);
         mem.poke32(0x1004, 0x600DF00D);
         mem.poke32(0x1008, 0);
@@ -1033,10 +1035,11 @@ void l3_geometry() {
         const std::uint32_t in_b = mem.peek32(roots);
         st |= collect();
         const std::uint32_t in_a = mem.peek32(roots);
-        check((st & ST_ERR) == 0 && in_b >= half + 0x10 && in_b < 2 * half &&
-              in_a >= 0x10 && in_a < half && mem.peek32(in_a + 4) == 0x600DF00D,
-              lg == 19 ? "both flips land in a 512 KB card's halves" : "both flips land in an 8 MB card's halves",
-              "a half's base fixed at 512 KB, which copies a survivor outside its half");
+        check((st & ST_ERR) == 0 && in_b == half + 0x10 && in_a == 0x10 &&
+              mem.peek32(in_a + 4) == 0x600DF00D,
+              lg == 19 ? "both flips land at a 512 KB card's halves' bases"
+                       : "both flips land at an 8 MB card's halves' bases",
+              "a half's base fixed at 512 KB, or a to-space that does not start at it");
         c->final();
         delete c;
     }

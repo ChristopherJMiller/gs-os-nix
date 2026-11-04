@@ -565,7 +565,7 @@ builtin's name.
 Error codes: `E_BADOP $01`, `E_TYPE $02`, `E_DIVZERO $03`, `E_INFREC $04`,
 `E_NOMEM $05` (nursery, value stack or call/force depth exhausted), `E_BADNBC $06`
 (malformed image, or a slot read before it was set — a generator bug), `E_NOCARD
-$07` (`MUL`/`DIV` with no card in any slot), `E_ASSERT $08`, `E_THROW $09`,
+$07` (a card the VM cannot use: one built before `GEOMETRY`, CARD-ISA.md), `E_ASSERT $08`, `E_THROW $09`,
 `E_ABORT $0A`, `E_NOATTR $0B` (selecting a missing attribute), `E_INDEX $0C`
 (`head []`, `elemAt` out of range, negative `substring` start), `E_NOVAR $0D`
 (an identifier no `with` set supplies), `E_UNSUP $0E` (valid Nix the VM does not implement

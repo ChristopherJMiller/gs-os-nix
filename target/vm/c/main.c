@@ -71,9 +71,9 @@ void vm_once(void)
     env = 0;
     gc_water = nfree = 0x0010;                  /* offset 0 stays unallocated */
     prims_init();
-    card_find();
     memcpy((void *)(IMAGE_BASE + APPLY_CODE_OFF), apply_code, sizeof apply_code);
     if (setjmp(top_jb) == 0) {
+        card_find();                            /* in here: a card's answer to GEOMETRY can be an error */
         /* the on-target compiler's stages, in "front": a dump is the result,
          * or an image is compiled for the VM to run */
         if (!*(volatile uint8_t *)FRONT_MODE_ADDR || front_run()) {

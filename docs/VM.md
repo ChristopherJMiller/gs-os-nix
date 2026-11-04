@@ -101,7 +101,7 @@ room to raise the first. (The nursery ceiling used to be a fourth, worse one:
 a single operation that allocated more than happened to be free failed even
 when a collection would have made room. `nursery_reserve` removed it; HEAP.md.)
 A fifth is the card's: live mature data must fit its half less a promotion's
-room, ~8.1 MB on the 8 MB halves of a2min, MAME and rev A, the size the card
+room, ~7.9 MB on the 8 MB halves of a2min, MAME and rev A, the size the card
 reports (`GEOMETRY`; ~439 KB on 512 KB halves; HEAP.md "Collecting mature
 space"); until
 2026-10-27 nothing collected mature space, and a program could promote 512 KB

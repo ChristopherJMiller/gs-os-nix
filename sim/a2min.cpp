@@ -87,6 +87,12 @@ constexpr uint32_t DIAG        = 0x0310;        // the VM's state on error (targ
 constexpr uint32_t STATS       = 0x0340;        // phase counters (target/vm/c/main.c stats_write)
 
 int card_slot = 4;
+// A2MIN_CARD_REFUSE=<verb>: the card answers that verb E_BADVERB, as a card
+// built before it would -- a2min hands it $FF, a verb no card has, instead.
+int refuse_verb = -1;
+// COMPACTs the CPU has issued: one a mature collection, counted on the bus
+// because --repl's VM clears its own counters every line
+unsigned compacts = 0;
 
 Va2nix_card *card = nullptr;
 HeapMem<Va2nix_card> heap;          // the card's off-chip heap, distinct from CPU RAM
@@ -188,6 +194,8 @@ uint8_t card_read(uint8_t off) {
 
 void card_write(uint8_t off, uint8_t v) {
     if (buslog_on) buslog_write(off, v);
+    if (off == R_CMD && v == refuse_verb) v = 0xFF;
+    if (off == R_CMD && v == V_COMPACT) ++compacts;
     card->c0n_addr  = off;
     card->c0n_wdata = v;
     card->c0n_write = 1;
@@ -330,9 +338,11 @@ bool load_image(const char *bin_path, size_t *size_out = nullptr) {
 unsigned card_half_log2() {
     const char *e = std::getenv("A2MIN_CARD_HALF");
     if (!e || !*e) return 23;
-    const unsigned long v = std::strtoul(e, nullptr, 0);
-    for (unsigned lg = 19; lg <= 23; ++lg)
-        if (v == (1ul << lg)) return lg;
+    char *end = nullptr;
+    const unsigned long v = std::strtoul(e, &end, 0);
+    if (*end == '\0')                       // all of it a number, not a number and then junk
+        for (unsigned lg = 19; lg <= 23; ++lg)
+            if (v == (1ul << lg)) return lg;
     std::fprintf(stderr, "A2MIN_CARD_HALF must be a power of two from 0x80000 to 0x800000\n");
     std::exit(2);
 }
@@ -825,6 +835,8 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         ram[0x0331] = static_cast<uint8_t>(std::strtoul(m, nullptr, 0));
     if (const char *n = std::getenv("A2MIN_NO_CARD"))
         if (n[0] == '1') card_slot = -1;        // no slot decodes, so the scan finds nothing
+    if (const char *r = std::getenv("A2MIN_CARD_REFUSE"); r && *r)
+        refuse_verb = static_cast<int>(std::strtoul(r, nullptr, 0));
     // A2MIN_RSET_LIMIT shrinks the VM's remembered set (vm.h RSET_LIMIT_ADDR) so
     // that it fills: the full-set path collects mid-instruction, which a normal
     // run of the fixtures never reaches, so without this it would go untested.
@@ -921,9 +933,9 @@ int run_nbc(const char *vm_path, const char *nbc_path, bool gc_stress) {
         std::fwrite(gsos.console_out.data(), 1, gsos.console_out.size(), stdout);
         // the phase counters are each line's own (vm_once clears them): the last line's
         std::fprintf(stderr, "a2min --repl: %llu instructions, %llu CPU cycles; the last line: %u collections, "
-                     "%u bytes promoted, %u of mature space\n",
+                     "%u bytes promoted, %u of mature space; the session: %u of mature space\n",
                      static_cast<unsigned long long>(cpu.instructions), static_cast<unsigned long long>(cpu.cycles),
-                     ram32(STATS), ram32(STATS + 8), ram32(STATS + 32));
+                     ram32(STATS), ram32(STATS + 8), ram32(STATS + 32), compacts);
         if (!halted) { std::printf("error: did not halt\n"); return 1; }
         return 0;
     }
