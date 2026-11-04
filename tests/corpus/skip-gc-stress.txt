@@ -1,0 +1,8 @@
+# The tests the GC-stress passes leave out (scripts/scoreboard.py
+# --skip-file): --gc-stress, alone and with A2MIN_GC_PERIOD. Each says what
+# was measured; a smaller variant runs in their place.
+#
+# 15,000 elements made, mapped and folded: 1.16G cycles plain, past a2min's
+# 2.5G-cycle budget with a collection at every boundary, every 2nd and every
+# 3rd (2026-11-04). eval-okay-long-genlist-map-small runs here, in 146M.
+fixtures/eval-okay-long-genlist-map

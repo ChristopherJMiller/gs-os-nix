@@ -256,6 +256,22 @@ void list_copy(obj_t *dst, uint16_t at, obj_t *src, uint16_t from, uint16_t k)
     card_read_at(PBITS(src) + (uint16_t)(4 + 4 * from), ELEMS(dst) + at, 4 * k);   /* from < 16K: fits */
 }
 
+/* A list whose slots a collection may trace before they are filled: both
+ * collectors pass a null through (gc.c evac; the card's EVAC). */
+obj_t *list_alloc_null(uint16_t n)
+{
+    obj_t *o = list_alloc(n);
+    memset(ELEMS(o), 0, 4 * n);
+    return o;
+}
+
+/* The list may have been promoted since it was made, so through the barrier;
+ * it is re-read from the root stack, since store_field may collect. */
+void list_put(uint16_t r, uint16_t i, obj_t *v)
+{
+    store_field(rstack[r], (uint16_t)(4 + 4 * i), v);   /* i < 16K: fits */
+}
+
 /* p's tag, for OBJ_TAG's mature case: deref's own path -- the window if it has
  * one, else mature_view -- so as cheap as the deref it replaced (a2min's
  * profile: through obj_hdr it was three calls, 4M cycles of tail-calls' 49M) */

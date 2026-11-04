@@ -365,6 +365,15 @@ obj_t  *deref_or_hdr(obj_t *p, obj_t *h);   /* deref; a list too long to view: 0
 obj_t  *deref_or_list_hdr(obj_t *p, obj_t *h);   /* deref; a list too long to view: its header (h), for tag and count only */
 #define DEREF_OR_LIST_HDR(p, h)  ((HI16(p) & 0x8000U) ? (p) : deref_or_list_hdr((p), (h)))   /* p an lvalue */
 void    list_copy(obj_t *dst, uint16_t at, obj_t *src, uint16_t from, uint16_t k);   /* into a fresh young dst */
+/* A builder past one batch (genList, map: HEAP.md "Long lists") allocates its
+ * list nulled and rooted, then reserves and makes LIST_BATCH elements at a
+ * time, so a collection -- promoting the list -- may fall between batches;
+ * each element goes in through the barrier. Half the remembered set, so one
+ * batch's stores into a promoted list do not fill a set that started empty. */
+#define LIST_BATCH 128
+_Static_assert(LIST_BATCH <= RSET_N / 2, "a batch's stores fit half the remembered set");
+obj_t  *list_alloc_null(uint16_t n);                 /* list_alloc, every slot null; the caller reserved 4n + 4 */
+void    list_put(uint16_t r, uint16_t i, obj_t *v);  /* element i of the list in rstack[r] := v, through the barrier */
 #define OBJ_TAG(p)  ((HI16(p) & 0x8000U) ? (p)->tag : obj_tag(p))   /* p an lvalue, as DEREF's */
 /* A tag force_top would act on: THUNK, INDIRECT, BLACKHOLE (not LAMBDA, 9).
  * t is read twice: a plain variable. */

@@ -111,6 +111,9 @@ def main():
                     help="leave TEST (e.g. fixtures/eval-okay-x) out of this run, which the "
                          "caller says why: one a mode cannot run in its budget. Out of the "
                          "ratchet's check too, which weighs only what a run looked at")
+    ap.add_argument("--skip-file", action="append", default=[], metavar="FILE",
+                    help="--skip each test FILE names, one a line; '#' starts a comment, which "
+                         "says why (tests/corpus/skip-*.txt)")
     ap.add_argument("--on-target", action="store_true",
                     help="the VM compiles each test itself: a2min --run-nix (docs/COMPILER.md)")
     ap.add_argument("--jobs", "-j", type=int,
@@ -188,6 +191,9 @@ def main():
             tests.append((f"{tag}/{rel}", nix, exp, nyp))
     for n in overridden:
         print(f"  scored against the host's answer, where tvix's .exp disagrees: {n}")
+    for path in args.skip_file:
+        with open(path) as fh:
+            args.skip += [n for n in (ln.split("#", 1)[0].strip() for ln in fh) if n]
     unknown = set(args.skip) - {t[0] for t in tests}
     if unknown:
         print(f"--skip names no test: {', '.join(sorted(unknown))}")

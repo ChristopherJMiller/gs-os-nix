@@ -191,11 +191,12 @@
 
             # The collector test: every local fixture again, with a nursery
             # collection at every bytecode boundary. A fixture that passes
-            # normally and fails here has a root the collector cannot see. The
-            # default 500M-cycle budget covers the slowest (big-operations, ~290M).
+            # normally and fails here has a root the collector cannot see. What
+            # it cannot run in a2min's 2.5G-cycle budget is in
+            # tests/corpus/skip-gc-stress.txt, a smaller variant of each run instead.
             python3 scripts/scoreboard.py \
               --nbc nbc --a2min ./build/a2min --vm "$vm" \
-              --corpus tests/fixtures --build build/gc \
+              --corpus tests/fixtures --build build/gc --skip-file tests/corpus/skip-gc-stress.txt \
               --expected tests/corpus/expected-pass.txt --gc-stress \
               | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
 
@@ -205,7 +206,7 @@
             # leaves some stores young, including into a promoted `let`.
             A2MIN_GC_PERIOD=3 python3 scripts/scoreboard.py \
               --nbc nbc --a2min ./build/a2min --vm "$vm" \
-              --corpus tests/fixtures --build build/gc3 \
+              --corpus tests/fixtures --build build/gc3 --skip-file tests/corpus/skip-gc-stress.txt \
               --expected tests/corpus/expected-pass.txt --gc-stress \
               | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
 
@@ -222,16 +223,13 @@
             # space"): a nursery collection at every boundary, each followed by
             # a collection of mature space. A root MARK is not given, or a tag
             # the card sizes or traces unlike the CPU, answers wrongly here.
-            # eval-okay-card-heap-big is excused: its point is keeping more than a
-            # small card's half live, and a mature collection after every
-            # promotion copies all of it every time (HEAP.md "Long lists").
-            # eval-okay-long-list-walks too: each walk calls a function 6,000
-            # times, a mature collection at each boundary, past the 600 s.
+            # The tests it cannot run in its budget, and why, are in
+            # tests/corpus/skip-mature-stress.txt.
             A2MIN_MATURE_STRESS=1 python3 scripts/scoreboard.py \
               --nbc nbc --a2min ./build/a2min --vm "$vm" \
               --corpus tests/fixtures --build build/mature \
               --expected tests/corpus/expected-pass.txt --gc-stress \
-              --skip fixtures/eval-okay-card-heap-big --skip fixtures/eval-okay-long-list-walks \
+              --skip-file tests/corpus/skip-mature-stress.txt \
               | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
 
             # And the fixture that fills a card's half, on 512 KB halves: on
@@ -290,7 +288,7 @@
               --expected tests/corpus/expected-pass.txt | tee "$out"
             grep -q "^SCOREBOARD:" "$out"
             python3 scripts/scoreboard.py --on-target --gc-stress --a2min ./build/a2min --vm "$vm" \
-              --corpus tests/fixtures --build build/target-gc \
+              --corpus tests/fixtures --build build/target-gc --skip-file tests/corpus/skip-gc-stress.txt \
               --expected tests/corpus/expected-pass.txt \
               | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
           '';

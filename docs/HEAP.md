@@ -694,6 +694,26 @@ bus accesses a run (the bench, at `card_find`) and 4 bytes of bank 0
   at `WINDOW_MAX` for a mature list: `removeAttrs`' names, `findFile`,
   `appendContext`, `replaceStrings` and path interpolation (the last two
   stage on the 1,024-slot value stack anyway), and `toXML`.
+- **`genList` and `map` in batches** (2026-11-04). Past what one
+  reservation can hold (`ONE_RESERVE`, `prims.c`: the whole cost in the
+  65,504-byte empty nursery -- `genList` 1,488 elements, `map` 2,046),
+  `list_batched` allocates the list nulled (`list_alloc_null`), roots it,
+  and reserves for `LIST_BATCH` (128) elements at a time; each goes in by
+  `list_put`, `store_field` on the root-stack slot, since a reserve between
+  batches may collect and promote the list. Up to `ONE_RESERVE` a list is
+  made as before. The plan had the batched path start past one batch, but
+  the benchmarks' 1,000-element `genList`s then paid a `store_field` call
+  an element (+0.4% in all), and a list that fits as today takes today's
+  path. `eval-okay-long-genlist-map` makes, maps and folds 15,000;
+  `-small` 2,500, read at the batch edges rather than folded, which is what
+  mature stress can afford (a fold over 2,500 ran past 900 s; without it,
+  32 s). Both were `E_NOMEM`. The stress passes read their exclusions from
+  `tests/corpus/skip-gc-stress.txt` and `skip-mature-stress.txt`
+  (`scoreboard.py --skip-file`), each with what was measured; the full size
+  is past a2min's 2.5G-cycle budget under GC stress and past 900 s under
+  mature stress, and `-small` runs in its place. Measured: the benchmarks
+  2.5K cycles faster in all, `foldl-strict` +6 and `strings` +22 (the
+  compare); bank 0 unchanged.
 
 **Step 2: lists past the nursery (to 65,535 elements).**
 

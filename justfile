@@ -320,19 +320,21 @@ fixtures *flags: build-a2min cvm nbc-build
         --vm target/build/cvm.bin --corpus tests/fixtures \
         --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt {{flags}}
 
-# With a collection at every boundary the slowest fixture needs ~290M cycles,
-# within the default 500M budget.
+# With a collection at every boundary; what a2min's 2.5G-cycle budget cannot
+# hold is in tests/corpus/skip-gc-stress.txt.
 fixtures-gc: build-a2min cvm nbc-build
     A2MIN_PRINT=1 python3 scripts/scoreboard.py --nbc {{NBC}} \
         --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
-        --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress
+        --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress \
+        --skip-file tests/corpus/skip-gc-stress.txt
 
 # GC stress at every k-th boundary: unlike k = 1, it leaves some stores young,
 # so it exercises the remembered set (D20).
 fixtures-gc-period k="3": build-a2min cvm nbc-build
     A2MIN_GC_PERIOD={{k}} python3 scripts/scoreboard.py --nbc {{NBC}} \
         --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
-        --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress
+        --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress \
+        --skip-file tests/corpus/skip-gc-stress.txt
 
 # The fixtures with every nursery_reserve() collecting, needed or not (vm.h).
 fixtures-reserve: build-a2min cvm nbc-build
@@ -347,7 +349,7 @@ fixtures-mature k="1": build-a2min cvm nbc-build
     A2MIN_MATURE_STRESS={{k}} python3 scripts/scoreboard.py --nbc {{NBC}} \
         --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
         --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress \
-        --skip fixtures/eval-okay-card-heap-big --skip fixtures/eval-okay-long-list-walks
+        --skip-file tests/corpus/skip-mature-stress.txt
 
 # The fixture that fills a card's half, on a card small enough (512 KB a half)
 # that it does: a2min's 8 MB halves never fill (scripts/small-card.sh).

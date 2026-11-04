@@ -259,11 +259,50 @@ static void prim_elemat(void)                   /* list i */
 
 /* make_apply allocates 28 bytes (an environment of 3 and a thunk): map is
  * 32 bytes an element, genList 44 with its INT -- 13 KB for genList 300, which
- * is why these two reserve before they start (vm.h nursery_reserve). */
+ * is why these two reserve before they start (vm.h nursery_reserve). A list
+ * one reservation can hold -- its whole cost in an empty nursery, the 65,504
+ * bytes main.c leaves -- is made as it always was, which keeps the benchmarks'
+ * lists as fast (HEAP.md "Long lists": a list that fits as today takes
+ * today's path); a longer one, by list_batched. */
+#define ONE_RESERVE(per)  ((NURSERY_END - 0x10U - 4U) / (per))   /* genList 1,488; map 2,046 */
+
+/* genList's and map's lists past ONE_RESERVE (HEAP.md "Long lists",
+ * step 1): the list allocated nulled and rooted, then a reserve a batch, which
+ * may collect and promote the list, so each element goes in with list_put.
+ * rstack[b] is f; for map (of_list), rstack[b + 1] is its input list. */
+static void list_batched(uint16_t b, uint16_t n, uint8_t of_list)
+{
+    uint16_t at = b + 1 + of_list, i, j, k;
+    obj_t *r;
+    nursery_reserve_n(n, 4, 4);
+    rpush(list_alloc_null(n));                  /* rstack[at] */
+    for (i = 0; i < n; i += k) {
+        k = (uint16_t)(n - i) < LIST_BATCH ? n - i : LIST_BATCH;
+        nursery_reserve_n(k, of_list ? 28 : 40, 0);
+        for (j = i; j < i + k; ++j)
+            list_put(at, j, make_apply(rstack[b], of_list ? RELEM(b + 1, j, n) : new_int(j)));
+    }
+    r = rstack[at];
+    rsp = b;
+    push(r);
+}
+
 static void prim_map(void)                      /* f list -> a list of (f x) thunks */
 {
-    obj_t *l = view_top_as(T_LIST), *f, *r;
-    uint16_t n = AUX16(l), i;
+    obj_t h, *l, *f, *r;
+    uint16_t n, i, b;
+    force_top();
+    l = DEREF_OR_LIST_HDR(peek(), &h);          /* it may be too long to view (HEAP.md "Long lists") */
+    need(l, T_LIST);
+    n = AUX16(l);
+    if (n > ONE_RESERVE(32)) {
+        b = rsp;
+        l = pop();
+        rpush(pop());                           /* b: f */
+        rpush(l);                               /* b + 1: the list */
+        list_batched(b, n, 1);
+        return;
+    }
     if (nursery_reserve_n(n, 32, 4)) l = view_top_as(T_LIST);
     --vsp;
     f = pop();
@@ -274,8 +313,14 @@ static void prim_map(void)                      /* f list -> a list of (f x) thu
 
 static void prim_genlist(void)                  /* f n -> [ (f 0) ... (f (n-1)) ] */
 {
-    uint16_t n = pop_index(), i;
+    uint16_t n = pop_index(), i, b;
     obj_t *f, *r;
+    if (n > ONE_RESERVE(44)) {
+        b = rsp;
+        rpush(pop());                           /* b: f */
+        list_batched(b, n, 0);
+        return;
+    }
     nursery_reserve_n(n, 44, 4);                /* f is still on the stack: a root */
     f = pop();
     r = list_alloc(n);

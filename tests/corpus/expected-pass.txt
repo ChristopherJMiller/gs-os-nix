@@ -243,6 +243,8 @@ fixtures/eval-okay-let-forward
 fixtures/eval-okay-list-builtins
 fixtures/eval-okay-lists
 fixtures/eval-okay-listtoattrs-long-names
+fixtures/eval-okay-long-genlist-map
+fixtures/eval-okay-long-genlist-map-small
 fixtures/eval-okay-long-list-copies
 fixtures/eval-okay-long-list-readers
 fixtures/eval-okay-long-list-result
