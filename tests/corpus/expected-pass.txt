@@ -240,9 +240,14 @@ fixtures/eval-okay-lambda-basic
 fixtures/eval-okay-lambda-value
 fixtures/eval-okay-lazy-argument
 fixtures/eval-okay-let-forward
+fixtures/eval-okay-let-self-binding
 fixtures/eval-okay-list-builtins
 fixtures/eval-okay-lists
 fixtures/eval-okay-listtoattrs-long-names
+fixtures/eval-okay-long-catattrs-small
+fixtures/eval-okay-long-concatmap-small
+fixtures/eval-okay-long-filter-partition
+fixtures/eval-okay-long-filter-partition-small
 fixtures/eval-okay-long-genlist-map
 fixtures/eval-okay-long-genlist-map-small
 fixtures/eval-okay-long-list-copies

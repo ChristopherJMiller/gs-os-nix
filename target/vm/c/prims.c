@@ -287,6 +287,34 @@ static void list_batched(uint16_t b, uint16_t n, uint8_t of_list)
     push(r);
 }
 
+/* filter, partition, concatMap and catAttrs stage what they keep on the value
+ * stack where per-element slots (1 << sh each) fit with STAGE_ROOM to spare for
+ * the calls they make -- a list that fits as today takes today's path, the
+ * benchmarks' among them (HEAP.md "Long lists"). A longer list, or one met on a
+ * deep stack, goes into a buffer list at the input's length instead, then is
+ * copied to the length kept: a list's count may not shrink in place, as the
+ * card's copier goes by it. */
+#define STAGE_ROOM 256
+#define STAGE_FITS(n, sh)  (vsp < VSTACK_N - STAGE_ROOM && (n) <= (uint16_t)(VSTACK_N - STAGE_ROOM - vsp) >> (sh))
+
+static void buffer_push(uint16_t n)             /* the buffer, nulled, on the root stack */
+{
+    nursery_reserve_n(n, 4, 4);                 /* everything live is on a stack */
+    rpush(list_alloc_null(n));
+}
+
+/* The first k elements of the buffer (n long) in rstack[r], as a list of their
+ * own; the reserve may promote the buffer, so it is read after. */
+static obj_t *buffer_exact(uint16_t r, uint16_t n, uint16_t k)
+{
+    obj_t *o;
+    if (k == n) return rstack[r];
+    nursery_reserve_n(k, 4, 4);
+    o = list_alloc(k);
+    list_copy(o, 0, rstack[r], 0, k);
+    return o;
+}
+
 static void prim_map(void)                      /* f list -> a list of (f x) thunks */
 {
     obj_t h, *l, *f, *r;
@@ -328,19 +356,26 @@ static void prim_genlist(void)                  /* f n -> [ (f 0) ... (f (n-1)) 
     push(r);
 }
 
-static void prim_filter(void)                   /* f list. Roots: list, f; kept elements on the stack */
+static void prim_filter(void)                   /* f list. Roots: list, f; kept elements on the stack, or a buffer */
 {
     uint16_t b = rsp, n, i, kept = 0;
     obj_t *lo = force_pop_list(&n), *v, *vo;
+    uint8_t staged;
     rpush(lo);
     rpush(pop());                               /* f */
+    if (!(staged = STAGE_FITS(n, 0))) buffer_push(n);   /* b + 2 */
     for (i = 0; i < n; ++i) {
         call_with(rstack[b + 1], RELEM(b, i, n));
         v = force_pop_as(T_BOOL, &vo);
-        if (BOOLVAL(v)) { push(RELEM(b, i, n)); ++kept; }
+        if (BOOLVAL(v)) {
+            if (staged) push(RELEM(b, i, n)); else list_put(b + 2, kept, RELEM(b, i, n));
+            ++kept;
+        }
     }
+    if (staged) { rsp = b; push(list_from_stack(kept)); return; }
+    v = buffer_exact(b + 2, n, kept);
     rsp = b;
-    push(list_from_stack(kept));
+    push(v);
 }
 
 static void prim_foldl(void)                    /* f z list: the accumulator lives on the value stack */
@@ -361,11 +396,15 @@ static void prim_foldl(void)                    /* f z list: the accumulator liv
     rsp = b;
 }
 
-static void prim_concatlists(void)              /* [ [..] [..] ]: force each, sum, copy */
+/* concatLists' body: pushes the concatenation of the list of lists in
+ * rstack[b] -- force each, sum, copy */
+static void concat_lists_at(uint16_t b)
 {
-    uint16_t b = rsp, n, i, total = 0, w = 0, k;
-    obj_t *lo = force_pop_list(&n), *e, *r;
-    rpush(lo);
+    uint16_t n, i, total = 0, w = 0, k;
+    obj_t h, *e, *r;
+    obj_hdr(rstack[b], &h);
+    need(&h, T_LIST);
+    n = AUX16(&h);
     for (i = 0; i < n; ++i) {
         push(RELEM(b, i, n));
         (void)force_pop_list(&k);
@@ -381,21 +420,32 @@ static void prim_concatlists(void)              /* [ [..] [..] ]: force each, su
         w += k;
         windows_maybe();
     }
-    rsp = b;
     push(r);
+}
+
+static void prim_concatlists(void)              /* [ [..] [..] ] */
+{
+    uint16_t b = rsp;
+    force_top();
+    rpush(pop());
+    concat_lists_at(b);
+    rsp = b;
 }
 
 static void prim_concatmap(void)                /* concatLists (map f list), the map strict */
 {
     uint16_t b = rsp, n, i;
-    obj_t *lo, *l = force_pop_as(T_LIST, &lo);
-    n = AUX16(l);
+    obj_t *lo = force_pop_list(&n);
+    uint8_t staged;
     rpush(lo);
     rpush(pop());                               /* f */
+    if (!(staged = STAGE_FITS(n, 0))) buffer_push(n);   /* b + 2: the mapped lists */
     for (i = 0; i < n; ++i) {
         call_with(rstack[b + 1], RELEM(b, i, n));
-        force_top();                            /* the result stays on the stack */
+        force_top();                            /* staged, the result stays on the stack */
+        if (!staged) list_put(b + 2, i, pop());
     }
+    if (!staged) { concat_lists_at(b + 2); rsp = b; return; }
     rsp = b;
     push(list_from_stack(n));
     prim_concatlists();
@@ -901,21 +951,27 @@ static void prim_mapattrs(void)                 /* f set -> { n = f n v; }, each
 static void prim_catattrs(void)                 /* name [ sets ] -> their values for name, unforced */
 {
     uint16_t b = rsp, n, i, found = 0, ix;
-    obj_t *lo, *l, *nm, *eo, *av;
+    obj_t *lo, *nm, *eo, *av;
+    uint8_t staged;
     force_slot(2);                              /* the name first, as Nix */
     nm = deref(vstack[vsp - 2]);
     if (nm->tag != T_STRING || CTX(nm)) type_err();
-    l = force_pop_as(T_LIST, &lo);
-    n = AUX16(l);
+    lo = force_pop_list(&n);
     rpush(lo);
     rpush(pop());                               /* b+1: the name */
+    if (!(staged = STAGE_FITS(n, 0))) buffer_push(n);   /* b + 2 */
     for (i = 0; i < n; ++i) {
         push(RELEM(b, i, n));
         (void)force_pop_as(T_ATTRS, &eo);
-        if (find_attr(eo, rstack[b + 1], &ix, &av)) { push(av); ++found; }
+        if (find_attr(eo, rstack[b + 1], &ix, &av)) {
+            if (staged) push(av); else list_put(b + 2, found, av);
+            ++found;
+        }
     }
+    if (staged) { rsp = b; push(list_from_stack(found)); return; }
+    av = buffer_exact(b + 2, n, found);
     rsp = b;
-    push(list_from_stack(found));
+    push(av);
 }
 
 /* groupBy f list: f forced first, then the list; each element's group is f's
@@ -1209,13 +1265,39 @@ static void prim_sort(void)
     push(list_from_stack(n));
 }
 
+/* partition past what the stack can stage (STAGE_FITS): rstack[b] the list,
+ * b + 1 f; a buffer each for right and wrong at the list's length. */
+static void partition_buffered(uint16_t b, uint16_t n)
+{
+    uint16_t i, nr = 0, nw = 0;
+    obj_t *v, *vo, *r, *w;
+    buffer_push(n);                             /* b + 2: right */
+    buffer_push(n);                             /* b + 3: wrong; its reserve may promote right */
+    for (i = 0; i < n; ++i) {
+        call_with(rstack[b + 1], RELEM(b, i, n));
+        v = force_pop_as(T_BOOL, &vo);
+        if (BOOLVAL(v)) list_put(b + 2, nr++, RELEM(b, i, n));
+        else            list_put(b + 3, nw++, RELEM(b, i, n));
+    }
+    nursery_reserve_n(n, 4, 8 + 32);            /* both lists and the 2-entry set */
+    r = list_alloc(nr);
+    list_copy(r, 0, rstack[b + 2], 0, nr);
+    w = list_alloc(nw);
+    list_copy(w, 0, rstack[b + 3], 0, nw);
+    rsp = b;
+    v = attrs_alloc(2);
+    attrs_put(v, 2, 0, str_right, r);
+    attrs_put(v, 2, 1, str_wrong, w);
+    push(v);
+}
+
 static void prim_partition(void)                /* f list -> { right; wrong; } */
 {
     uint16_t b = rsp, n, i, nr = 0, nw = 0, at;
-    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *v, *vo, *r, *w;
-    n = AUX16(l);
+    obj_t *lo = force_pop_list(&n), *v, *vo, *r, *w;
     rpush(lo);
     rpush(pop());                               /* f */
+    if (!STAGE_FITS(n, 1)) { partition_buffered(b, n); return; }
     for (i = 0; i < n; ++i) {                   /* (element, verdict) pairs on the stack */
         call_with(rstack[b + 1], RELEM(b, i, n));
         v = force_pop_as(T_BOOL, &vo);

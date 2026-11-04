@@ -7,8 +7,9 @@
 
 #include "prims.h"
 
-/* With prims.c, one load segment above bank 0 (VM.md). */
-segment "prims";
+/* A load segment of its own above bank 0 (VM.md): with prims.c it filled
+ * bank 6 (65,456 bytes of 65,536, 2026-11-04). */
+segment "derivation";
 
 /* The derivations this program made: [drvPath, modulo hash, next] lists, a
  * root (gc.c), for an input's modulo hash (DERIVATION.md "String context"). */

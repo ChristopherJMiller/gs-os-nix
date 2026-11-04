@@ -44,8 +44,11 @@ The fixtures are the host's own output, never a model's.
   `STACK_FLOOR` (`$7000`, ~4 KB of room). Every other file puts its functions
   in a segment -- `c-lint` refuses one that does not. Put new code in a
   `segment "prims"` file (bank 6): `prims.c` (helpers, lists, sets),
-  `strings.c` (strings, context), `derivation.c`, `sha256.c`; what they share
-  goes in `prims.h`. A new file goes in `target/vm/c/SOURCES`, the one list
+  `strings.c` (strings, context), `sha256.c`; `derivation.c` is
+  `segment "derivation"` since the two filled bank 6 (2026-11-04). A segment
+  has to fit in one bank -- the link fails "Code exceeds code bank size" --
+  so watch its size in the `omf2bin` line too. What they share goes in
+  `prims.h`. A new file goes in `target/vm/c/SOURCES`, the one list
   every build reads, with a `segment` line before its first function. `just
   bank-gate` holds bank 0 to the exact size in `target/vm/bank0.txt`, to an
   allowlist of runtime routines, and to a ledger of every other symbol with

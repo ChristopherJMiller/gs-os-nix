@@ -64,7 +64,10 @@ every value is promoted before it can be stored young, so the remembered set
 is never used; `k` = 2 or 3 is what tests it (DECISIONS.md D20).
 
 Bank 0's 40 KB were never going to hold the parser and the store layers, so
-code lives in load segments from the start: the primop files are `segment "prims"`,
+code lives in load segments from the start: the primop files are `segment "prims"`
+(`derivation.c` its own `segment "derivation"` since 2026-11-04, when the two
+filled bank 6 to 65,456 bytes of 65,536; a segment has to fit in one bank, and
+omf2bin places each where it fits),
 and since 2026-10-27 `run.c` is `segment "core"` -- 10 KB out of bank 0, at no
 cost in cycles (ORCA/C calls everything with `JSL` and reaches globals through
 the data bank, wherever the code is: measured, every benchmark to the cycle).

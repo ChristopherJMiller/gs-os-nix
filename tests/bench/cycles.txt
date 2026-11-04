@@ -3,6 +3,6 @@
 attrs 22401861
 derivations 8784249
 foldl-strict 33957341
-recursion 45757268
+recursion 45755561
 strings 49859368
 tail-calls 48222497

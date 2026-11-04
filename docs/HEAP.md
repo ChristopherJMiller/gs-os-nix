@@ -714,6 +714,34 @@ bus accesses a run (the bench, at `card_find`) and 4 bytes of bank 0
   mature stress, and `-small` runs in its place. Measured: the benchmarks
   2.5K cycles faster in all, `foldl-strict` +6 and `strings` +22 (the
   compare); bank 0 unchanged.
+- **`filter`, `partition`, `concatMap` and `catAttrs` into lists**
+  (2026-11-04). Each stages on the value stack as before where its staging
+  fits with `STAGE_ROOM` (256 slots) to spare above `vsp` for the calls it
+  makes (`STAGE_FITS`, `prims.c`: one slot an element, `partition` two) --
+  the plan had "below one batch", but the `recursion` benchmark filters
+  300. Past that, or on a deep stack, `buffer_push` roots a nulled buffer
+  list at the input's length, each kept element goes in by `list_put`, and
+  `buffer_exact` copies the first k to a list of their own (the buffer
+  itself when all were kept); `partition` keeps two buffers and copies
+  both. `concatMap` puts its mapped lists in a buffer and concatenates it
+  in place (`concat_lists_at`, `concatLists`' body). All four take the
+  count from the list's header, so a mature list past `WINDOW_MAX` is
+  read too. At the top level the old ceilings were ~1,020 kept elements
+  (the table's 971 was a deeper stack) and ~500 for `partition`.
+  `eval-okay-long-filter-partition` runs each to 15,000 (12,000 for
+  `catAttrs`) with a throw caught half-way through a filter, and `filter`
+  700 / 900 and `partition` 300 / 500 either side of `STAGE_FITS`;
+  `-small` (`filter`, `partition`), `eval-okay-long-concatmap-small` and
+  `-catattrs-small` run them at 1,100, which is what mature stress can
+  afford (155 s, 165 s and 124 s; all four in one test, 470 s, and `concatMap` with
+  `catAttrs` 314 s). The barrier matters only where the stored value is
+  younger than the buffer: what `filter`, `partition` and `catAttrs` keep
+  was reachable before it, so a collection that promotes the buffer
+  promotes that too, but `concatMap`'s mapped lists are made after.
+  `derivation.c` moved to a segment of its own: these four filled bank 6
+  (65,456 bytes of 65,536). Measured: the benchmarks 1,707 cycles
+  faster in all (208,980,877), all of it in `recursion`, whose `filter` of 300
+  takes the stack's path; bank 0 unchanged.
 
 **Step 2: lists past the nursery (to 65,535 elements).**
 

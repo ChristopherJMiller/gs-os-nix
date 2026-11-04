@@ -13,3 +13,8 @@ fixtures/eval-okay-long-list-walks
 # 15,000 elements folded: past 900 s (2026-11-04).
 # eval-okay-long-genlist-map-small runs here, at 2,500, in 32 s.
 fixtures/eval-okay-long-genlist-map
+# 15,000 elements, some 57,000 calls: at 1,100, the four families in one test
+# took 470 s (2026-11-04). eval-okay-long-filter-partition-small,
+# eval-okay-long-concatmap-small and -catattrs-small run here (155 s, 165 s
+# and 124 s).
+fixtures/eval-okay-long-filter-partition

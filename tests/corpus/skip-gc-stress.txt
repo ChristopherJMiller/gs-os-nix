@@ -6,3 +6,9 @@
 # 2.5G-cycle budget with a collection at every boundary, every 2nd and every
 # 3rd (2026-11-04). eval-okay-long-genlist-map-small runs here, in 146M.
 fixtures/eval-okay-long-genlist-map
+# 15,000 elements filtered, partitioned, concatMapped and catAttrs'd: 1.78G
+# cycles plain, past the 2.5G budget at GC period 1, 2 and 3, and on target
+# (2026-11-04). eval-okay-long-filter-partition-small,
+# eval-okay-long-concatmap-small and -catattrs-small run here (128M, 55M and 65M
+# cycles at GC period 1).
+fixtures/eval-okay-long-filter-partition
