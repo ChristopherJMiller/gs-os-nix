@@ -89,6 +89,29 @@ obj_t *force_pop_as(uint8_t tag, obj_t **orig)
     return v;
 }
 
+/* Force and pop a list: its count in *n, and the list itself as the stack had
+ * it, young or mature -- never a view, which a mature list past WINDOW_MAX does
+ * not have (HEAP.md "Long lists"). Its elements: list_elem, RELEM. */
+obj_t *force_pop_list(uint16_t *n)
+{
+    obj_t h, *o;
+    force_top();
+    o = pop();
+    obj_hdr(o, &h);
+    need(&h, T_LIST);
+    *n = AUX16(&h);
+    return o;
+}
+
+/* Force and pop, for the tag alone (typeOf, the is* tests) */
+static uint8_t force_pop_tag(void)
+{
+    obj_t *o;
+    force_top();
+    o = pop();
+    return OBJ_TAG(o);
+}
+
 /* An INT that is an index or a length: 0..65535, else an index error. */
 static uint16_t pop_index(void)
 {
@@ -137,15 +160,17 @@ void copy_entry(obj_t *dst, uint16_t n, uint16_t i, obj_t *src, uint16_t ns, uin
 /* --- lists --------------------------------------------------------------------------- */
 static void prim_length(void)
 {
-    obj_t *o, *l = force_pop_as(T_LIST, &o);
-    push(new_int(AUX16(l)));
+    uint16_t n;
+    (void)force_pop_list(&n);
+    push(new_int(n));
 }
 
 static void prim_head(void)
 {
-    obj_t *o, *l = force_pop_as(T_LIST, &o);
-    if (AUX16(l) == 0) err_exit(E_INDEX);
-    push(ELEMS(l)[0]);
+    uint16_t n;
+    obj_t *l = force_pop_list(&n);
+    if (n == 0) err_exit(E_INDEX);
+    push(list_elem(l, 0, n));
 }
 
 /* Force the top in place, type-check it, and view it -- WITHOUT popping, so it
@@ -185,10 +210,10 @@ static void prim_tail(void)
 
 static void prim_elemat(void)                   /* list i */
 {
-    uint16_t i = pop_index();
-    obj_t *o, *l = force_pop_as(T_LIST, &o);
-    if (i >= AUX16(l)) err_exit(E_INDEX);
-    push(ELEMS(l)[i]);
+    uint16_t n, i = pop_index();
+    obj_t *l = force_pop_list(&n);
+    if (i >= n) err_exit(E_INDEX);
+    push(list_elem(l, i, n));
 }
 
 /* make_apply allocates 28 bytes (an environment of 3 and a thunk): map is
@@ -1158,9 +1183,7 @@ static void prim_deepseq(void)
 
 static void prim_typeof(void)
 {
-    obj_t *v;
-    (void)force_pop_view(&v);
-    switch (v->tag) {
+    switch (force_pop_tag()) {
     case T_INT:    push(str_int); break;
     case T_FLOAT:  push(str_float); break;
     case T_BOOL:   push(str_bool); break;
@@ -1176,9 +1199,7 @@ static void prim_typeof(void)
 
 static void is_tag(uint8_t tag)
 {
-    obj_t *v;
-    (void)force_pop_view(&v);
-    push_bool(v->tag == tag);
+    push_bool(force_pop_tag() == tag);
 }
 
 /* tryEval: save a frame, force the argument; a throw or a failed assert inside

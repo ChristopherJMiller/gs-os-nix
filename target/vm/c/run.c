@@ -53,9 +53,12 @@ void stack_need(uint16_t n)
  * writes, and its offset: the value, when the thunk becomes an INDIRECT to it;
  * the environment, when a closure is copied over the thunk; 0 when the value
  * is copied and holds no pointer. Mirrors force_thunk's switch below. */
-static obj_t *update_ptr(obj_t *vv, obj_t *v, uint16_t *off)
+/* t: v's tag; vv: v's view, needed only for what an update copies in place,
+ * 12 bytes or fewer. Anything else -- a list, a set, a string, which may be
+ * too long to view -- becomes an INDIRECT to it (HEAP.md "Long lists"). */
+static obj_t *update_ptr(uint8_t t, obj_t *vv, obj_t *v, uint16_t *off)
 {
-    switch (vv->tag) {
+    switch (t) {
     case T_INT: case T_FLOAT: case T_BOOL: case T_NULL: return 0;
     case T_LAMBDA: case T_THUNK: *off = 8; return CL_ENV(vv);
     default: *off = 4; return v;
@@ -69,8 +72,9 @@ static obj_t *update_ptr(obj_t *vv, obj_t *v, uint16_t *off)
  * top is the thunk's afterwards (it may have moved during the body). */
 static void force_thunk(void)
 {
-    obj_t *th = peek(), *tv, *v, *vv, *y;
+    obj_t *th = peek(), *tv, *v, *vv, *y, hd;
     uint16_t yoff;
+    uint8_t t;
     const uint8_t *spc = pc;
     ++ST_FORCES;
     uint16_t sctab = ctab;
@@ -100,15 +104,17 @@ static void force_thunk(void)
          * young the field goes in the remembered set. A mature v can carry a
          * young environment too (it may itself be a thunk updated this way), so
          * the test is on what is written, not on v. Only a full set collects. */
-        vv = deref(v);
-        y = update_ptr(vv, v, &yoff);
+        vv = deref_or_hdr(v, &hd);              /* 0: v too long to view, and an INDIRECT to it needs no view */
+        t = vv ? vv->tag : hd.tag;
+        y = update_ptr(t, vv, v, &yoff);
         if (IS_YOUNG(y) && rs_full()) {
             /* th waits on the root stack: the collection may move mature space */
             ++ST_BARRIER; rpush(th); push(v); gc_collect(); v = pop(); th = rpop();
-            vv = deref(v);                      /* now nothing it carries is young */
-            y = update_ptr(vv, v, &yoff);
+            vv = deref_or_hdr(v, &hd);          /* now nothing it carries is young */
+            t = vv ? vv->tag : hd.tag;
+            y = update_ptr(t, vv, v, &yoff);
         }
-        switch (vv->tag) {
+        switch (t) {
         case T_INT: case T_FLOAT: case T_LAMBDA: case T_THUNK:
             memcpy(buf, vv, 12); card_write_at(PBITS(th), buf, 12); break;
         case T_BOOL: case T_NULL:
@@ -120,8 +126,9 @@ static void force_thunk(void)
         if (IS_YOUNG(y)) remember(th, yoff);
         windows_invalidate(th);
     } else {
-        vv = DEREF(v);
-        switch (vv->tag) {
+        if (IS_RAM(v)) { vv = v; t = v->tag; }  /* the common case, as before: no test of vv */
+        else { vv = deref_or_hdr(v, &hd); t = vv ? vv->tag : hd.tag; }
+        switch (t) {
         case T_INT: case T_FLOAT: case T_LAMBDA: case T_THUNK:
             ((uint32_t *)th)[2] = ((uint32_t *)vv)[2];
             /* fall through */
@@ -140,9 +147,13 @@ static void force_thunk(void)
 /* Force the value on top of the stack, in place. On return the top is a value. */
 void force_top(void)
 {
-    obj_t *p;
+    obj_t *p, hd;
     for (;;) {
-        p = DEREF(peek());
+        if (HI16(peek()) & 0x8000U) p = peek();
+        else {
+            p = deref_or_hdr(peek(), &hd);
+            if (IS_NULL(p)) return;             /* too long to view: a list, nothing to force */
+        }
         switch (p->tag) {
         case T_INDIRECT:  poke(IND_TARGET(p)); break;
         case T_BLACKHOLE: err_exit(E_INFREC);
@@ -156,7 +167,7 @@ void force_top(void)
 void force_slot(uint16_t k)
 {
     uint16_t at = vsp - k;
-    uint8_t t = DEREF(vstack[at])->tag;
+    uint8_t t = OBJ_TAG(vstack[at]);
     if (!NEEDS_FORCE(t)) return;
     push(vstack[at]);
     force_top();
@@ -196,13 +207,14 @@ void view_two(obj_t **a, obj_t **b)
  * is called through it: `s x` == `(s.__functor s) x`. */
 void call_enter(void)
 {
-    obj_t *f, *fo, *x, *e, *fv;
+    obj_t *f, *fo, *x, *e, *fv, hd;
     uint16_t ix;
     for (;;) {
         FORCE_SLOT2();                          /* f, forced in place */
         x = pop();
         fo = pop();
-        f = DEREF(fo);
+        if (IS_RAM(fo)) f = fo;
+        else if ((f = deref_or_hdr(fo, &hd)) == 0) type_err();  /* too long to view: a list, not a function */
         if (f->tag == T_LAMBDA) break;
         if (f->tag != T_ATTRS) type_err();
         if (!find_attr(fo, str_functor, &ix, &fv)) type_err();

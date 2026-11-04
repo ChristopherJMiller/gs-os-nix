@@ -647,6 +647,27 @@ bus accesses a run (the bench, at `card_find`) and 4 bytes of bank 0
   `run.c` 3, `derivation.c` 5, `json.c` 2, `match.c` 3); most build a few
   elements and stay as they are.
 
+*As built* (plan: `docs/superpowers/plans/2026-11-03-long-lists-step1.md`):
+
+- **Readers through the header** (2026-11-03). `obj_hdr` and `obj_tag`
+  (`data.c`) give an object's header or tag with no view. A mature object
+  small enough is viewed on the way, so the deref that usually follows is a
+  window hit, not a second read; one past `WINDOW_MAX` never is.
+  `deref_or_hdr` is deref, except that such an object is 0 and its header
+  rather than `E_NOMEM`. `FORCE_TOP`/`FORCE_SLOT2`, `force_top`,
+  `force_slot`, `call_enter`, the thunk update, `typeOf` and the `is*` tests
+  read the tag that way; `force_pop_list` (`prims.c`) hands a list's
+  readers the list and its count, and `length`, `head` and `elemAt` read
+  elements with `list_elem`. `eval-okay-long-list-readers` holds a 6,000-
+  element list on the card through all of them: `E_NOMEM` before, in a
+  plain run (forcing it was enough). Measured: the benchmarks 0.6% faster in
+  all (208.9M cycles from 210.2M; `call_enter` makes one call for a mature
+  function where it made two), `foldl-strict` and `strings` within 0.11%;
+  bank 0 unchanged. On the way: `obj_tag` through `obj_hdr` was three calls
+  where `deref` had been one (+4.5% in all, found with a2min's function
+  profile), and `mature_view`'s copy split into a function of its own cost
+  a call a view (+0.5%).
+
 **Step 2: lists past the nursery (to 65,535 elements).**
 
 - A list whose object does not fit the nursery is `RESERVE`d on the card

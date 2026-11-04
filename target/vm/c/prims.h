@@ -28,6 +28,7 @@ extern obj_t *str_int, *str_bool, *str_null, *str_string, *str_list, *str_set, *
 #define RELEM(r, i, n) list_elem(rstack[r], (i), (n))
 
 obj_t *force_pop_as(uint8_t tag, obj_t **orig);    /* force, pop, type-check: the view; *orig the original */
+obj_t *force_pop_list(uint16_t *n);                 /* force, pop, a list: the list itself (no view), *n its count */
 obj_t *list_from_stack(uint16_t n);                 /* the n values on top become a fresh LIST */
 obj_t *view_top_text(void);                         /* the top forced in place, a STRING or a PATH: a view */
 void   insert_entry(obj_t *set, uint16_t cap, uint16_t *cnt, obj_t *name, obj_t *value);

@@ -354,13 +354,22 @@ obj_t *deref(obj_t *p);             /* checks the pointer; E_BADNBC otherwise */
  * lines. p must be an lvalue (HI16 takes its address), which also keeps a
  * side effect out of the twice-read argument. */
 #define DEREF(p)  ((HI16(p) & 0x8000U) ? (p) : deref(p))
+/* The header of any object, without a view of it (HEAP.md "Long lists"): a
+ * mature list past WINDOW_MAX cannot be viewed, and most of what reads one
+ * needs only its tag or its count. A mature object small enough is viewed as
+ * a side effect, so a deref after it is a cache hit, not a second bus read. */
+void    obj_hdr(obj_t *p, obj_t *h);
+uint8_t obj_tag(obj_t *p);
+obj_t  *deref_or_hdr(obj_t *p, obj_t *h);   /* deref; a list too long to view: 0, and its header in *h */
+#define DEREF_OR_HDR(p, h)  ((HI16(p) & 0x8000U) ? (p) : deref_or_hdr((p), (h)))   /* p an lvalue */
+#define OBJ_TAG(p)  ((HI16(p) & 0x8000U) ? (p)->tag : obj_tag(p))   /* p an lvalue, as DEREF's */
 /* A tag force_top would act on: THUNK, INDIRECT, BLACKHOLE (not LAMBDA, 9).
  * t is read twice: a plain variable. */
 #define NEEDS_FORCE(t)  ((uint8_t)((t) - T_THUNK) < 4 && (t) != T_LAMBDA)
 /* Force slot p (an lvalue) through force_top, or skip the call when it is
  * already a value -- most of the time (VM.md "Speed") */
-#define FORCE_TOP()     do { uint8_t ft_ = DEREF(peek())->tag; if (NEEDS_FORCE(ft_)) force_top(); } while (0)
-#define FORCE_SLOT2()   do { uint8_t ft_ = DEREF(vstack[vsp - 2])->tag; if (NEEDS_FORCE(ft_)) force_slot(2); } while (0)
+#define FORCE_TOP()     do { uint8_t ft_ = OBJ_TAG(peek()); if (NEEDS_FORCE(ft_)) force_top(); } while (0)
+#define FORCE_SLOT2()   do { uint8_t ft_ = OBJ_TAG(vstack[vsp - 2]); if (NEEDS_FORCE(ft_)) force_slot(2); } while (0)
 obj_t *list_elem(obj_t *l, uint16_t i, uint16_t count);   /* element i; reads one element of a long mature list */
 void   windows_invalidate(obj_t *p); /* after a write to the mature object p */
 /* The ring turns over only at a bytecode boundary, where no view is live. The

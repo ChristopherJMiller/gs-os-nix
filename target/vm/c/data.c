@@ -173,14 +173,18 @@ void windows_invalidate(obj_t *p)
     if (wins[h][1].card == p) wins[h][1].card = 0;
 }
 
-/* A copy of mature p into the ring, cached in set h (deref has looked there) */
-static obj_t *mature_view(obj_t *p, uint16_t h)
+/* A copy of mature p into the ring, cached in set h (deref has looked there).
+ * Its header goes in *hd. One too big to view is E_NOMEM -- or, if big_ok, 0,
+ * with the header alone read: what a reader that needs only the tag or the
+ * count of a long list gets (HEAP.md "Long lists"). One function, as it was:
+ * splitting the copy out cost a call a view (a2min's profile, foldl-strict). */
+static obj_t *mature_view(obj_t *p, uint16_t h, obj_t *hd, uint8_t big_ok)
 {
     uint16_t size, k;
-    obj_t hdr, *w;
-    card_read_at(PBITS(p), &hdr, 4);
-    size = obj_size(&hdr);
-    if (size > WINDOW_MAX) nomem();
+    obj_t *w;
+    card_read_at(PBITS(p), hd, 4);
+    size = obj_size(hd);
+    if (size > WINDOW_MAX) { if (big_ok) return 0; nomem(); }
     /* The ring never wraps here: it is turned over at bytecode boundaries only,
      * which leaves every instruction WINDOW_RING - WINDOW_FLOOR to spend. An
      * instruction that wants more is E_NOMEM -- loud -- rather than wrapping
@@ -192,7 +196,7 @@ static obj_t *mature_view(obj_t *p, uint16_t h)
     /* The header is already here, and the DATA port has already advanced A0
      * past it: stream the rest straight on. Re-setting A0 and reading the
      * whole object again cost 4 address writes and 4 bus reads a copy. */
-    *(uint32_t *)w = *(uint32_t *)&hdr;
+    *(uint32_t *)w = *(uint32_t *)hd;
     card_read_more((uint8_t *)w + 4, size - 4);        /* obj_size >= 8 */
     k = win_lru[h];                             /* the least recently used way */
     wins[h][k].card = p;
@@ -200,6 +204,44 @@ static obj_t *mature_view(obj_t *p, uint16_t h)
     win_lru[h] = (uint8_t)(k ^ 1);
     win_ring += size;                           /* obj_size is always a multiple of 4 */
     return w;
+}
+
+/* p's header into *hd: young or static, in place; mature, from its window if
+ * it has one, else 4 bytes from the card -- and then, if p is small enough to
+ * view, the rest of it, as deref would, so the deref that usually follows (a
+ * thunk forced) costs no second read. A list too long to view is never viewed:
+ * its header is all anyone gets. */
+void obj_hdr(obj_t *p, obj_t *hd)
+{
+    obj_t *v = deref_or_hdr(p, hd);
+    if (v) *(uint32_t *)hd = *(uint32_t *)v;
+}
+
+/* deref, except that a mature object too big to view is not E_NOMEM: 0, with
+ * its header in *hd. A thunk's update needs the view of what it copies -- 12
+ * bytes or fewer -- and only the tag of anything else. */
+obj_t *deref_or_hdr(obj_t *p, obj_t *hd)
+{
+    uint16_t h, k;
+    if (IS_RAM(p)) return p;
+    if (p == 0) badnbc();
+    h = win_slot(p);
+    if ((k = win_find(p, h)) != WIN_NONE) return WIN_PTR(k);
+    return mature_view(p, h, hd, 1);
+}
+
+/* p's tag, for OBJ_TAG's mature case: deref's own path -- the window if it has
+ * one, else mature_view -- so as cheap as the deref it replaced (a2min's
+ * profile: through obj_hdr it was three calls, 4M cycles of tail-calls' 49M) */
+uint8_t obj_tag(obj_t *p)
+{
+    uint16_t h, k;
+    obj_t hd, *v;
+    if (p == 0) badnbc();
+    h = win_slot(p);
+    if ((k = win_find(p, h)) != WIN_NONE) return WIN_PTR(k)->tag;
+    v = mature_view(p, h, &hd, 1);
+    return v ? v->tag : hd.tag;
 }
 
 /* Element i of a LIST that may be mature; count is its length. Young: the list
@@ -217,11 +259,11 @@ static obj_t *mature_view(obj_t *p, uint16_t h)
 obj_t *list_elem(obj_t *l, uint16_t i, uint16_t count)
 {
     uint16_t h, k;
-    obj_t *e;
+    obj_t *e, hdr;
     if (IS_RAM(l)) return ELEMS(l)[i];
     h = win_slot(l);
     if ((k = win_find(l, h)) != WIN_NONE) return ELEMS(WIN_PTR(k))[i];
-    if (count < LIST_READ_MIN) return ELEMS(mature_view(l, h))[i];
+    if (count < LIST_READ_MIN) return ELEMS(mature_view(l, h, &hdr, 0))[i];
     card_read_at(PBITS(l) + (uint16_t)(4 + 4 * i), &e, 4);   /* i < 16K: the offset fits 16 bits */
     return e;
 }
@@ -232,11 +274,12 @@ obj_t *list_elem(obj_t *l, uint16_t i, uint16_t count)
 obj_t *deref(obj_t *p)
 {
     uint16_t h, k;
+    obj_t hdr;
     if (p == 0) badnbc();
     if (IS_RAM(p)) return p;
     h = win_slot(p);
     if ((k = win_find(p, h)) != WIN_NONE) return WIN_PTR(k);
-    return mature_view(p, h);
+    return mature_view(p, h, &hdr, 0);
 }
 
 /* The write barrier: a store into a mature object goes through the bus, and if
