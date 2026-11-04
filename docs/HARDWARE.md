@@ -1,7 +1,8 @@
 # Hardware: the physical card
 
-**Status: the carrier is designed and its fab package built (2026-10-28); the owner's
-review and the order are pending, and nothing is fabricated.** This document is the plan for
+**Status: the carrier is designed, laid out again on 4 layers and routed reproducibly, and its
+fab package built (2026-11-02); the owner's review and the order are pending, and nothing is
+fabricated.** This document is the plan for
 turning `rtl/a2nix_card.v` into a card that plugs into a real Apple IIgs, and for how an
 agent designs that card. It records the owner's decisions, the facts they rest on, and
 what is left to whoever builds it. As hardware lands, settled entries move to
@@ -54,8 +55,8 @@ step toward the same bitstream running in a real slot.
 
 ## Decisions
 
-The owner made HW-1, HW-2, HW-3, HW-7, HW-8, HW-9 and HW-10. The rest are the
-designer's calls, each open to the owner's veto.
+The owner made HW-1, HW-2, HW-3, HW-7, HW-8, HW-9, HW-10, HW-16, HW-17 and HW-18. The rest
+are the designer's calls, each open to the owner's veto.
 
 ### HW-1 -- ECP5 LFE5U-25F (BGA256) with 32 MB SDRAM; D10 stands *(owner)*
 
@@ -80,7 +81,8 @@ yosys/nextpnr -- the route is proven on this bus.
 ### HW-2 -- SKiDL + KiCad 10 + Freerouting *(owner)*
 
 The schematic is Python (SKiDL, MIT), which emits a netlist and an editable
-`.kicad_sch`. KiCad 10 does layout, ERC/DRC and fab outputs. Freerouting routes.
+`.kicad_sch`. KiCad 10 does layout, ERC/DRC and fab outputs. Freerouting routes what our own
+bus router leaves (HW-18).
 
 - KiCad 10.0.6 runs fully headless in a `sandbox = true` Nix build against this repo's
   pinned nixpkgs: ERC/DRC with JSON output, gerbers, renders, and a
@@ -93,9 +95,10 @@ The schematic is Python (SKiDL, MIT), which emits a netlist and an editable
   export); atopile (pre-release churn); a hand-drawn KiCad schematic (an agent cannot
   draw one well).
 
-### HW-3 -- A 2-layer bus carrier comes before the integrated card *(owner)*
+### HW-3 -- A bus carrier comes before the integrated card *(owner)*
 
-The toolchain is proven on a small real board: an Apple II slot card carrying the
+The toolchain is proven on a small real board (4 layers since plan 1b, HW-17): an Apple II
+slot card carrying the
 **bus section** (fingers, level shifters, capture buffer, reset hold, power, debug
 headers) and a DDR2 SODIMM-200 socket for an **iCESugar-Pro** module -- the same
 LFE5U-25F with 32 MB SDRAM and 106 free I/O. The bus section is one SKiDL subcircuit,
@@ -274,6 +277,139 @@ Departures from the first design, each because the first idea read the wrong art
 `kicad-cli` and KiKit run only on temporary copies of the board, so a gate never edits
 the committed one. `hw-timing` and `hw-rtl` are not built yet (plan 3).
 
+### HW-16 -- The data translator is a 74LVCR2245A: 26 Ω outputs, one supply *(owner)*
+
+The layout audit (plan 1b) estimated 18-23 pF on SLOT_D0-D5 against Apple's ≤ 15 pF and
+two LS loads [HWR 5-13], and the research found that strong LVC edges overshoot on the
+Apple bus. Big Mess o' Wires' Yellowstone card fixed that by moving to the 74LVCR2245,
+which has 26 Ω series resistors in every output (Yellowstone 2.x, https://www.bigmessowires.com/?p=7117
+and https://www.bigmessowires.com/?p=6645) **V** for the move, **I** for its effect on
+this card. The data translator U1 is now **SN74LVCR2245A** (SSOP-20 DBQ, `SN74LVCR2245ADBQR`,
+LCSC C2675819) in place of the SN74LVC8T245 [SCAS581N]:
+
+- One supply, +3V3 (1.65-3.6 V). No +5V pin, so the card needs no 5 V on U1 and the
+  bench-power risk of a dead VCCB (Owner's review 7) no longer applies to data.
+- Both ports are 5.5 V tolerant at any valid VCC, and VIH is 2.0 V at 2.7-3.6 V, so
+  the slot's 5 V levels read as highs; the part drives 3.3 V highs, which TTL reads.
+  Ioff (±10 µA at 5.5 V, VCC = 0) covers partial power-down and live insertion.
+- Function: OE=L DIR=L is B → A (slot → FPGA); DIR=H is A → B; OE=H isolates. The
+  power-up defaults are unchanged (/OE pulled up, DIR pulled down; `hw-intent`), and
+  the rules now say the part has no +5V pin and VCC is on +3V3. A side = FPGA
+  (`slot_d0..7`), B side = slot (`SLOT_D0..7`); the listen-only '541 still taps `SLOT_D*`.
+- Cost: the 26 Ω is on both ports, so the A side's edges into the FPGA are slowed too;
+  the budget (30-140 ns margins against sub-10 ns propagation) absorbs it **I**.
+  Package: the TSSOP-20 (PW, C467018) is out of stock at LCSC and JLCPCB (2026-10-29),
+  so the card uses the DBQ, an SSOP-20 at 0.635 mm pitch, 150 mil (C2675819, about 243 in
+  stock at LCSC). The ADBR (SN74LVCR2245ADBR, SSOP-20 208 mil, C2865353, 50 in stock) is a
+  fallback only in name: it is 208 mil against the DBQ's 150 mil, so using it means a new
+  footprint and a re-route of the data bus, not a part swap.
+  The DBQ's land pattern (KiCad `SSOP-20_3.9x8.7mm_P0.635mm`) is **I** until checked
+  against TI's DBQ0020A drawing, which SCAS581N does not print.
+
+Rejected: keeping the 8T245 and adding 22-33 Ω resistor arrays on the eight data lines.
+It adds two 4-resistor arrays (or eight 0603s) in the tightest part of the layout, a
+stub between buffer and resistor, and keeps the second supply (VCCB on the fused +5V);
+the LVCR2245 puts the resistors inside the package, at the pin, and needs one rail.
+
+### HW-17 -- The carrier has 4 layers: signals outside, a ground and a 3.3 V plane inside *(owner, 2026-10-31)*
+
+Plan 1b began with "stay 2-layer". On 2 layers the re-layout did not route in four full rounds
+(about 9 hours of routing): the jam moved each round, from the finger lane to the U1-U4 channel
+to the band between the translators and J2, and the best board still had 12 nets open and 19
+DRC errors. Those unfinished boards already met the electrical goals (worst slot pin 14.4 pF,
+clock coupled run 0 mm, detour median 1.09), so the owner moved the carrier to 4 layers:
+
+- **A solid ground plane.** Under the bus row, plan 1's back-side GND pour was 8 % copper,
+  chopped up by tracks; the In1 plane there is 94 % copper, its voids the vias' antipads
+  (`route_metrics.py`). The +3V3 plane on In2 feeds the bus section.
+- **Rev A needs 4 layers anyway** for its BGA, so the toolchain learns them on the carrier.
+
+The stackup is JLCPCB's **JLC04161H-7628**, 1.6 mm (the slot takes 1.57 mm): F.Cu (1 oz),
+7628 prepreg 0.2104 mm (εr 4.4), In1.Cu (0.5 oz), a 1.065 mm core, In2.Cu (0.5 oz), 7628
+prepreg 0.2104 mm, B.Cu (1 oz); ENIG, bevelled gold fingers, through vias only, 0.6/0.3 mm
+(JLCPCB's no-surcharge size). Sources, cited in `build_board.py`: the
+gsuberland/jlcpcb_autogenerated_stackups data and the biergaizi stackup gist (thicknesses),
+JITX's JLCPCB materials (εr 4.4 for 7628).
+
+- F.Cu and B.Cu carry the signals. In1.Cu is one GND zone and In2.Cu one +3V3 zone, both of
+  KiCad layer type `power`; there are no outer pours. The inner layers are planes only: a track
+  on In1 or In2 fails `hw-edge`, and so does inner copper in the finger tab or within 0.5 mm of
+  an edge, so the bevel never exposes an inner layer.
+- Every GND and +3V3 SMD pad reaches its plane through a short neck and a locked, tented via
+  within 1 mm (the plane fanout), or shares a neighbour's via through a short track; no via sits
+  on an SMD pad (`hw-drc`). The carrier has 114 such vias.
+- `hw-load` counts each via on a slot net: 0.586 pF, from Howard Johnson's via formula
+  (*High-Speed Digital Design*) with the stackup's numbers. The outer-layer microstrip works out
+  at 0.0732 pF/mm (IPC-2141); the gate keeps the 2-layer estimate's 0.10 pF/mm, the larger.
+- **Cost:** not checked. JLCPCB's 4-layer price for this board is to be read off their
+  calculator before ordering (Owner's review).
+
+4 layers alone did not make the board route: Freerouting still left 8 to 15 nets open (HW-18).
+
+### HW-18 -- The buses are planned and laid by our own deterministic router; Freerouting 2.5.0 routes the rest *(owner, 2026-11-01)*
+
+**Why.** Seven auto-routing rounds, on 2 and 4 layers, at 64 to 69.5 mm, with Freerouting
+2.4.1 and 2.5.0, each left nets open, wherever the router happened to jam (the table under "The
+layout pass, before and after"). The module covers the top 45 % of the board, so every part
+sits in a strip about 32 × 80 mm; a net-by-net router does not plan that strip as a whole, and
+a round took up to 3 hours. Rather than widen the board, give In2 to signals, or finish by
+hand, the owner chose to lay the buses the way they are laid by hand, by a program, and to pin
+Freerouting 2.5.0, whose output is the same on every run.
+
+**What was built** (plan 1b, Tasks 5d-5h):
+
+- **A routability gate, `hw-congestion`** (`check_congestion.py`): a coarse global router on a
+  0.5 mm grid with negotiated congestion (PathFinder style), on the placed board after the
+  plane fanout, in about a second. Overflow fails it, naming the cells and the nets through
+  them. Plan 1's routed board passes it, and planted faults (a narrowed gap, a blocked channel,
+  a doubled bus) fail it. The jammed 4-layer boards passed it too: the coarse level had room,
+  and the jams were in detail routing. So it is a necessary condition, run before `route` and in
+  `check`, not a promise that the route will close.
+- **The bus plan** (`plan_buses.py`): which J2 contact each FPGA-side bit takes, chosen so each
+  bus is a river, its nets in the same order at both ends, so no two cross on one layer. It is
+  the order-preserving dynamic programme over ordered matchings, least lateral travel first; a
+  test checks it against brute force on 200 random cases. Against the pin map before it, the
+  pairs of crossing nets within a river (and nets on the wrong J2 row) went from 25 to 0, and
+  lateral travel from 558.6 to 338.9 mm. The ratsnest crossing count rose (149 to 183): it
+  measures straight pad-to-pad lines, which are no longer the route.
+- **The bus router** (`bus_route.py`): lays the planned rivers (65 nets), the 8 clocks (Clock
+  class, 0.2 mm wide, 0.3 mm clear) and the 5 V rails in 13 Power-class pieces, and locks them.
+  Slot side: the address fingers (front side) run up on F.Cu into U2, the data fingers (back
+  side) up on B.Cu to vias under U1's and U4's bodies. FPGA side: up into J2's front row, or
+  under it and up from the 6.2 mm gap between J2's rows into the rear row, or through the empty
+  area under the module (the "highway"). Every track is straight or 45 degrees at computed offsets
+  and checked against the board before it is kept; a net that does not fit is reported and left
+  to Freerouting, never forced.
+- **The route** (`route.py`, `just -f hw/justfile route`): the congestion gate; the plane
+  fanout; the bus router; an A* first pass for a few listed nets; Freerouting 2.5.0 for the
+  rest; then a clean-up of Freerouting's session (copper on plane nets, stubs inside pads, vias
+  joined on one layer only, dead ends: dropped unless that would part a net); the clock
+  clearance repair; and an A* finisher for whatever is still apart. Of the 115 signal nets with
+  two or more pads, the bus router completes 72, the first pass 3 more, and Freerouting and the
+  finisher the last 40. Freerouting runs with a temporary HOME and XDG directories, so it never
+  writes `~/.config/freerouting`.
+- **Reproducible.** Every step is deterministic for the flake's pinned inputs (KiCad 10.0.6's
+  DSN export, SES import and zone refill; the pinned Freerouting 2.5.0 jar on JDK 25;
+  `ROUTER_THREADS` = 6; the `route` recipe's 20 passes), as checked on one machine. Bumping
+  nixpkgs or the jar means running `route` and `repro` again. So `just -f hw/justfile repro` routes a copy of
+  the committed board again and compares its copper, track for track (1576 tracks and vias,
+  with their lock flags), and fails on any difference. It takes as long as a route (about 15
+  minutes), so it is not part of `check`. The routed board is still committed source, and
+  `hw-drc` still ties it to the netlist.
+
+**Research.** Verified: Freerouting 2.5.0 was released on 2026-10-05
+([release notes](https://github.com/freerouting/freerouting/releases/tag/v2.5.0), read
+2026-11-02); they report its own benchmark (PCBench, 1157 open boards), where clean completion
+of the 560 routine 2-4 layer boards ("Tier B") rose from 3.4 % with 2.4.1 to 61.6 %, and a
+post-route optimizer made deterministic. On this board it was not better than 2.4.1 (on
+the same 68 mm board it left 13 nets open after the finisher, against 11), but its session file
+is byte-identical from run to run (a test runs it twice), which reproducibility needs.
+**Not verified at the source**, from the research notes: the river-routing programme (Leiserson
+and Pinter, "Optimal placement for river routing", SIAM J. Comput. 1983), PathFinder's
+negotiated congestion (McMurchie and Ebeling, FPGA 1995), the left-edge track assignment, and
+the practice of fixing pin order and breakout by hand and leaving the sparse rest to an
+autorouter.
+
 ## Facts the design rests on
 
 **V** = verified at the source given; **I** = inferred, check before relying on it.
@@ -382,7 +518,7 @@ No /IRQ, /NMI or /DMA in the signal list. RAM2GS puts a CPLD and SDRAM there
 ```
                  ┌────────────────────────── bus section (one SKiDL subcircuit) ──────────────────────────┐
  Apple II slot   │  A0-15, R/W ──── 74ALVC164245 ─────────────────────────────┐                         │
- 50-pin fingers ─┤  D0-7 ────────── SN74LVC8T245 (DIR, /OE from FPGA) ────────┤                         │
+ 50-pin fingers ─┤  D0-7 ────────── SN74LVCR2245A (DIR, /OE from FPGA) ───────┤                         │
                  │  D0-7 ────────── 74LVC541, listen-only (capture) ──────────┤                         │
                  │  PH0 PH1 7M Q3 ─ 74LVC2G17 (+ series-R footprints) ────────┼──► FPGA I/O (3.3 V)     │
                  │  selects, M2SEL, M2B0, RESET-in, INT/DMA IN ─ 5V-tol buffer┤                         │
@@ -398,10 +534,12 @@ No /IRQ, /NMI or /DMA in the signal list. RAM2GS puts a CPLD and SDRAM there
 
 ### The bus section *(designer's calls, from proven cards)*
 
-- **Data:** SN74LVC8T245, VCCB from the slot's 5 V. Default direction slot → FPGA;
-  /OE pulled high so it is off until the FPGA configures. The FPGA turns it toward the
-  slot only for a card read (/DEVSEL low, R/W high), from the first 7M↑ after PH0↑
-  until before PH0↓. A2FPGA uses the same part for data.
+- **Data:** SN74LVCR2245A (HW-16), on +3V3 alone: its I/O tolerate the slot's 5 V and
+  each output has a 26 Ω series resistor built in, which tames the overshoot a strong
+  LVC edge makes on the Apple bus. Default direction slot → FPGA; /OE pulled high so
+  it is off until the FPGA configures. The FPGA turns it toward the slot only for a
+  card read (/DEVSEL low, R/W high), from the first 7M↑ after PH0↑ until before
+  PH0↓. Big Mess o' Wires' Yellowstone uses the same family for data.
 - **Address and R/W:** 74ALVC164245 (A2FPGA's newer boards); it can drive the bus,
   keeping DMA possible.
 - **Listen-only data buffer:** a 74LVC541, always on. A driving '245 shows the FPGA
@@ -511,17 +649,21 @@ Three recorders, behind a passive tap:
    netlist, not the schematic.
 3. **Board:** created from the netlist, then a placement table applied by script
    (`pcbnew`). The fingers and outline come from a parametric script.
-4. **Fanout** *(card only):* a scripted dog-bone generator for the BGA.
-5. **Routing:** DSN → Freerouting → SES. Planes as zones.
-6. **DRC:** KiCad's (`--severity-error`, `--refill-zones`, rules from the `.kicad_pro`)
+4. **Fanout:** a scripted via for every plane pad (the carrier's GND and +3V3, HW-17); on the
+   card, also a dog-bone generator for the BGA.
+5. **Routing:** the congestion gate, then the planned buses laid by our own router, then DSN →
+   Freerouting 2.5.0 → SES for the rest, a clean-up and an A* finisher (HW-18). Planes as zones.
+6. **DRC:** KiCad's (`--severity-all`, `--refill-zones`, rules from the `.kicad_pro` and
+   `carrier.kicad_dru`; errors, unconnected items and the gated warnings fail it)
    plus our own netlist ↔ board parity, both in `check_drc.py`. Not KiCad's
    `--schematic-parity`, which reads the generated schematic rather than the netlist.
 7. **Renders:** per-layer SVGs and top/bottom PNGs. The agent looks at them; so does a
    person.
 8. **Fab outputs:** `kikit fab jlcpcb --assembly`, plus the Interactive HTML BOM.
 
-Routing is not reproducible, so the routed `.kicad_pcb` is committed source. The parity
-check is what ties it to the SKiDL netlist. Nets must come from pads and the netlist,
+The routed `.kicad_pcb` is committed source. Routing is deterministic for the pinned inputs (HW-18; bumping nixpkgs or the jar means `route` and `repro` again), and
+`hw-repro` checks that `route` lays the committed copper again; the parity check is what ties
+the board to the SKiDL netlist. Nets must come from pads and the netlist,
 never from net labels the agent writes onto tracks: in testing, KiCad silently moved a
 hand-written track that touched no pad onto another net, and DRC missed the short.
 
@@ -532,9 +674,12 @@ hand-written track that touched no pad onto another net, and DRC missed the shor
 | `hw-tests` | pytest over `hw/tests` | -- (the tests are the mutations) |
 | `hw-intent` | design intent from the netlist: power-up state, daisy chains, rails, module power (HW-15) | each rule has a planted fault |
 | `hw-erc` | SKiDL's `ERC()` on the netlist: zero errors | a planted second driver |
-| `hw-drc` | KiCad DRC zero errors, zero unconnected; netlist ↔ board parity; power tracks at class width bar short necks (GND exempt) | a deleted track |
+| `hw-drc` | KiCad DRC: zero errors, zero unconnected, and none of these warnings: a via joined on one layer or a track with a free end; silkscreen on a pad, on other silkscreen or over the edge; a footprint unlike its library, or with no library (the run gets a fp-lib-table). Ours: netlist ↔ board parity; power tracks at class width bar short necks (GND exempt); no via on an SMD pad | a pad on another net, a deleted footprint, a wrong footprint id, a short, a deleted track, a thinned +5V run (twice), a via in a pad, a dangling via, a dangling track, silkscreen on a pad, on a reference and over the edge, a pad grown from its library's, a footprint from a missing library |
 | `hw-pinmap` | netlist ↔ the board's `pins.toml` ↔ board-top RTL ports ↔ `.lpf` agree; bank VCCIO consistent | two balls swapped |
-| `hw-edge` | finger count, pitch, position, bevel keep-out | one finger moved |
+| `hw-edge` | finger count, pitch, position, bevel keep-out; no inner-layer copper in the tab or within 0.5 mm of an edge; no track on the inner layers | nine planted faults, among them one finger moved |
+| `hw-load` | every slot (J1) net ≤ 15 pF: routed copper at 0.10 pF/mm, 0.586 pF a via, and the datasheet capacitance of every IC pin on it, through 0 Ω links [HWR 5-13] | a lengthened track, a third buffer, a raised Ci, a net with no copper, a part missing from the table, an output pin, an unknown part, no IC pin, five vias |
+| `hw-congestion` | a coarse negotiated-congestion route of the placed board (after the plane fanout) has no overflow: the placement can route (HW-18) | a narrowed gap, a blocked channel, a doubled bus |
+| `hw-repro` | `route` lays the committed copper again, track for track. Not in `check` or `nix flake check`: it takes as long as a route (about 15 min); run `just -f hw/justfile repro` | a track end moved 1 µm, a via removed, a track widened, a stray via, a lock flag flipped |
 | `hw-bom` | every part has a footprint and an LCSC number | one LCSC number deleted |
 | `hw-fab` | the package's contents: layers, drill, one CPL row per assembled ref, renders. Not byte identity: KiCad stamps dates into gerbers | planted faults in a copy of the package |
 | `hw-timing` | nextpnr meets the shared card-clock constant (HW-8) and the capture clock on each board top | the constant raised past what routes |
@@ -553,8 +698,9 @@ connector against a real card; the shifters' direction/enable logic.
    - **done:** `nix develop .#hw` and the `hw-*` checks (tests, intent, erc, pinmap, edge,
      drc, bom, fab) exist, each proven able to fail;
    - **done, review pending:** the carrier is designed through the loop:
-     ERC/DRC/parity/pinmap/edge/BOM green, fab outputs and renders produced. The owner's
-     review of them is the list under "Owner's review";
+     ERC/DRC/parity/pinmap/edge/BOM green, fab outputs and renders produced. Plan 1b laid it out
+     again (the LVCR2245, 4 layers, the slot-pin load and congestion gates, deterministic
+     routing: HW-16 to HW-18). The owner's review of them is the list under "Owner's review";
    - plan 2: the core has `mem_ready` (HW-7), with the wait-state test and its mutation,
      and MAME and the harness unchanged in behaviour;
    - plan 2: the card clock is one constant (HW-8), and MAME's `CARD_CLOCK_HZ` follows it;
@@ -577,14 +723,17 @@ with no IIgs. It is not planned.
 
 | | |
 |---|---|
-| Outline | **80 mm long × 68 mm** above the finger tab, measured from the committed board. Height was raised from 64 mm so routing could complete; the limit is 69.85 mm (2.75", TN28). |
-| Stackup | 2 layers, 70 footprints. DRC: 0 errors, 0 unconnected. |
+| Outline | **80 mm long × 69.5 mm** above the finger tab (`placement.toml`). The limit is 69.85 mm (2.75", TN28). Plan 1b moved J2 and the top-edge headers up 2 mm to widen the band between the translators and J2; every other part moved down 1.5 mm with the fingers. |
+| Stackup | **4 layers**, JLC04161H-7628 (HW-17): signals on F.Cu and B.Cu, a GND plane on In1.Cu, a +3V3 plane on In2.Cu. 69 footprints, all on the top side. DRC: 0 errors, 0 unconnected, 0 warnings. |
+| Data translator | **SN74LVCR2245ADBQR** (HW-16), SSOP-20 0.635 mm, LCSC C2675819. |
+| Vias | 242, 0.6/0.3 mm, tented; 114 of them join plane pads to the planes. The data bus's slot side reaches U1 and U4 through vias under their bodies: tented, with nothing on the bottom side (see Owner's review). |
 | SODIMM socket | **TE 1473005-4** (LCSC C428482), DDR2 standard type, 5.2 mm module height. Land pattern from TE drawing C-1473005 rev J3, sheet 2; footprint generated by `hw/tools/footprints.py`. |
 | Module map | `hw/carrier/icesugar_pro_v1_3.toml`, from the module schematic (sha256 767cd3f1…) at wuxx/icesugar-pro commit 087e48d. 106 SODIMM pins carry PIOs; banks 0, 1, 2, 3, 6, 7 and 8 are all 3.3 V. Each pin's PIO label is checked against Trellis's site name. |
 | Power | D1 and VR1 (HW-14). |
 | Debug | Module USB, J4, JP1 (HW-13). |
-| Routing | Freerouting 2.4.1, which rejects `--router.copperToEdgeClearanceUm`, so edge clearance is DSN keep-out strips. A last-resort A* finisher in `route.py` joins the nets Freerouting leaves, at each net's class width; it refuses to thin power. Power net class ≥ 0.5 mm. Not reproducible, 15-30 min; the routed board is committed source. |
-| Silkscreen | R/C reference text is hidden (the iBOM shows designators). About 93 silkscreen warnings are left ungated. |
+| Routing | Deterministic (HW-18): the plane fanout, the bus router's rivers, clocks and 5 V pieces (locked), an A* first pass, Freerouting 2.5.0 for the rest, a clean-up of its session and an A* finisher. Edge clearance reaches Freerouting as DSN keep-out strips, and the finger tab as a via keep-out. Net classes: Default 0.15/0.15 mm; Power 0.5 mm, with necks of at most 1.5 mm no narrower than 0.3 mm (GND exempt: the plane carries it); Clock 0.2 mm wide and 0.3 mm clear. `just repro` routes it again and gets the same copper. |
+| Loads | Every slot pin ≤ 15 pF (`hw-load`); the worst five are SLOT_D7 14.3, SLOT_D5 13.9, SLOT_D6 13.9, SLOT_D3 13.6 and SLOT_D4 13.5 pF. |
+| Silkscreen | The name, the open-source-hardware gear and, under the module, an Apple II and the NixOS snowflake in ASCII (`artwork.toml`). Reference designators are placed by `silk.py`, beside their parts and clear of pads, other silkscreen and the edge: 60 shown; 8 with no clear place are hidden (C21, C22, R1, R3, R5, R7, R16, U10), and the fab layer and the iBOM still name them. `hw-drc` fails any silkscreen warning. |
 
 The module lies over the empty band above J2; nothing tall goes there.
 
@@ -592,18 +741,56 @@ The module lies over the empty band above J2; nothing tall goes there.
 
 | File | |
 |---|---|
-| `gerbers.zip` | JLCPCB gerbers and drill |
-| `bom.csv` | 21 lines, LCSC numbers; hand-fitted parts included |
-| `cpl.csv` | 66 rows, KiKit's JLC rotation corrections applied; J1, J4, JP1, JP2 excluded (hand-fitted or board copper) |
+| `gerbers.zip` | JLCPCB gerbers (four copper layers: top, inner 1 and 2, bottom), masks, paste, silkscreen, outline and drill |
+| `order-notes.txt` | the order options for JLCPCB's form (below) |
+| `bom.csv` | 21 rows, LCSC numbers; hand-fitted parts included |
+| `cpl.csv` | 65 rows, KiKit's JLC rotation corrections applied; J1, J4, JP1, JP2 excluded (hand-fitted or board copper) |
 | `ibom.html` | Interactive HTML BOM |
-| `render-top.png`, `render-bottom.png`, `layers/*.svg` | what the owner looks at |
+| `render-top.png`, `render-bottom.png`, `layers/*.svg` (F.Cu, In1.Cu, In2.Cu, B.Cu, F.Silkscreen, Edge.Cuts) | what the owner looks at |
 | `schematic.pdf` | the labels-only schematic |
 
 J1, the fingers, is board copper (`Fab = "pcb"`, no LCSC number).
 
-**JLC order options** live on the order form, not in the files: 2 layers, 1.6 mm FR-4,
-ENIG, gold fingers yes, 45° bevel, assembly on top side, BOM and CPL from the package.
-PCBWay is the alternative for hard gold (HW-4).
+**JLC order options** live on the order form; the package's `order-notes.txt` lists them: 4
+layers, 1.6 mm, stackup JLC04161H-7628 (impedance not controlled), 1 oz outer and 0.5 oz inner
+copper, ENIG, gold fingers with a 45° bevel on the J1 tab, tented through vias, assembly on the
+top side, BOM and CPL from the package. PCBWay is the alternative for hard gold (HW-4).
+
+### The layout pass, before and after (plan 1b)
+
+Plan 1's routed board (7430efe) against the board now (the copper of 4886212; Task 6 changed
+only the silkscreen). Measured with `route_metrics.py`, `assign_pins.py --report` and `hw-load`
+unless the row says otherwise.
+
+| | Plan 1 (7430efe) | Now |
+|---|---|---|
+| Layers | 2 | 4: GND plane on In1, +3V3 plane on In2 (HW-17) |
+| Height above the tab | 68 mm | 69.5 mm |
+| Detour, routed length over the pads' spanning tree: median, p90, max | 1.30, 1.91, 3.04 | 1.08, 1.38, 2.16 |
+| Vias, total (plane fanout) | 325 (none; 14 on GND) | 242 (114) |
+| Ratsnest crossings | 1093 (the audit's count, plan 1's netlist) | 183 |
+| Ground under the bus row (box round U1, U2, U4, U5) | B.Cu GND pour, 8 % copper | In1 GND plane, 94 % copper |
+| Worst slot pin | 22.4 pF, SLOT_D5 (`hw-load` at be0a3dc, plan 1's copper, before the via term) | 14.3 pF, SLOT_D7 (limit 15) |
+| Clock coupled run: longest stretch of clock track within 0.3 mm of another signal | 6.4 mm (slot_q3) | 0.0 mm |
+| Who laid the nets | Freerouting 2.4.1, then an A* finisher | of 115 signal nets, counting a net once it is whole after a stage: the bus router 72, the A* first pass 3, Freerouting 2.5.0 and the finisher 40 |
+| Reproducible | no | yes (`just repro`) |
+| KiCad warnings | 93, not gated | 0; the silkscreen and library ones fail `hw-drc` |
+
+(The 2026-10-29 audit put plan 1's ground under the bus row at about 33 %, by another
+measure; both rows above are `route_metrics.py`'s.)
+
+**The rounds that did not route** (the reason for HW-17 and HW-18). Open nets are those the
+router and the A* finisher left unjoined; from the plan 1b ledger.
+
+| Round | Layers, height | Router | Left |
+|---|---|---|---|
+| Task 5, first attempts | 2, 64 and 66 mm | Freerouting 2.4.1 | 4-6 nets at 64 mm; 3 nets and 54 DRC errors at 66 mm |
+| Task 5, three attempts with repair passes | 2, 68 mm | 2.4.1 | the same each time: slot_d7 and slot_d_dir with no path in the U1-U4 channel, and about 20 unjoined F.Cu GND islands |
+| Task 5, after moving R14 and routing GND again | 2, 68 mm | 2.4.1 | 12 FPGA-side nets; 19 DRC errors on the best board (a fourth attempt the same) |
+| Task 5b | 4, 64 mm (twice) and 68 mm | 2.4.1 | 15, 13 and 11 nets, all in the band from U1, U2 and U5 to J2 |
+| Task 5c | 4, 69.5 mm (three attempts) | 2.4.1 | 8 nets each time, the jam now in the finger lane |
+| Freerouting 2.5.0 trial, same 68 mm board as 5b | 4, 68 mm | 2.5.0 | 13 nets (2.4.1: 11) |
+| Task 5h, the bus router first | 4, 69.5 mm | bus router, then 2.5.0 | none |
 
 ## Design loop
 
@@ -615,9 +802,14 @@ Inside `nix develop .#hw`, from the repo root:
 | `just -f hw/justfile carrier` | netlist, schematic, LPF, ERC report in `build/hw/carrier`; then erc, intent and pinmap gates |
 | `just -f hw/justfile netlist` | `carrier`, then the bus section alone and the intent gate on it |
 | `just -f hw/justfile board` | fresh unrouted `carrier.kicad_pcb` from the netlist and `placement.toml`; then the edge gate. **Discards a route.** |
-| `just -f hw/justfile route [PASSES]` | Freerouting (default 20 passes; minutes), then the DRC and parity gate |
+| `just -f hw/justfile route [PASSES]` | the congestion gate, then the route (HW-18: the plane fanout, the bus router, Freerouting 2.5.0 with 20 passes by default, the clean-up and the finisher; about 15 min), then the DRC and load gates. Run `artwork` after it |
+| `just -f hw/justfile repro [PASSES]` | routes a copy of the committed board as `route` does and compares the copper with the committed board's; about as long as a route, so not in `check` |
+| `just -f hw/justfile congestion` | the routability gate alone (seconds) |
+| `just -f hw/justfile load` | the slot-pin load gate alone |
 | `just -f hw/justfile fab` | the BOM gate, the package in `build/hw/fab`, then the fab gate |
 | `just -f hw/justfile render` | the renders (runs `fab`) |
+| `just -f hw/justfile artwork` | the silkscreen art (`hw/carrier/artwork.toml`) onto the board, then the reference designators placed by `silk.py` (listing those hidden), without touching copper; then the board gates. After `board` or `route` |
+| `just -f hw/justfile readme-images` | the README's 3D renders in `hw/img`; needs the optional `nix develop .#hw-render` shell (KiCad's 3D models) |
 | `just -f hw/justfile check` | every `check_*.py` locally, in gate order, without re-routing |
 
 Each recipe runs the check's selftest before the check. `nix flake check` runs the same
@@ -632,7 +824,7 @@ The agent cannot judge intent. Before ordering, look at the package above for:
    above J2.
 2. **The SODIMM footprint** against TE drawing C-1473005 sheet 2, and pin 1 and key
    orientation against a real iCESugar-Pro.
-3. **Translator direction and enable nets** in `schematic.pdf`: the 8T245's /OE pulled
+3. **Translator direction and enable nets** in `schematic.pdf`: the LVCR2245A's /OE pulled
    up and DIR pulled down; the 74ALVC164245 the same; the 1T45's DIR.
 4. **BOM LCSC numbers** against the intended parts (`bom.csv` carries the MPN).
 5. **The finger tab** against a real Apple II card (open question 5): TAB_WIDTH
@@ -640,11 +832,34 @@ The agent cannot judge intent. Before ordering, look at the package above for:
 6. **The module's USB connector:** whether it is reachable with the card in a slot.
 7. **Residual electrical risks:**
    - the 74ALVC164245 has no Ioff;
-   - on USB-only bench power, `+5V` (the slot side, VCCB) is dead while `+3V3` is live;
+   - on USB-only bench power, `+5V` (the slot side, VCCB) is dead while `+3V3` is live
+     (the data translator no longer has a VCCB: HW-16);
    - the carrier's buffers drive the module's FPGA pins and could back-power its VCCIO
      if the module's 3V3 lags.
-8. **Hidden R/C designators**, and the ~93 silkscreen warnings.
+8. **The 8 hidden reference designators** (C21, C22, R1, R3, R5, R7, R16, U10: no clear place
+   beside their parts), and where `silk.py` put the other 60.
 9. **JLC's CPL preview**, to confirm part rotations.
+10. **The SN74LVCR2245ADBQR land pattern**: KiCad's `SSOP-20_3.9x8.7mm_P0.635mm` against TI's
+    DBQ0020A package drawing, which the datasheet (SCAS581N) does not print (HW-16).
+11. **SLOT_D7's load margin:** 14.3 pF against the 15 pF limit, 0.7 pF to spare, on an
+    estimate (0.10 pF/mm, 0.586 pF a via, typical datasheet Ci).
+12. **The tented vias under IC bodies:** the slot data nets reach U1 and U4 through vias under
+    the packages (mask-tented; nothing on the bottom side).
+13. **JLCPCB's 4-layer price**, from their calculator: it was not checked (HW-17).
+14. **The order notes** (`order-notes.txt`): 4 layers, stackup JLC04161H-7628, ENIG,
+    bevelled gold fingers, "Remove order number" (JLC prints its order number on the silkscreen
+    otherwise; the card has no place kept for it).
+15. **LCSC stock and fees, on order day.** Re-check stock for every BOM line, and the
+    extended-part fees. The data translator U1 (SN74LVCR2245ADBQR, C2675819) had about 243
+    in stock when this was written; the ADBR is no drop-in (HW-16: a new footprint and a
+    re-route).
+16. **+5V_MOD's long run.** It is 178 mm of copper at 0.5 mm, about 0.18 ohm (35 um copper).
+    The module's current is assumed to be at most the card's 300 mA target at +5 V, so the
+    run drops about 0.05 V, plus D1's Vf; the module's SY8008 bucks have headroom (HW-14).
+    Check that against the module's real draw.
+17. **The relaxed clock clearances.** The Clock class keeps 0.3 mm, not 0.4 (P12), and inside
+    J2_ESCAPE (J2's courtyard grown 2 mm) it relaxes to 0.15 mm (P16), for the socket's
+    0.5 mm-pitch fan-out. Judge the coupling on the clocks' short runs there.
 
 ## Open questions only a real IIgs answers
 
@@ -659,7 +874,7 @@ The agent cannot judge intent. Before ordering, look at the package above for:
 ## Left to the builder
 
 Part choices not named here (rev A's regulators, flash, oscillator, polyfuse; the
-carrier's are in "The carrier as built"); the stackup; the SDRAM controller (write one, or adapt an open core); the
+carrier's are in "The carrier as built"); rev A's stackup (the carrier's is HW-17); the SDRAM controller (write one, or adapt an open core); the
 exact capture record format and the host readout tool (openocd, pyftdi, or a small
 script); footprint sources and their licences; Nix packaging details; how a netlist
 change updates an already-routed board without losing placement.
@@ -704,6 +919,12 @@ Not changed here; these belong to the docs and RTL the software agent owns.
 - KiCad 10 CLI: https://docs.kicad.org/10.0/en/cli/cli.html ; SWIG removal: https://dev-docs.kicad.org/en/apis-and-binding/pcbnew/
 - SKiDL: https://pypi.org/project/skidl/ ; Freerouting: https://github.com/freerouting/freerouting/releases ;
   KiKit: https://github.com/yaqwsx/KiKit
+- Freerouting 2.5.0 (2026-10-05), the release this repo pins (`nix/pkgs/freerouting.nix`):
+  https://github.com/freerouting/freerouting/releases/tag/v2.5.0
+- The JLC04161H-7628 stackup: the gsuberland/jlcpcb_autogenerated_stackups data, the biergaizi
+  JLCPCB stackup gist and JITX's JLCPCB materials, as cited in `hw/tools/build_board.py`. Via
+  capacitance: Howard Johnson and Martin Graham, *High-Speed Digital Design*; microstrip
+  capacitance: IPC-2141 (both in `hw/tools/check_load.py`)
 - JLCPCB gold fingers: https://jlcpcb.com/help/article/jlcpcb-gold-fingers ; BGA guidelines:
   https://jlcpcb.com/help/article/243-BGA-Design-Guidelines---PCB-Layout-Recommendations-for-BGA-packages ;
   PCBWay capabilities: https://www.pcbway.com/capabilities.html

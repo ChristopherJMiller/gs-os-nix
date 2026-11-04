@@ -5,7 +5,8 @@ daisy-chain pass-throughs and the slot-side fuse and bypassing.
 
 One SKiDL subcircuit, reused unchanged on the carrier and the integrated card
 (docs/HARDWARE.md "The bus section"). The A side of every translator is the FPGA (3.3 V,
-`+3V3`), the B side the slot (5 V, the fused `+5V`). `python3 -m hw.src.slot_bus
+`+3V3`), the B side the slot (5 V, the fused `+5V`); the data translator is the exception
+(a single-supply 74LVCR2245A on `+3V3`, HW-16). `python3 -m hw.src.slot_bus
 --netlist OUT.net` writes the section alone.
 
 Power-up state (the Review Focus the hw-intent check pins): every slot-facing driver is
@@ -16,8 +17,27 @@ fitted.
 
 Datasheets (TI; each checked for pinout, function table and which supply the control
 pins are referenced to):
-  [LVC8T245]  SN74LVC8T245 SCES584D, table 7-1: OE=L DIR=L "B data to A bus"; OE=H both
-              ports Hi-Z; DIR and OE are referenced to VCCA; pins table 4-1.
+  [LVCR2245A] SN74LVCR2245A SCAS581N (TI, rev. Nov 2014): 1.65-3.6 V VCC, one supply (no
+              second rail). Features: "All Outputs Have Equivalent 26-ohm Series
+              Resistors" and section 9.1: "All outputs ... include equivalent 26-ohm
+              resistors to reduce overshoot and undershoot" -- on EVERY output, so both
+              the A port (toward the FPGA) and the B port (toward the slot). Table 2:
+              OE=L DIR=L "B data to A bus", OE=L DIR=H "A data to B bus", OE=H
+              "Isolation" (DIR, OE are plain inputs on VCC). Pins (the pin table covers "DB, DBQ, DGV, DW, NS, OR PW" alike; TSSOP-20 PW and SSOP-20 DBQ share them): DIR 1,
+              A1..A8 2..9, GND 10, B8..B1 11..18, OE 19, VCC 20. I/O tolerate 5.5 V at
+              any valid VCC (VI 0..5.5 V; VO 0..5.5 V in 3-state; "5-V Input/Output
+              Voltage With 3.3-V VCC"); VIH 2 V at 2.7-3.6 V, so the card's 5 V TTL bus
+              levels read as highs. Ioff: +-10 uA at VI or VO = 5.5 V with VCC = 0
+              ("Ioff Supports Live Insertion, Partial-Power-Down Mode, and Back-Drive
+              Protection"), so a powered slot does not back-feed an unpowered card. VOH
+              is a 3.3 V high, which a TTL input reads (VIH 2.0 V). Section 9.1 also
+              says OE should be tied to VCC through a pull-up to hold Hi-Z in power-up.
+              The KiCad library has no LVCR2245 symbol; `74xx:74HC245` is the same
+              '245 pinout (A->B = DIR 1, A0..A7 = 2..9, GND 10, B7..B0 = 11..18, CE =
+              OE 19, VCC 20); the datasheet's A1..A8 / B1..B8 are the symbol's A0..A7 / B0..B7.
+              Evidence for the swap: Big Mess o' Wires' Yellowstone 2.x moved to the
+              74LVCR2245 for the same reason (https://www.bigmessowires.com/?p=7117,
+              ?p=6645); HW-16 in docs/HARDWARE.md.
   [ALVC164245] SN74ALVC164245 SCAS416Q, table 3: the same function table, per 8-bit
               section; control pins "powered by VCCA"; A port 2.3-3.6 V, B port 3-5.5 V.
               The datasheet numbers bits 1..8 where this design (and the RTL) says 0..7;
@@ -67,8 +87,16 @@ C_100N = ("100nF", "CC0603KRX7R9BB104", "C14663")  # basic, 50 V X7R
 C_10U = ("10uF", "CL10A106KP8NNNC", "C19702")      # basic, 10 V X5R
 
 IC = {  # key: (symbol lib, symbol, value, footprint, MPN, LCSC)
-    "8T245": ("Logic_LevelTranslator", "SN74LVC8T245", "SN74LVC8T245",
-              "Package_SO:TSSOP-24_4.4x7.8mm_P0.65mm", "SN74LVC8T245PWR", "C27643"),
+    # KiCad has no LVCR2245 symbol; 74HC245 is the '245 pinout the part shares (see
+    # [LVCR2245A] above). Every TSSOP-20 (PW) variant, e.g. SN74LVCR2245APWR C467018, had
+    # zero stock on LCSC and JLCPCB on 2026-10-29, so the card uses the DBQ: LCSC C2675819 =
+    # SN74LVCR2245ADBQR, SSOP-20 150 mil, 0.635 mm pitch, 243 in stock on the LCSC page
+    # 2026-10-29 (254 on JLCPCB's listing earlier that day). Fallback: SN74LVCR2245ADBR,
+    # C2865353 (SSOP-20 208 mil, 50 in stock). The KiCad SSOP-20_3.9x8.7mm_P0.635mm land
+    # pattern is NOT checked against TI's DBQ0020A drawing: SCAS581N prints drawings for
+    # DB, DW and PW only; do that before ordering (Task 4).
+    "LVCR2245": ("74xx", "74HC245", "SN74LVCR2245A",
+                 "Package_SO:SSOP-20_3.9x8.7mm_P0.635mm", "SN74LVCR2245ADBQR", "C2675819"),
     "164245": ("74xx", "SN74ALVC164245DGG", "74ALVC164245",
                "Package_SO:TSSOP-48_6.1x12.5mm_P0.5mm", "SN74ALVC164245DGGR", "C7128"),
     "1T45": ("Logic_LevelTranslator", "SN74LVC1T45DBV", "SN74LVC1T45",
@@ -214,18 +242,23 @@ def slot_bus(p5v: Net, p3v3: Net, gnd: Net) -> SlotBus:
     def fpga(name: str) -> Net:
         return b.net(name)
 
-    # --- data: SN74LVC8T245. A = FPGA, B = slot. DIR low = B->A (slot -> FPGA). ---
-    d = b.ic("8T245")
-    b.tie(n3, *_named(d, "V_{CCA}"))
-    b.tie(n5, *_named(d, "V_{CCB}"))  # fused +5V, never +5V_SLOT
+    # --- data: SN74LVCR2245A on +3V3 alone (26 ohm built into every output, HW-16).
+    # A = FPGA, B = slot. DIR low = B->A (slot -> FPGA); the symbol calls DIR "A->B". ---
+    d = b.ic("LVCR2245")
+    b.tie(n3, *_named(d, "VCC"))
     b.tie(g, *_named(d, "GND"))
-    b.tie(fpga("slot_d_dir"), *_named(d, "DIR"))
-    b.tie(fpga("slot_d_oe_n"), *_named(d, "~{OE}"))
+    b.tie(fpga("slot_d_dir"), *_named(d, "A->B"))
+    b.tie(fpga("slot_d_oe_n"), *_named(d, "CE"))
+    # Bit i rides channel 7 - i, so the slot pins B7..B0 (11..18) read D0..D7 and the pins
+    # ascend with the bit number (11 + i), as do the data fingers along the card. The
+    # pairing is arbitrary (any channel carries any bit; A and B of one channel are the
+    # same bit), and this order lets the part sit with its slot side toward the fingers
+    # without crossing its wires (the 541 below already ascends: A0..A7 are pins 2..9).
     for i in range(8):
-        b.tie(fpga(f"slot_d{i}"), *_named(d, f"A{i + 1}"))
-        b.tie(b.net(f"SLOT_D{i}"), *_named(d, f"B{i + 1}"))
-    b.c(C_100N, n3, g)  # VCCA
-    b.c(C_100N, n5, g)  # VCCB (pins 23 and 24 are adjacent: one capacitor)
+        ch = 7 - i
+        b.tie(fpga(f"slot_d{i}"), *_named(d, f"A{ch}"))
+        b.tie(b.net(f"SLOT_D{i}"), *_named(d, f"B{ch}"))
+    b.c(C_100N, n3, g)  # VCC
 
     # --- address: 74ALVC164245, A0-A15. A = FPGA, B = slot. Either DIR low = B->A. ---
     a = b.ic("164245")
@@ -271,10 +304,13 @@ def slot_bus(p5v: Net, p3v3: Net, gnd: Net) -> SlotBus:
         b.c(C_100N, n3, g)
 
     lvc541([(f"SLOT_D{i}", f"slot_dl{i}") for i in range(8)])
-    lvc541([("SLOT_DEVSEL_N", "slot_devsel_n"), ("SLOT_IOSEL_N", "slot_iosel_n"),
-            ("SLOT_IOSTRB_N", "slot_iostrb_n"), ("SLOT_M2SEL_N", "slot_m2sel_n"),
-            ("SLOT_M2B0", "slot_m2b0"), ("SLOT_RESET_N", "slot_reset_n"),
-            ("SLOT_SYNC_N", "slot_sync_n")])
+    # The control inputs take the pins in the order of their fingers along the card (pins 1,
+    # 41, 39, 35, 19, 20, 31: IOSEL, DEVSEL, M2SEL, M2B0, SYNC, IOSTRB, RESET), so the part
+    # sits above them without their wires crossing.
+    lvc541([("SLOT_IOSEL_N", "slot_iosel_n"), ("SLOT_DEVSEL_N", "slot_devsel_n"),
+            ("SLOT_M2SEL_N", "slot_m2sel_n"), ("SLOT_M2B0", "slot_m2b0"),
+            ("SLOT_SYNC_N", "slot_sync_n"), ("SLOT_IOSTRB_N", "slot_iostrb_n"),
+            ("SLOT_RESET_N", "slot_reset_n")])
 
     # --- clocks: 74LVC2G17 Schmitt buffers, each output through a 0 ohm series
     #     resistor (a footprint for a damping resistor if an edge rings). ---

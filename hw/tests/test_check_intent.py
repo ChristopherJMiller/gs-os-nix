@@ -41,10 +41,10 @@ def synthetic(with_module: bool = False) -> Netlist:
         _add(nl, f"R{i}", "10k", {"1": net, "2": rail})
     _add(nl, "R30", "1k", {"1": "JP2_3V3", "2": "+3V3"})
     _add(nl, "JP2", "Jumper", {"1": "slot_reset_n_o", "2": "JP2_3V3"})
-    d = {"1": "+3V3", "23": "+5V", "24": "+5V"}
-    d.update({str(3 + i): f"slot_d{i}" for i in range(8)})
-    d.update({str(21 - i): f"SLOT_D{i}" for i in range(8)})
-    _add(nl, "U1", "SN74LVC8T245", d)
+    d = {"20": "+3V3"}  # single supply: no +5V pin
+    d.update({str(2 + i): f"slot_d{i}" for i in range(8)})
+    d.update({str(18 - i): f"SLOT_D{i}" for i in range(8)})
+    _add(nl, "U1", "SN74LVCR2245A", d)
     _add(nl, "U2", "74ALVC164245", {"31": "+3V3", "42": "+3V3", "7": "+5V", "18": "+5V"})
     _add(nl, "U3", "SN74LVC1T45", {"1": "+3V3", "6": "+5V"})
     _add(nl, "U4", "74LVC541", {"20": "+3V3", **{str(2 + i): f"SLOT_D{i}" for i in range(8)}})
@@ -115,3 +115,17 @@ def test_jp2_straight_to_3v3_is_accepted():
     ci._drop(nl, "R30")
     ci._move(nl, "JP2", "2", "+3V3")
     assert ci.problems(nl) == []
+
+
+def test_lvcr_mutations_trip_their_own_rule():
+    for name, needle in [("lvcr_on_5v", "U1 (SN74LVCR2245A) pin 20 is on +5V"),
+                         ("dir_pull_to_3v3", "slot_d_dir has no pull-down")]:
+        nl = copy.deepcopy(synthetic())
+        ci.MUTATIONS[name](nl)
+        assert any(needle in p for p in ci.problems(nl)), name
+
+
+def test_lvcr_vcc_must_be_3v3():
+    nl = copy.deepcopy(synthetic())
+    ci._move(nl, "U1", "20", "NOT_3V3")
+    assert any("U1 (SN74LVCR2245A) supply pin 20" in p for p in ci.problems(nl))

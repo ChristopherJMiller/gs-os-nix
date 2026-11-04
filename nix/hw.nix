@@ -18,6 +18,9 @@ let
   # KiCad's Python bindings (`kicad`) are built for nixpkgs' default python3.
   py = pkgs.python3.withPackages (p: [ p.kicad skidl schematizer p.pytest ]);
 
+  # 2.5.0, pinned (nixpkgs has 2.4.1): its output is the same on every run.
+  freerouting25 = pkgs.callPackage ./pkgs/freerouting.nix { };
+
   libs = pkgs.kicad-small.passthru.libraries;
 
   hwEnv = {
@@ -30,7 +33,7 @@ let
   tools = with pkgs; [
     kicad-small
     py
-    freerouting
+    freerouting25
     kikit
     interactive-html-bom
     verilator
@@ -87,6 +90,25 @@ in
     else
       pkgs.mkShell { name = "gs-os-nix-hw-linux-only"; };
 
+  # devShells.<system>.hw-render: the hw shell plus KiCad's 3D model library (a large
+  # download), only for the README renders (`just -f hw/justfile readme-images`). No check
+  # and no package uses it, so `nix flake check` and `nix develop .#hw` never fetch the
+  # library. GSNIX_3DMODEL_DIR is our own models, the checkout's hw/lib/gsnix.3dshapes.
+  renderShell =
+    if pkgs.stdenv.hostPlatform.isLinux then
+      pkgs.mkShell (hwEnv // {
+        name = "gs-os-nix-hw-render";
+        packages = tools ++ [ pkgs.just pkgs.trellis ];
+        KICAD10_3DMODEL_DIR = "${libs.packages3d}/share/kicad/3dmodels";
+        shellHook = ''
+          export GSNIX_3DMODEL_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/hw/lib/gsnix.3dshapes"
+          echo "gs-os-nix hw-render  --  the hw shell plus KiCad's 3D models, for the renders"
+          echo "  kicad-cli $(kicad-cli version 2>&1 | head -1)"
+        '';
+      })
+    else
+      pkgs.mkShell { name = "gs-os-nix-hw-render-linux-only"; };
+
   checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
     hw-tests = hwCheck "tests" ''
       python3 -m pytest -q hw/tests && echo 'HW TESTS OK'
@@ -137,6 +159,21 @@ in
       python3 hw/tools/check_drc.py --netlist ${carrierBuild}/carrier.net \
         hw/carrier/carrier.kicad_pcb
     '' [ "^HW DRC SELFTEST OK" "^HW DRC OK" ];
+
+    # Apple's slot-pin load rule (HWR 5-13): every J1 net's routed copper (0.1 pF/mm) plus
+    # the input capacitance of every IC pin on it stays within 15 pF.
+    hw-load = hwCheck "load" ''
+      python3 hw/tools/check_load.py --selftest
+      python3 hw/tools/check_load.py --netlist ${carrierBuild}/carrier.net \
+        hw/carrier/carrier.kicad_pcb
+    '' [ "^HW LOAD SELFTEST OK" "^HW LOAD OK" ];
+
+    # The routability gate on the placed board: a coarse negotiated-congestion router, after
+    # the plane fan-out, must find every signal net a route within the capacity of the cells.
+    hw-congestion = hwCheck "congestion" ''
+      python3 hw/tools/check_congestion.py --selftest
+      python3 hw/tools/check_congestion.py hw/carrier/carrier.kicad_pcb
+    '' [ "^HW CONGESTION SELFTEST OK" "^HW CONGESTION OK" ];
 
     # Every part that is ordered has an LCSC number (J1, the edge fingers, is the one
     # exemption), on the board and in the netlist.

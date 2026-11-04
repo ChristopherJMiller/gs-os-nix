@@ -37,7 +37,7 @@ carrier:
 
 # The board: carrier.kicad_pcb and carrier.kicad_pro from the netlist and placement.toml,
 # then the edge gate (selftest first). This starts a fresh, unrouted board, so it discards a
-# route: run `route` after it.
+# route: run `route` after it, then `artwork` (a fresh board has no art).
 board: carrier
     cd {{justfile_directory()}}/.. \
       && python3 hw/tools/build_board.py build/hw/carrier/carrier.net hw/carrier/placement.toml \
@@ -45,16 +45,35 @@ board: carrier
       && python3 hw/tools/check_edge.py --selftest hw/carrier/carrier.kicad_pcb \
       && python3 hw/tools/check_edge.py hw/carrier/carrier.kicad_pcb
 
-# Route the carrier with Freerouting (minutes; the result is not reproducible, so the
-# routed board is committed), then the DRC and parity gate on it (selftest first).
-# Starts from `board`'s placement; run `board` first after changing placement.toml.
+# The congestion gate first (selftest first; it stops a placement that cannot route, in seconds).
+# Then route the carrier (the routed board is committed): the plane fanout; the planned buses
+# (bus_route.py lays plan_buses.py's rivers, then the clocks by the A* finisher), locked; the
+# first pass for the nets of its list still open; then Freerouting for the rest, then the repair
+# passes. Then the DRC and parity gate and the load gate on it (selftest first).
+# Starts from `board`'s placement; run `board` first after changing placement.toml, and `artwork` after.
 route PASSES="20":
     cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/check_congestion.py --selftest \
+      && python3 hw/tools/check_congestion.py hw/carrier/carrier.kicad_pcb \
+           --heatmap build/hw/congestion.png \
       && python3 hw/tools/route.py hw/carrier/carrier.kicad_pcb --passes {{PASSES}} \
+           --first --repair \
       && python3 hw/tools/check_drc.py --selftest --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb \
       && python3 hw/tools/check_drc.py --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_load.py --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb
+
+# The reproducibility check (selftest first): route a temporary copy of the committed board as
+# `route` does (the same route.py flags and passes) and compare its copper, track for track,
+# with the committed board's. Every step of the route is deterministic for the flake's pinned
+# inputs (one machine checked), so they must be the same; after bumping nixpkgs or the jar, run
+# `route` then this. It takes as long as a route (minutes), so it is not part of `check`; run it after `route`.
+repro PASSES="20":
+    cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/check_repro.py --selftest hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_repro.py hw/carrier/carrier.kicad_pcb --passes {{PASSES}}
 
 # The BOM gate, then the JLCPCB package and review artefacts (gerbers, BOM, CPL, ibom,
 # renders, layer SVGs, schematic PDF) in build/hw/fab, then the fab gate on them.
@@ -73,14 +92,25 @@ fab: carrier
 # The renders alone: build/hw/fab/render-{top,bottom}.png and layers/*.svg.
 render: fab
 
-# Refresh the board pictures in hw/README.md from the fab renders. Run after the board changes.
-readme-images: fab
+# The silkscreen art (name, open-source-hardware logo, ASCII art; hw/carrier/artwork.toml)
+# applied to the committed board, in place, without touching copper, then the reference
+# designators placed by rule (silk.py: clear of pads, other silkscreen and the edge, beside their
+# part; the few with no clear place are hidden and listed). Idempotent. Run it after `board`,
+# which makes a board without art, and after `route`. Then the board gates.
+artwork: carrier
     cd {{justfile_directory()}}/.. \
-      && install -m 644 build/hw/fab/render-top.png hw/img/carrier-top.png \
-      && install -m 644 build/hw/fab/render-bottom.png hw/img/carrier-bottom.png
+      && python3 -m hw.tools.artwork hw/carrier/carrier.kicad_pcb hw/carrier/artwork.toml \
+      && just -f hw/justfile gate-board
 
-# The edge and DRC gates (selftest first) on the committed board. DRC needs the netlist, so
-# this runs after `carrier`. It does not route.
+# Refresh the pictures in hw/README.md: hw/img/carrier-{iso,top,bottom}.png, 3D renders with
+# every package, the J2 socket body and the silkscreen art. Needs KiCad's 3D model library, so
+# run it in `nix develop .#hw-render`, not `.#hw`. Run after the board changes.
+readme-images:
+    cd {{justfile_directory()}}/.. \
+      && python3 -m hw.tools.render --board hw/carrier/carrier.kicad_pcb --out hw/img
+
+# The edge, DRC, load and congestion gates (selftest first) on the committed board. DRC and load need the
+# netlist, so this runs after `carrier`. It does not route.
 gate-board: carrier
     cd {{justfile_directory()}}/.. \
       && python3 hw/tools/check_edge.py --selftest hw/carrier/carrier.kicad_pcb \
@@ -88,9 +118,33 @@ gate-board: carrier
       && python3 hw/tools/check_drc.py --selftest --netlist build/hw/carrier/carrier.net \
            hw/carrier/carrier.kicad_pcb \
       && python3 hw/tools/check_drc.py --netlist build/hw/carrier/carrier.net \
-           hw/carrier/carrier.kicad_pcb
+           hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_load.py --selftest \
+      && python3 hw/tools/check_load.py --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb \
+      && python3 hw/tools/check_congestion.py --selftest \
+      && python3 hw/tools/check_congestion.py hw/carrier/carrier.kicad_pcb \
+           --heatmap build/hw/congestion.png
 
 # Every gate, locally, in this order: tests; then (via `carrier`) erc, intent, pinmap; then
-# the bus section's intent (`netlist`); then edge, drc (with power-track width); then (via
-# `fab`) bom and the package's fab gate. Never routes or rewrites the board.
+# the bus section's intent (`netlist`); then edge, drc (with power-track width), load; then (via
+# `fab`) bom and the package's fab gate. (`gate-board` ends with the congestion gate.) Never routes or rewrites the board.
 check: test carrier netlist gate-board fab
+
+# The slot-pin load gate (selftest first): every J1 net <= 15 pF (Apple HWR 5-13). Part of
+# `gate-board` and `check`.
+load: carrier
+    cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/check_load.py --selftest \
+      && python3 hw/tools/check_load.py --netlist build/hw/carrier/carrier.net \
+           hw/carrier/carrier.kicad_pcb
+
+# The routability gate (selftest first): a coarse negotiated-congestion router on the placed
+# board, as route.py would see it after the plane fan-out. Fails, with the worst cells and the
+# nets through them, when the placement cannot route; writes build/hw/congestion.png (utilisation
+# per layer). Seconds. Part of `gate-board`, `check` and, before the router, `route`.
+congestion:
+    cd {{justfile_directory()}}/.. \
+      && python3 hw/tools/check_congestion.py --selftest \
+      && python3 hw/tools/check_congestion.py hw/carrier/carrier.kicad_pcb \
+           --heatmap build/hw/congestion.png

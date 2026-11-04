@@ -6,8 +6,9 @@
 
 DIR is what `hw/tools/fab.py` wrote. It must hold:
 
-* gerbers.zip with the F_Cu, B_Cu, F_Mask, B_Mask, F_Silkscreen, B_Silkscreen and
-  Edge_Cuts gerbers and a drill file;
+* gerbers.zip with the F_Cu, In1_Cu, In2_Cu, B_Cu (the board has four copper layers),
+  F_Mask, B_Mask, F_Silkscreen, B_Silkscreen and Edge_Cuts gerbers and a drill file;
+* order-notes.txt, naming the stackup JLCPCB is to use (JLC04161H-7628, 4 layers, ENIG);
 * cpl.csv with exactly one row for every board reference that is neither
   `Assembly = "hand"` nor board copper (`Fab = "pcb"`), and no row for any other;
 * bom.csv, both renders, ibom.html, schematic.pdf and layers/*.svg, non-empty.
@@ -30,11 +31,17 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # KiKit names the gerbers by layer role; the KiCad plot names are accepted too.
-GERBERS = {"F_Cu": "CuTop", "B_Cu": "CuBottom", "F_Mask": "MaskTop", "B_Mask": "MaskBottom",
+GERBERS = {"F_Cu": "CuTop", "In1_Cu": "inner1", "In2_Cu": "inner2", "B_Cu": "CuBottom",
+           "F_Mask": "MaskTop", "B_Mask": "MaskBottom",
            "F_Silkscreen": "SilkTop", "B_Silkscreen": "SilkBottom", "Edge_Cuts": "EdgeCuts"}
 FILES = ["bom.csv", "cpl.csv", "ibom.html", "render-top.png", "render-bottom.png",
-         "schematic.pdf", "layers/F.Cu.svg", "layers/B.Cu.svg",
+         "schematic.pdf", "order-notes.txt", "layers/F.Cu.svg", "layers/In1.Cu.svg",
+         "layers/In2.Cu.svg", "layers/B.Cu.svg",
          "layers/F.Silkscreen.svg", "layers/Edge.Cuts.svg"]
+
+
+# What the order notes must name (fab.order_notes writes them).
+ORDER_NOTE_TOKENS = ("4 layers", "JLC04161H-7628", "ENIG", "gold fingers", "Remove order number")
 
 
 def placed_refs(board) -> set[str]:
@@ -63,6 +70,13 @@ def problems(d: Path, board) -> list[str]:
         p = d / f
         if not p.is_file() or p.stat().st_size == 0:
             out.append(f"{f} is missing or empty")
+    notes = d / "order-notes.txt"
+    if notes.is_file():
+        text = notes.read_text()
+        for want in ORDER_NOTE_TOKENS:
+            if want not in text:
+                out.append(f"order-notes.txt does not say '{want}' (the stackup JLCPCB is "
+                           "to build)")
     cpl = d / "cpl.csv"
     if cpl.is_file():
         with cpl.open() as fh:

@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: CERN-OHL-S-2.0
+(version 1)
+# The Clock net class asks 0.3 mm of every track, via and pour. It does not ask it of pads:
+# the module socket's pads are 0.35 mm wide at 0.5 mm pitch (0.15 mm apart), so a clock
+# pin there could not be wired at all at 0.3 mm. A pad and a clock track (or a clock pad and a track) beside it keep the
+# board's 0.15 mm.
+(rule "clock_pad_clearance"
+  (condition "(A.Type == 'Pad' || B.Type == 'Pad') && (A.NetClass == 'Clock' || B.NetClass == 'Clock')")
+  (constraint clearance (min 0.15mm)))
+
+# Likewise at the module socket: J2_ESCAPE is a rule area over J2's courtyard grown by 2 mm
+# (build_board adds it). The tracks that leave two neighbouring J2 pins (0.15 mm apart) cannot
+# be 0.3 mm apart until they have fanned out.
+(rule "clock_clearance_at_the_socket"
+  (condition "A.intersectsArea('J2_ESCAPE') && B.intersectsArea('J2_ESCAPE')")
+  (constraint clearance (min 0.15mm)))

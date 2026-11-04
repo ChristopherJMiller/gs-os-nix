@@ -232,3 +232,21 @@ def test_a_rail_that_does_not_fit_at_its_width_is_reported_not_thinned(tmp_path)
 def test_the_same_gap_passes_a_signal_width_track(tmp_path):
     b = gap_board(tmp_path)
     assert route._join_pieces(b, code(b, "+5V"), 0.15, [])   # proves the gap was the limit
+
+
+def test_the_finisher_never_lays_copper_across_a_locked_track(tmp_path):
+    """GND is a plane on 4 layers and its fanout necks are locked: a net walled in by them
+    stays unjoined (reported) rather than crossing one (the old GND fallback did)."""
+    b = make_board(
+        tmp_path,
+        {"N1": [(10.5, 6), (21, 6)], "GND": [(12, 1.0), (12, 11.0)]},
+        tracks=[("GND", F, (12, 1.0), (12, 11.0), 0.2), ("GND", B, (12, 1.0), (12, 11.0), 0.2)],
+        vias=[("GND", (12, 1.0)), ("GND", (12, 11.0))])
+    for t in b.GetTracks():
+        t.SetLocked(True)
+    before = snapshot(b)
+    assert route._rip_up_and_join(b, code(b, "N1"), 0.15) is None
+    assert snapshot(b) == before
+    locked = [t for t in b.GetTracks() if t.IsLocked()]
+    n1 = [t for t in b.GetTracks() if t.GetNetname() == "N1"]
+    assert not any(route._clashes(t, locked) for t in n1)

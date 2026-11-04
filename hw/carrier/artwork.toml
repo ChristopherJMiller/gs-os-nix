@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: CERN-OHL-S-2.0
+# The carrier's silkscreen art (hw/tools/artwork.py). Positions are mm in KiCad board
+# coordinates (x toward the rear, y downward; the card's front-top corner is 0, 0). Run
+# `just -f hw/justfile artwork` after `board` or `route`.
+
+# The name, along the top edge, centred on (x, y).
+[name]
+text = "a2nix carrier rev 0"
+x_mm = 54.0
+y_mm = 2.0
+height_mm = 2.0
+thickness_mm = 0.3
+
+# The open-source-hardware gear (no wordmark, no certification mark): the silkscreen graphics of
+# a KiCad library footprint, centred on (x, y).
+[logo]
+footprint = "Symbol:OSHW-Symbol_8.9x8mm_SilkScreen"
+x_mm = 73.4
+y_mm = 5.5
+
+# The ASCII art's glyph box and grid. One PCB_TEXT per non-space character, centred on
+# (block x + column * col_pitch, block y + row * row_pitch).
+[grid]
+height_mm = 1.0
+width_mm = 0.8
+thickness_mm = 0.15
+col_pitch_mm = 0.85
+row_pitch_mm = 1.6
+
+# An Apple II and the Nix snowflake, side by side in the empty band above J2: the iCESugar-Pro
+# module covers it when plugged in, so they only show when the module is out. x, y is the
+# centre of the block's first character.
+[[ascii]]
+name = "apple2"
+x_mm = 16.05
+y_mm = 7.8
+art = '''
+  .-----------------------.
+  | .-------------------. |
+  | | ]PR#4             | |
+  | | nix-repl> 1 + 1   | |
+  | | 2                 | |
+  | | nix-repl> _       | |
+  | '-------------------' |
+  '-----------------------'
+ _|_______________________|_
+|  ::::::::::::::::::::  o  |
+| [_][_][_][_][_][_][_]     |
+'---------------------------'
+'''
+
+# The NixOS snowflake: six lambdas round a hexagonal hole. The hexagon has flat top and bottom
+# sides; at each corner one lambda's long bar passes through (a hexagon side, carried on past
+# the corner by as much again) and the next one's short bar leaves it outward, 60 degrees
+# round from the long bar, so every arm is a V. Each bar is drawn twice, a column apart, as
+# the logo's bars are wide. A diagonal step (one column, one row: 0.85 x 1.6 mm) runs at 62
+# degrees and is 1.8 mm long; three of them match a 6-column horizontal side. It is centred
+# between the Apple II and the gear; its last row's text boxes end 0.35 mm above J2's rear pads.
+[[ascii]]
+name = "snowflake"
+x_mm = 44.0
+y_mm = 6.5
+art = '''
+      \\    \\    //
+       \\    \\  //
+        \\    \\//
+   ============\\    //
+        //      \\  //
+       //        \\//
+======//          //======
+     //\\        //
+    //  \\      //
+   //    \\============
+        //\\    \\
+       //  \\    \\
+      //    \\    \\
+'''

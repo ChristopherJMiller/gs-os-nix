@@ -61,6 +61,7 @@
     {
       devShells = forAll ({ pkgs, ours, ... }: {
         hw = (hw { inherit pkgs self; }).devShell;
+        hw-render = (hw { inherit pkgs self; }).renderShell;
         default = pkgs.mkShell {
           name = "gs-os-nix";
 
