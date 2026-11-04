@@ -667,6 +667,33 @@ bus accesses a run (the bench, at `card_find`) and 4 bytes of bank 0
   where `deref` had been one (+4.5% in all, found with a2min's function
   profile), and `mature_view`'s copy split into a function of its own cost
   a call a view (+0.5%).
+- **Copies and walks an element at a time** (2026-11-04). `list_copy`
+  (`data.c`) copies `k` elements of a list, young or mature and of any
+  length, into a fresh young one: a `memcpy` from the nursery or a window,
+  else one `card_read_at` burst. `tail`, `++` (now `op_concat` in
+  `prims.c`) and `concatLists` copy with it, and read their operands with
+  `deref_or_list_hdr`: a view if the object can be viewed, its header if it
+  is a list too long for one. `foldl'`, `elem`, `any`/`all`, `filter`'s
+  input and `toJSON` take the count from the header and the elements with
+  `list_elem`. `deep_force_top` does too, and it now turns the ring over
+  between elements, which this design had assumed it already did: forcing
+  the 3,204 small lists of `eval-okay-long-list-ring` filled the ring
+  (`E_NOMEM`), and so did `concatLists`' two loops over them, which turn it
+  over now as well. `eval-okay-long-list-copies`, `-walks` and `-result` hold
+  the 6,000-element list of the readers' fixture; all four were `E_NOMEM`
+  before. `-walks` walks it to the end, calling a function on each element,
+  and is left out of the mature-stress run: a mature collection at every
+  boundary puts 6,000 calls past the 600 s (`foldl'` over 600 s, `all` 223
+  s). `-copies` walks it there instead, stopping early. Measured: the
+  benchmarks +0.023% in all and `foldl-strict` +0.12%, the stack 4 bytes
+  shallower and the call counts unchanged: layout, since padding `run()`'s
+  frame by 2 or 4 bytes moves `foldl-strict` by 6K and 92K cycles. Bank 0
+  unchanged. On the way: `++`'s two header locals in `run()`'s frame, which
+  every call level pays, cost `eval-okay-deep-nesting` its 250 levels, so
+  they moved into a function of their own. Not converted, so still capped
+  at `WINDOW_MAX` for a mature list: `removeAttrs`' names, `findFile`,
+  `appendContext`, `replaceStrings` and path interpolation (the last two
+  stage on the 1,024-slot value stack anyway), and `toXML`.
 
 **Step 2: lists past the nursery (to 65,535 elements).**
 

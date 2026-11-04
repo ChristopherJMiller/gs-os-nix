@@ -538,18 +538,7 @@ void run(void)
             memcpy(ELEMS(o), &vstack[vsp], 4 * n);
             push(o);
             break;
-        case OP_CONCAT:
-            view_two(&a, &b);                   /* operands stay rooted for the reserve */
-            need(a, T_LIST); need(b, T_LIST);
-            n = AUX16(a); i = AUX16(b);
-            if ((uint16_t)(n + i) < n) nomem();
-            if (nursery_reserve_n(n + i, 4, 4)) view_two(&a, &b);
-            vsp -= 2;
-            o = list_alloc(n + i);
-            memcpy(ELEMS(o), ELEMS(a), 4 * n);
-            memcpy(ELEMS(o) + n, ELEMS(b), 4 * i);
-            push(o);
-            break;
+        case OP_CONCAT: op_concat(); break;     /* prims.c: its two header locals off this frame */
 
         /* --- attribute sets --- */
         case OP_ATTRS: attrs_literal(); break;     /* prims.c: its operands are read there */

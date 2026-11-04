@@ -243,7 +243,11 @@ fixtures/eval-okay-let-forward
 fixtures/eval-okay-list-builtins
 fixtures/eval-okay-lists
 fixtures/eval-okay-listtoattrs-long-names
+fixtures/eval-okay-long-list-copies
 fixtures/eval-okay-long-list-readers
+fixtures/eval-okay-long-list-result
+fixtures/eval-okay-long-list-ring
+fixtures/eval-okay-long-list-walks
 fixtures/eval-okay-mature-collection
 fixtures/eval-okay-misc-builtins
 fixtures/eval-okay-mutual-recursion

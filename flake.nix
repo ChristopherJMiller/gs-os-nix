@@ -225,11 +225,13 @@
             # eval-okay-card-heap-big is excused: its point is keeping more than a
             # small card's half live, and a mature collection after every
             # promotion copies all of it every time (HEAP.md "Long lists").
+            # eval-okay-long-list-walks too: each walk calls a function 6,000
+            # times, a mature collection at each boundary, past the 600 s.
             A2MIN_MATURE_STRESS=1 python3 scripts/scoreboard.py \
               --nbc nbc --a2min ./build/a2min --vm "$vm" \
               --corpus tests/fixtures --build build/mature \
               --expected tests/corpus/expected-pass.txt --gc-stress \
-              --skip fixtures/eval-okay-card-heap-big \
+              --skip fixtures/eval-okay-card-heap-big --skip fixtures/eval-okay-long-list-walks \
               | tee -a "$out" | grep -q "^SCOREBOARD: [0-9]* / [0-9]* pass (0 fail, 0 error"
 
             # And the fixture that fills a card's half, on 512 KB halves: on

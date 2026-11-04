@@ -362,6 +362,9 @@ void    obj_hdr(obj_t *p, obj_t *h);
 uint8_t obj_tag(obj_t *p);
 obj_t  *deref_or_hdr(obj_t *p, obj_t *h);   /* deref; a list too long to view: 0, and its header in *h */
 #define DEREF_OR_HDR(p, h)  ((HI16(p) & 0x8000U) ? (p) : deref_or_hdr((p), (h)))   /* p an lvalue */
+obj_t  *deref_or_list_hdr(obj_t *p, obj_t *h);   /* deref; a list too long to view: its header (h), for tag and count only */
+#define DEREF_OR_LIST_HDR(p, h)  ((HI16(p) & 0x8000U) ? (p) : deref_or_list_hdr((p), (h)))   /* p an lvalue */
+void    list_copy(obj_t *dst, uint16_t at, obj_t *src, uint16_t from, uint16_t k);   /* into a fresh young dst */
 #define OBJ_TAG(p)  ((HI16(p) & 0x8000U) ? (p)->tag : obj_tag(p))   /* p an lvalue, as DEREF's */
 /* A tag force_top would act on: THUNK, INDIRECT, BLACKHOLE (not LAMBDA, 9).
  * t is read twice: a plain variable. */
@@ -479,6 +482,7 @@ void nix32_fold(const uint8_t *dig, char *out);   /* sha256.c: what P3 holds, on
 #define A_DIV 0x03
 
 void op_arith(uint16_t op);         /* ADD SUB MUL DIV LT, for the primops that share them */
+void op_concat(void);               /* prims.c: OP_CONCAT, out of run(), whose frame every call level pays */
 /* float.c: IEEE-754 binary64 in software, a float being its bit pattern
  * (docs/FLOAT.md); bit for bit the host's, rounding to nearest, ties to even. */
 #define F_FORMAT_MAX 330                    /* %f of the largest double, and a sign */

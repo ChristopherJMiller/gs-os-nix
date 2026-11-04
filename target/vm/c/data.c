@@ -230,6 +230,32 @@ obj_t *deref_or_hdr(obj_t *p, obj_t *hd)
     return mature_view(p, h, hd, 1);
 }
 
+/* deref, except that a LIST too long to view gives its header, in *hd, which
+ * is what is returned: its reader takes the tag and the count from it and the
+ * elements a list_elem at a time (HEAP.md "Long lists"). Anything else too
+ * big to view is still E_NOMEM, so a reader not yet fixed fails loudly rather
+ * than reading a header as a view. */
+obj_t *deref_or_list_hdr(obj_t *p, obj_t *hd)
+{
+    obj_t *v = deref_or_hdr(p, hd);
+    if (v) return v;
+    if (hd->tag != T_LIST) nomem();
+    return hd;
+}
+
+/* k elements of src, from index `from`, into the fresh young list dst at `at`.
+ * src young or mature, of any length: in place, from its window, or off the
+ * card in one burst. dst is fresh, so no barrier; nothing here collects. */
+void list_copy(obj_t *dst, uint16_t at, obj_t *src, uint16_t from, uint16_t k)
+{
+    uint16_t h, w;
+    if (k == 0) return;
+    if (IS_RAM(src)) { memcpy(ELEMS(dst) + at, ELEMS(src) + from, 4 * k); return; }
+    h = win_slot(src);
+    if ((w = win_find(src, h)) != WIN_NONE) { memcpy(ELEMS(dst) + at, ELEMS(WIN_PTR(w)) + from, 4 * k); return; }
+    card_read_at(PBITS(src) + (uint16_t)(4 + 4 * from), ELEMS(dst) + at, 4 * k);   /* from < 16K: fits */
+}
+
 /* p's tag, for OBJ_TAG's mature case: deref's own path -- the window if it has
  * one, else mature_view -- so as cheap as the deref it replaced (a2min's
  * profile: through obj_hdr it was three calls, 4M cycles of tail-calls' 49M) */
@@ -540,22 +566,23 @@ int values_equal(obj_t *a, obj_t *b)
  * cyclic structure terminates as Nix's deepSeq does. */
 void deep_force_top(void)
 {
-    obj_t *o;
+    obj_t *o, hd;
     uint16_t base = rsp, n, i;
     force_top();
-    o = deref(peek());
-    if (o->tag != T_LIST && o->tag != T_ATTRS) return;
-    if (o->aux2 & AUX_MARK) return;             /* a cycle */
-    n = AUX16(o);                               /* while the view is still fresh */
-    store_byte(peek(), 3, (uint8_t)(o->aux2 | AUX_MARK));   /* on the card too, if mature */
+    obj_hdr(peek(), &hd);                       /* a list may be too long to view (HEAP.md "Long lists") */
+    if (hd.tag != T_LIST && hd.tag != T_ATTRS) return;
+    if (hd.aux2 & AUX_MARK) return;             /* a cycle */
+    n = AUX16(&hd);
+    store_byte(peek(), 3, (uint8_t)(hd.aux2 | AUX_MARK));   /* on the card too, if mature */
     rpush(peek());
     for (i = 0; i < n; ++i) {
-        o = deref(rstack[base]);
-        push(o->tag == T_LIST ? ELEMS(o)[i] : AVALUES(o, n)[i]);
+        if (hd.tag == T_LIST) push(list_elem(rstack[base], i, n));
+        else { o = deref(rstack[base]); push(AVALUES(o, n)[i]); }
         deep_force_top();
         pop();
+        windows_maybe();                        /* no view held: each element's would fill the ring */
     }
-    o = deref(rstack[base]);
-    store_byte(rstack[base], 3, (uint8_t)(o->aux2 & ~AUX_MARK));
+    obj_hdr(rstack[base], &hd);                 /* it may have moved; its mark as it is now */
+    store_byte(rstack[base], 3, (uint8_t)(hd.aux2 & ~AUX_MARK));
     rsp = base;
 }

@@ -47,13 +47,13 @@ static void unite(uint16_t acc, obj_t *s)
  * dump. */
 static void tree(uint16_t k, uint16_t acc)
 {
-    obj_t *v, *x;
+    obj_t *v, *x, hd;
     uint16_t n, i, ix;
     stack_check();
     push(rstack[k]);
     force_top();
     rstack[k] = pop();
-    v = deref(rstack[k]);
+    v = DEREF_OR_LIST_HDR(rstack[k], &hd);     /* a list too long to view: its count is all we read */
     switch (v->tag) {
     case T_STRING:
         unite(acc, rstack[k]);
@@ -185,15 +185,15 @@ static uint16_t int_text(int64_t v, char *out)
  * container is viewed again after each of its elements. */
 static void text(struct text *t, obj_t *o)
 {
-    obj_t *v, *x;
+    obj_t *v, *x, hd;
     uint16_t n, i, ix;
     uint64_t bits;
     char num[F_JSON_MAX];
     stack_check();
     windows_maybe();
     /* A forced thunk may be an INDIRECT: list_elem and find_attr want the
-     * target's original, not the thunk's. */
-    for (v = deref(o); v->tag == T_INDIRECT; v = deref(o)) o = IND_TARGET(v);
+     * target's original, not the thunk's. A list too long to view: its count. */
+    for (v = DEREF_OR_LIST_HDR(o, &hd); v->tag == T_INDIRECT; v = DEREF_OR_LIST_HDR(o, &hd)) o = IND_TARGET(v);
     switch (v->tag) {
     case T_NULL:   put(t, "null", 4); break;
     case T_BOOL:   if (BOOLVAL(v)) put(t, "true", 4); else put(t, "false", 5); break;

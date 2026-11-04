@@ -347,7 +347,7 @@ fixtures-mature k="1": build-a2min cvm nbc-build
     A2MIN_MATURE_STRESS={{k}} python3 scripts/scoreboard.py --nbc {{NBC}} \
         --a2min ./sim/build_a2min/a2min --vm target/build/cvm.bin --corpus tests/fixtures \
         --build target/build/nbc-fixtures --expected tests/corpus/expected-pass.txt --gc-stress \
-        --skip fixtures/eval-okay-card-heap-big
+        --skip fixtures/eval-okay-card-heap-big --skip fixtures/eval-okay-long-list-walks
 
 # The fixture that fills a card's half, on a card small enough (512 KB a half)
 # that it does: a2min's 8 MB halves never fill (scripts/small-card.sh).

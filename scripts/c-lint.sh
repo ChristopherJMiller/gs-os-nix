@@ -77,8 +77,8 @@ plant() {
 
 plant "clang: an unused static function" card.c '$a static void lint_plant(void) { }' 1
 plant "clang: a variable set but never read" sha256.c '$a void lint_plant(void) { int planted; planted = 1; }' 1
-plant "gcsafe: ++ keeps its views across a collecting reserve" run.c \
-      's/            if (nursery_reserve_n(n + i, 4, 4)) view_two(\&a, \&b);/            nursery_reserve_n(n + i, 4, 4);/' 2
+plant "gcsafe: ++ keeps its operands across a collecting reserve" prims.c \
+      's/^    nursery_reserve_n(n + i, 4, 4);$/    bo = vstack[vsp - 1]; ao = vstack[vsp - 2]; nursery_reserve_n(n + i, 4, 4);/;s/^    bo = pop(); ao = pop();$/    vsp -= 2;/' 2
 plant "gcsafe: map keeps its view across a collecting reserve" prims.c \
       's/    if (nursery_reserve_n(n, 32, 4)) l = view_top_as(T_LIST);/    nursery_reserve_n(n, 32, 4);/' 2
 plant "gcsafe: string + reads a part it did not view" strings.c \

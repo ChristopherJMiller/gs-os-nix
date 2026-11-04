@@ -196,16 +196,57 @@ obj_t *view_top_text(void)
     return v;
 }
 
-static void prim_tail(void)
+static void prim_tail(void)                    /* the list stays on the stack, a root, through the reserve */
 {
-    obj_t *l = view_top_as(T_LIST), *r;
-    uint16_t n = AUX16(l);
+    obj_t h, *l, *r;
+    uint16_t n;
+    force_top();
+    l = DEREF_OR_LIST_HDR(peek(), &h);          /* it may be too long to view (HEAP.md "Long lists") */
+    need(l, T_LIST);
+    n = AUX16(l);
     if (n == 0) err_exit(E_INDEX);
-    if (nursery_reserve_n(n - 1, 4, 4)) l = view_top_as(T_LIST);
-    --vsp;
+    nursery_reserve_n(n - 1, 4, 4);
+    l = pop();
     r = list_alloc(n - 1);
-    memcpy(ELEMS(r), ELEMS(l) + 1, 4 * (n - 1));
+    list_copy(r, 0, l, 1, n - 1);
     push(r);
+}
+
+/* The list p is, through any INDIRECT a forced thunk left (no view of the list
+ * itself, which may be too long for one), and its count. p was forced. */
+static obj_t *follow_list(obj_t *p, uint16_t *n)
+{
+    obj_t h, *v;
+    for (;;) {
+        v = DEREF_OR_LIST_HDR(p, &h);
+        if (v->tag != T_INDIRECT) break;
+        p = IND_TARGET(v);
+    }
+    *n = AUX16(v);
+    return p;
+}
+
+/* OP_CONCAT, a ++ b. Either operand may be too long to view (HEAP.md "Long
+ * lists"), so each is copied by list_copy. Here, not in run(): run() nests once
+ * a call level, and two header locals in its frame cost eval-okay-deep-nesting
+ * its 250 levels. */
+void op_concat(void)
+{
+    obj_t ha, hb, *a, *b, *ao, *bo, *o;
+    uint16_t n, i;
+    FORCE_TOP();
+    FORCE_SLOT2();                              /* operands stay rooted for the reserve */
+    b = DEREF_OR_LIST_HDR(vstack[vsp - 1], &hb);
+    a = DEREF_OR_LIST_HDR(vstack[vsp - 2], &ha);
+    need(a, T_LIST); need(b, T_LIST);
+    n = AUX16(a); i = AUX16(b);
+    if ((uint16_t)(n + i) < n) nomem();
+    nursery_reserve_n(n + i, 4, 4);
+    bo = pop(); ao = pop();
+    o = list_alloc(n + i);
+    list_copy(o, 0, ao, 0, n);
+    list_copy(o, n, bo, 0, i);
+    push(o);
 }
 
 static void prim_elemat(void)                   /* list i */
@@ -245,8 +286,7 @@ static void prim_genlist(void)                  /* f n -> [ (f 0) ... (f (n-1)) 
 static void prim_filter(void)                   /* f list. Roots: list, f; kept elements on the stack */
 {
     uint16_t b = rsp, n, i, kept = 0;
-    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *v, *vo;
-    n = AUX16(l);
+    obj_t *lo = force_pop_list(&n), *v, *vo;
     rpush(lo);
     rpush(pop());                               /* f */
     for (i = 0; i < n; ++i) {
@@ -261,8 +301,7 @@ static void prim_filter(void)                   /* f list. Roots: list, f; kept 
 static void prim_foldl(void)                    /* f z list: the accumulator lives on the value stack */
 {
     uint16_t b = rsp, n, i;
-    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *z;
-    n = AUX16(l);
+    obj_t *lo = force_pop_list(&n), *z;
     rpush(lo);
     z = pop();
     rpush(pop());                               /* f */
@@ -279,22 +318,23 @@ static void prim_foldl(void)                    /* f z list: the accumulator liv
 
 static void prim_concatlists(void)              /* [ [..] [..] ]: force each, sum, copy */
 {
-    uint16_t b = rsp, n, i, total = 0, w = 0;
-    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *e, *eo, *r;
-    n = AUX16(l);
+    uint16_t b = rsp, n, i, total = 0, w = 0, k;
+    obj_t *lo = force_pop_list(&n), *e, *r;
     rpush(lo);
     for (i = 0; i < n; ++i) {
         push(RELEM(b, i, n));
-        e = force_pop_as(T_LIST, &eo);
-        if ((uint16_t)(total + AUX16(e)) < total) nomem();
-        total += AUX16(e);
+        (void)force_pop_list(&k);
+        if ((uint16_t)(total + k) < total) nomem();
+        total += k;
+        windows_maybe();                        /* no view held: each sublist's would fill the ring */
     }
     nursery_reserve_n(total, 4, 4);             /* all rooted on RSTACK; the copy re-fetches */
     r = list_alloc(total);
     for (i = 0; i < n; ++i) {
-        e = deref_follow(RELEM(b, i, n));
-        memcpy(ELEMS(r) + w, ELEMS(e), 4 * AUX16(e));
-        w += AUX16(e);
+        e = follow_list(RELEM(b, i, n), &k);
+        list_copy(r, w, e, 0, k);               /* a sublist may be too long to view */
+        w += k;
+        windows_maybe();
     }
     rsp = b;
     push(r);
@@ -319,9 +359,8 @@ static void prim_concatmap(void)                /* concatLists (map f list), the
 static void prim_elem(void)                     /* x list */
 {
     uint16_t b = rsp, n, i;
-    obj_t *lo, *l = force_pop_as(T_LIST, &lo);
+    obj_t *lo = force_pop_list(&n);
     int found = 0;
-    n = AUX16(l);
     rpush(lo);
     rpush(pop());                               /* x */
     for (i = 0; i < n; ++i)
@@ -333,9 +372,8 @@ static void prim_elem(void)                     /* x list */
 static void any_all(int want)                   /* f list; `want` decides early */
 {
     uint16_t b = rsp, n, i;
-    obj_t *lo, *l = force_pop_as(T_LIST, &lo), *v, *vo;
+    obj_t *lo = force_pop_list(&n), *v, *vo;
     int r = !want;
-    n = AUX16(l);
     rpush(lo);
     rpush(pop());                               /* f */
     for (i = 0; i < n; ++i) {
